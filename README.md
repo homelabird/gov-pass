@@ -43,3 +43,45 @@ If you want to keep the driver installed after exit:
 ```powershell
 .\dist\splitter.exe --auto-uninstall=false
 ```
+
+## Linux build and run (NFQUEUE MVP)
+
+Prerequisites:
+- Linux x86_64
+- Go 1.21+
+- `libnetfilter_queue` development package (cgo required)
+
+Install dependencies:
+```bash
+# Debian/Ubuntu
+sudo apt-get update
+sudo apt-get install -y libnetfilter-queue-dev
+
+# Fedora
+sudo dnf install -y libnetfilter_queue-devel
+```
+
+Build:
+```bash
+CGO_ENABLED=1 go build -o dist/splitter ./cmd/splitter
+```
+
+Install NFQUEUE rules (iptables or nftables):
+```bash
+sudo ./scripts/linux/install_nfqueue.sh --queue-num 100 --mark 1
+```
+
+Run (root or with capabilities):
+```bash
+sudo ./dist/splitter --queue-num 100 --mark 1
+```
+
+Optional capabilities instead of root:
+```bash
+sudo setcap 'cap_net_admin,cap_net_raw=+ep' ./dist/splitter
+```
+
+Cleanup rules:
+```bash
+sudo ./scripts/linux/uninstall_nfqueue.sh --queue-num 100 --mark 1
+```

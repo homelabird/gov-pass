@@ -82,6 +82,7 @@ func (w *WinDivertAdapter) Recv(ctx context.Context) (*packet.Packet, error) {
 	return &packet.Packet{
 		Data: buf[:recvLen],
 		Addr: addr,
+		Source: packet.SourceCaptured,
 	}, nil
 }
 
@@ -103,6 +104,10 @@ func (w *WinDivertAdapter) Send(ctx context.Context, pkt *packet.Packet) error {
 	if r1 == 0 {
 		return os.NewSyscallError("WinDivertSend", err)
 	}
+	return nil
+}
+
+func (w *WinDivertAdapter) Drop(ctx context.Context, pkt *packet.Packet) error {
 	return nil
 }
 

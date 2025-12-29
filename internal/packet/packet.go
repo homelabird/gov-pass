@@ -25,6 +25,8 @@ type Packet struct {
 	Data []byte
 	Addr Address
 	Meta Meta
+	Source Source
+	NFQID uint32
 }
 
 // Address holds raw WinDivert address bytes for send/recv.
@@ -46,6 +48,14 @@ type Meta struct {
 	TCPHeaderLen int
 	PayloadOffset int
 }
+
+type Source uint8
+
+const (
+	SourceUnknown Source = iota
+	SourceCaptured
+	SourceInjected
+)
 
 func (p *Packet) Payload() []byte {
 	if p.Meta.PayloadOffset <= 0 || p.Meta.PayloadOffset > len(p.Data) {
@@ -125,6 +135,13 @@ func SetIPv4ChecksumZero(data []byte) {
 	data[11] = 0
 }
 
+func SetIPv4Checksum(data []byte, sum uint16) {
+	if len(data) < 12 {
+		return
+	}
+	binary.BigEndian.PutUint16(data[10:12], sum)
+}
+
 func SetTCPSeq(data []byte, ipHeaderLen int, seq uint32) {
 	if len(data) < ipHeaderLen+8 {
 		return
@@ -138,6 +155,13 @@ func SetTCPChecksumZero(data []byte, ipHeaderLen int) {
 	}
 	data[ipHeaderLen+16] = 0
 	data[ipHeaderLen+17] = 0
+}
+
+func SetTCPChecksum(data []byte, ipHeaderLen int, sum uint16) {
+	if len(data) < ipHeaderLen+18 {
+		return
+	}
+	binary.BigEndian.PutUint16(data[ipHeaderLen+16:ipHeaderLen+18], sum)
 }
 
 func SetTCPFlags(data []byte, ipHeaderLen int, flags uint8) {

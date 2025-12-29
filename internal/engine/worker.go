@@ -211,6 +211,10 @@ func (w *worker) injectWindow(ctx context.Context, key flow.Key, st *flow.FlowSt
 		}
 	}
 
+	if err := w.dropHeld(ctx, st); err != nil {
+		return err
+	}
+
 	st.State = flow.StateInjected
 	st.HeldPackets = nil
 	st.Template = nil
@@ -273,6 +277,7 @@ func buildPacket(tpl *packet.Packet, seq uint32, payload []byte, flags uint8, ip
 	return &packet.Packet{
 		Data: buf,
 		Addr: tpl.Addr,
+		Source: packet.SourceInjected,
 	}, nil
 }
 
@@ -378,6 +383,15 @@ func (w *worker) failOpen(ctx context.Context, key flow.Key, st *flow.FlowState)
 	st.HeldPackets = nil
 	st.Template = nil
 	st.Reassembler = nil
+	return nil
+}
+
+func (w *worker) dropHeld(ctx context.Context, st *flow.FlowState) error {
+	for _, pkt := range st.HeldPackets {
+		if err := w.adapter.Drop(ctx, pkt); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

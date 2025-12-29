@@ -11,6 +11,7 @@ import (
 type Adapter interface {
 	Recv(ctx context.Context) (*packet.Packet, error)
 	Send(ctx context.Context, pkt *packet.Packet) error
+	Drop(ctx context.Context, pkt *packet.Packet) error
 	CalcChecksums(pkt *packet.Packet) error
 	Close() error
 }
@@ -44,6 +45,10 @@ func (s *StubAdapter) Recv(ctx context.Context) (*packet.Packet, error) {
 }
 
 func (s *StubAdapter) Send(ctx context.Context, pkt *packet.Packet) error {
+	return ErrNotImplemented
+}
+
+func (s *StubAdapter) Drop(ctx context.Context, pkt *packet.Packet) error {
 	return ErrNotImplemented
 }
 
