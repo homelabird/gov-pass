@@ -9,6 +9,7 @@ var (
 	ErrNotIPv4 = errors.New("not ipv4")
 	ErrNotTCP  = errors.New("not tcp")
 	ErrTooShort = errors.New("packet too short")
+	ErrIPv4Fragment = errors.New("ipv4 fragment")
 )
 
 const (
@@ -80,6 +81,10 @@ func DecodeIPv4TCP(pkt *Packet) error {
 	ihl := int(vihl&0x0f) * 4
 	if ihl < 20 || len(pkt.Data) < ihl+20 {
 		return ErrTooShort
+	}
+	flagsOffset := binary.BigEndian.Uint16(pkt.Data[6:8])
+	if (flagsOffset&0x1fff) != 0 || (flagsOffset&0x2000) != 0 {
+		return ErrIPv4Fragment
 	}
 	if pkt.Data[9] != protoTCP {
 		return ErrNotTCP

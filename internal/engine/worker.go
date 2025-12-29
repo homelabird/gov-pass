@@ -195,18 +195,18 @@ func (w *worker) injectWindow(ctx context.Context, key flow.Key, st *flow.FlowSt
 
 	ipid := packet.IPv4ID(tpl.Data)
 	if err := w.sendSegments(ctx, tpl, st.BaseSeq, splitSegs, flagsNoPshFin, splitLastFlags, &ipid); err != nil {
-		return err
+		return w.failOpen(ctx, key, st)
 	}
 
 	if len(remainder) > 0 {
 		if w.canTrimRemainder(st) {
 			if err := w.reinjectTrimmed(ctx, st, uint32(windowLen), &ipid); err != nil {
-				return err
+				return w.failOpen(ctx, key, st)
 			}
 		} else {
 			remSegs := chunkPayload(remainder, maxPayload)
 			if err := w.sendSegments(ctx, tpl, st.BaseSeq+uint32(windowLen), remSegs, flagsNoPshFin, flags, &ipid); err != nil {
-				return err
+				return w.failOpen(ctx, key, st)
 			}
 		}
 	}

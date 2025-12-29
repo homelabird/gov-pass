@@ -84,6 +84,10 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	if *mark == 0 {
+		log.Printf("warning: mark=0; ensure NFQUEUE bypass rules prevent reinjection loops")
+	}
+
 	opts := adapter.NFQueueOptions{
 		QueueNum:    uint16(*queueNum),
 		QueueMaxLen: uint32(*queueMaxLen),
