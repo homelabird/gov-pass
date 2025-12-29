@@ -164,7 +164,6 @@ If recordLen exceeds max-buffer or timeout occurs, fail-open.
 - Integration tests (netns + pcap validation)
 - systemd unit and capability setup guidance
 - Packaging docs for Linux (rules, permissions, dist layout)
-
 ## Open questions
 
 - Production tuning for timeout/buffer/held-pkts defaults (start: 250ms/64KB/32)
