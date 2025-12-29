@@ -89,30 +89,4 @@ sudo systemctl enable --now gov-pass
 
 ## Android packaging (Magisk, arm64)
 
-Template files:
-- `scripts/android/magisk/module.prop`
-- `scripts/android/magisk/service.sh`
-- `scripts/android/magisk/post-fs-data.sh`
-- `scripts/android/magisk/uninstall.sh`
-- `scripts/android/magisk/iptables_add.sh`
-- `scripts/android/magisk/iptables_del.sh`
-
-Expected module layout:
-```
-gov-pass/
-  module.prop
-  service.sh
-  post-fs-data.sh
-  uninstall.sh
-  iptables_add.sh
-  iptables_del.sh
-  splitter
-  lib/
-    libmnl.so
-    libnetfilter_queue.so
-```
-
-Notes:
-- Build `splitter` for Android arm64 with cgo and bundle required .so files.
-- `service.sh` applies iptables rules and starts the binary.
-- Optional config: `/data/adb/gov-pass.conf` (QUEUE_NUM, MARK, EXTRA_ARGS).
+See `docs/DESIGN_ANDROID.md` for build and packaging details.

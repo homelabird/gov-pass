@@ -12,3 +12,6 @@ require (
 	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c // indirect
 	golang.org/x/sys v0.0.0-20220128215802-99c3d69c2c27 // indirect
 )
+
+replace github.com/florianl/go-nfqueue => ./third_party/go-nfqueue
+replace github.com/mdlayher/netlink => ./third_party/netlink

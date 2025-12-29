@@ -4,6 +4,8 @@ Split-only TLS ClientHello splitter for outbound IPv4 TCP 443 on Windows.
 
 Demo video: https://www.youtube.com/watch?v=is96qPruy40
 
+Docs entry point: `docs/INDEX.md`
+
 ## Windows build (x64)
 
 Prerequisites:
@@ -120,7 +122,7 @@ Load probe (basic throughput/latency sanity check):
 ## Android (root, Magisk)
 
 Android support targets rooted arm64 devices with a custom kernel that enables
-NFQUEUE and iptables. See `DESIGN_ANDROID.md` and `scripts/android/magisk` for
+NFQUEUE and iptables. See `docs/DESIGN_ANDROID.md` and `scripts/android/magisk` for
 the module template and build notes.
 
 ## Third-party sources included
@@ -128,4 +130,4 @@ the module template and build notes.
 - WinDivert 2.2.2-A (binaries/docs) in `third_party\windivert\WinDivert-2.2.2-A`
   and `third_party\WinDivert.zip` (license: `third_party\windivert\WinDivert-2.2.2-A\LICENSE`)
 
-See `THIRD_PARTY_NOTICES.md` for additional dependency licenses.
+See `docs/THIRD_PARTY_NOTICES.md` for additional dependency licenses.
