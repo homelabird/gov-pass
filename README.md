@@ -107,6 +107,16 @@ PCAP verification (reinjection/splitting):
 sudo ./scripts/linux/pcap_verify.sh --iface <iface> --cmd "curl -sk https://example.com >/dev/null"
 ```
 
+Netns integration test (isolated, requires root):
+```bash
+sudo ./scripts/linux/netns_integration_test.sh --queue-num 100 --mark 1
+```
+
+Load probe (basic throughput/latency sanity check):
+```bash
+./scripts/linux/load_probe.sh --target https://example.com --concurrency 50 --requests 500
+```
+
 ## Third-party sources included
 
 - WinDivert 2.2.2-A (binaries/docs) in `third_party\windivert\WinDivert-2.2.2-A`

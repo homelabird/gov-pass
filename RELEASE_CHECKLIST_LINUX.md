@@ -39,6 +39,7 @@ Linux build to a stable release.
 - Add unit tests for reassembly and checksums
 - Add netns-based integration tests
 - Automate pcap before/after comparison
+- Add a load probe script and document usage
 
 ### Packaging/Operations
 - Confirm CGO + libnetfilter_queue build steps
