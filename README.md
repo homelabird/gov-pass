@@ -117,6 +117,12 @@ Load probe (basic throughput/latency sanity check):
 ./scripts/linux/load_probe.sh --target https://example.com --concurrency 50 --requests 500
 ```
 
+## Android (root, Magisk)
+
+Android support targets rooted arm64 devices with a custom kernel that enables
+NFQUEUE and iptables. See `DESIGN_ANDROID.md` and `scripts/android/magisk` for
+the module template and build notes.
+
 ## Third-party sources included
 
 - WinDivert 2.2.2-A (binaries/docs) in `third_party\windivert\WinDivert-2.2.2-A`

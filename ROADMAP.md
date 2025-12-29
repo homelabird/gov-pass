@@ -169,3 +169,37 @@ If recordLen exceeds max-buffer or timeout occurs, fail-open.
 - Production tuning for timeout/buffer/held-pkts defaults (start: 250ms/64KB/32)
 - Default interface exclusion policy (loopback on/off; VPN/WSL via IfIdx/IfSubIdx)
 - Driver packaging strategy (bundle vs external installer)
+
+## Android roadmap (Root + Magisk, NFQUEUE)
+
+### Scope (MVP)
+
+- Android arm64 only
+- Root + custom kernel with netfilter/NFQUEUE enabled
+- iptables-based rules (nftables not assumed)
+- Split-only, first ClientHello per flow
+- Fail-open on error/timeout
+
+### Phase A1: Toolchain and dependencies
+
+- Build libmnl + libnetfilter_queue for Android arm64 via NDK
+- Enable cgo builds for Android
+- Fork/patch go-nfqueue + mdlayher/netlink (linux-only build tags) for android
+
+### Phase A2: Engine integration
+
+- Add android build tags for NFQUEUE adapter
+- Raw socket reinjection with SO_MARK
+- iptables mangle OUTPUT rules for bypass + queue
+
+### Phase A3: Magisk module packaging
+
+- module.prop + service.sh + uninstall.sh
+- iptables add/remove helper scripts
+- Config file support (/data/adb/gov-pass.conf)
+
+### Phase A4: Validation
+
+- pcap verification on-device
+- handshake success rate measurement
+- load tests on LTE/WiFi
