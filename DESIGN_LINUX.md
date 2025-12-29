@@ -33,6 +33,14 @@ NFQUEUE responsibilities:
 - Receive packets and metadata (id, hook, indev/outdev)
 - Provide verdicts: accept or drop
 
+## Packet handling and verdicts
+
+- Non-target packets: immediately accept.
+- Target flow, still collecting: hold packets, do not accept yet.
+- Split-ready: drop held originals and send split segments.
+- Fail-open: accept held packets in original order.
+- After injection: accept all future packets in the flow.
+
 ## Rule installation (iptables)
 
 Use mangle OUTPUT so we see post-routing packets:
@@ -56,7 +64,30 @@ For nftables, use a similar rule set with `queue num 100 bypass`.
 - Send split segments with:
   - Original IP/TCP headers, updated seq/len/checksum
   - TCP flags preserved; PSH/FIN only on last segment of injection
-- Set SO_MARK to 0x1 so reinjected packets bypass NFQUEUE.
+- Set SO_MARK to the configured mark (default 0x1) so reinjected packets bypass NFQUEUE.
+
+## Reassembly edge cases
+
+- Out-of-order segments: buffer and merge, track contiguous window only.
+- Overlap/duplicate segments: de-duplicate and keep earliest bytes.
+- Buffer limit exceeded: fail-open and accept held packets.
+- Retransmissions after injection: pass-through only.
+- Ack-only packets: not queued unless payload exists.
+
+## IP fragmentation
+
+- If IP fragments are observed, fail-open for the flow.
+- Do not attempt to reassemble IP fragments in this phase.
+
+## Offload considerations
+
+- GSO/TSO can produce large segments; verify NFQUEUE sees full payloads.
+- For testing, consider disabling offload or document required settings.
+
+## Checksum handling
+
+- With raw sockets + IP_HDRINCL, compute IPv4 and TCP checksums.
+- If checksums are zeroed, do not assume kernel will fix them.
 
 ## Flow manager
 
