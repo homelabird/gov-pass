@@ -2,6 +2,8 @@
 
 Split-only TLS ClientHello splitter for outbound IPv4 TCP 443 on Windows.
 
+Demo video: https://www.youtube.com/watch?v=is96qPruy40
+
 ## Windows build (x64)
 
 Prerequisites:
