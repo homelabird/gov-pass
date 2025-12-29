@@ -34,6 +34,14 @@ Optional: install the driver once (requires Admin):
 .\scripts\install_windivert.ps1 -WinDivertDir .\dist
 ```
 
+Driver install notes:
+- The installer resolves the absolute `.sys` path and will update an existing
+  service if its `binPath` points to a missing file.
+- To force-update the `binPath` even if it exists, use:
+```powershell
+.\scripts\install_windivert.ps1 -WinDivertDir .\dist -ForceBinPath
+```
+
 Run (Admin PowerShell):
 ```powershell
 .\dist\splitter.exe
