@@ -81,8 +81,14 @@ For nftables, use a similar rule set with `queue num 100 bypass`.
 
 ## Offload considerations
 
-- GSO/TSO can produce large segments; verify NFQUEUE sees full payloads.
-- For testing, consider disabling offload or document required settings.
+Policy:
+- Disable GRO/GSO/TSO on the egress interface for stable behavior.
+- Raw socket reinjection does not re-segment large offloaded packets.
+
+Example:
+```bash
+sudo ethtool -K <iface> gro off gso off tso off
+```
 
 ## Checksum handling
 

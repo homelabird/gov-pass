@@ -60,6 +60,10 @@ Prerequisites:
 - Linux x86_64
 - Go 1.21+
 - `libnetfilter_queue` development package (cgo required)
+- Disable GRO/GSO/TSO on the egress interface for stable behavior:
+```bash
+sudo ethtool -K <iface> gro off gso off tso off
+```
 
 Install dependencies:
 ```bash
@@ -94,6 +98,11 @@ sudo setcap 'cap_net_admin,cap_net_raw=+ep' ./dist/splitter
 Cleanup rules:
 ```bash
 sudo ./scripts/linux/uninstall_nfqueue.sh --queue-num 100 --mark 1
+```
+
+PCAP verification (reinjection/splitting):
+```bash
+sudo ./scripts/linux/pcap_verify.sh --iface <iface> --cmd "curl -sk https://example.com >/dev/null"
 ```
 
 ## Third-party sources included

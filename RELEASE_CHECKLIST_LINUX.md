@@ -28,7 +28,7 @@ Linux build to a stable release.
 ### Checksums/Injection
 - Verify IPv4/TCP checksum correctness
 - Validate raw socket + IP_HDRINCL reinjection
-- Decide GSO/TSO policy for NFQUEUE packet sizing
+- Decide GSO/TSO policy for NFQUEUE packet sizing (default: disable GRO/GSO/TSO)
 
 ### Performance/Stability
 - Set default queue-num/queue-maxlen values
