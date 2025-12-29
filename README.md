@@ -121,3 +121,5 @@ Load probe (basic throughput/latency sanity check):
 
 - WinDivert 2.2.2-A (binaries/docs) in `third_party\windivert\WinDivert-2.2.2-A`
   and `third_party\WinDivert.zip` (license: `third_party\windivert\WinDivert-2.2.2-A\LICENSE`)
+
+See `THIRD_PARTY_NOTICES.md` for additional dependency licenses.
