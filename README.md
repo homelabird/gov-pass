@@ -54,6 +54,8 @@ If you want to keep the driver installed after exit:
 
 ## Linux build and run (NFQUEUE MVP)
 
+Linux support is beta. Expect breaking changes and validate in your environment.
+
 Prerequisites:
 - Linux x86_64
 - Go 1.21+
