@@ -93,3 +93,8 @@ Cleanup rules:
 ```bash
 sudo ./scripts/linux/uninstall_nfqueue.sh --queue-num 100 --mark 1
 ```
+
+## Third-party sources included
+
+- WinDivert 2.2.2-A (binaries/docs) in `third_party\windivert\WinDivert-2.2.2-A`
+  and `third_party\WinDivert.zip` (license: `third_party\windivert\WinDivert-2.2.2-A\LICENSE`)
