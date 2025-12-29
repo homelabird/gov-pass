@@ -3,6 +3,7 @@
 package driver
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"os"
@@ -55,6 +56,17 @@ func Ensure(ctx context.Context, cfg Config) (func() error, error) {
 			return nil, err
 		}
 		created = true
+	} else {
+		if path, err := queryServiceBinPath(ctx, cfg.ServiceName); err == nil && path != "" {
+			if _, statErr := os.Stat(path); statErr != nil {
+				if !isAdmin() {
+					return nil, ErrAdminRequired
+				}
+				if err := configService(ctx, cfg.ServiceName, sysPath); err != nil {
+					return nil, err
+				}
+			}
+		}
 	}
 
 	if !running {
@@ -142,6 +154,11 @@ func createService(ctx context.Context, name, sysPath string) error {
 	return err
 }
 
+func configService(ctx context.Context, name, sysPath string) error {
+	_, err := runSC(ctx, "config", name, "start=", "demand", "binPath=", sysPath)
+	return err
+}
+
 func startService(ctx context.Context, name string) error {
 	_, err := runSC(ctx, "start", name)
 	return err
@@ -167,6 +184,40 @@ func runSC(ctx context.Context, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "sc.exe", args...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
+}
+
+func queryServiceBinPath(ctx context.Context, name string) (string, error) {
+	out, err := runSC(ctx, "qc", name)
+	if err != nil {
+		return "", err
+	}
+	scanner := bufio.NewScanner(strings.NewReader(out))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if strings.HasPrefix(line, "BINARY_PATH_NAME") {
+			if idx := strings.Index(line, ":"); idx != -1 {
+				raw := strings.TrimSpace(line[idx+1:])
+				return normalizeServicePath(raw), nil
+			}
+		}
+	}
+	return "", scanner.Err()
+}
+
+func normalizeServicePath(raw string) string {
+	path := strings.TrimSpace(raw)
+	path = strings.Trim(path, "\"")
+	if strings.HasPrefix(path, "\\??\\") {
+		path = path[4:]
+	}
+	lower := strings.ToLower(path)
+	if idx := strings.Index(lower, ".sys"); idx != -1 {
+		return path[:idx+4]
+	}
+	if idx := strings.Index(path, " "); idx != -1 {
+		return path[:idx]
+	}
+	return path
 }
 
 func isServiceMissing(out string) bool {
