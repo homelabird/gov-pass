@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	nfqueue "github.com/florianl/go-nfqueue"
+	"github.com/mdlayher/netlink"
 	"golang.org/x/sys/unix"
 
 	"fk-gov/internal/packet"
@@ -44,6 +45,11 @@ func NewNFQueue(opts NFQueueOptions) (*NFQueueAdapter, error) {
 
 	queue, err := nfqueue.Open(&cfg)
 	if err != nil {
+		return nil, err
+	}
+
+	if err := queue.SetOption(netlink.NoENOBUFS, true); err != nil {
+		_ = queue.Close()
 		return nil, err
 	}
 
@@ -162,6 +168,11 @@ func (n *NFQueueAdapter) onPacket(a nfqueue.Attribute) int {
 }
 
 func (n *NFQueueAdapter) onError(err error) int {
+	if opErr, ok := err.(*netlink.OpError); ok {
+		if opErr.Timeout() || opErr.Temporary() {
+			return 0
+		}
+	}
 	select {
 	case n.errs <- err:
 	default:
