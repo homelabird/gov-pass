@@ -162,12 +162,6 @@ func encodeDivertAddr(sa unix.Sockaddr) (packet.Address, error) {
 		binary.BigEndian.PutUint16(addr.Data[2:4], uint16(v.Port))
 		copy(addr.Data[4:8], v.Addr[:])
 		return addr, nil
-	case *unix.SockaddrInet6:
-		binary.BigEndian.PutUint16(addr.Data[0:2], uint16(unix.AF_INET6))
-		binary.BigEndian.PutUint16(addr.Data[2:4], uint16(v.Port))
-		copy(addr.Data[4:20], v.Addr[:])
-		binary.BigEndian.PutUint32(addr.Data[20:24], v.ZoneId)
-		return addr, nil
 	default:
 		return addr, errors.New("divert addr unsupported")
 	}
