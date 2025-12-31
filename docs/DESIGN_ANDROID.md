@@ -10,6 +10,19 @@
 
 ## Build pipeline (NDK + cgo)
 
+### 0) Host requirements
+
+- Linux/macOS x86_64 host (or pass `--toolchain` explicitly)
+- Android NDK r25+ (set `ANDROID_NDK_HOME`)
+- Autotools toolchain: `autoconf`, `automake`, `libtool`, `make`
+- `zip` (for Magisk module packaging)
+
+Source checkouts (example):
+```
+git clone https://git.netfilter.org/libmnl
+git clone https://git.netfilter.org/libnetfilter_queue
+```
+
 ### 1) Cross-compile dependencies
 
 Dependencies:
@@ -41,7 +54,44 @@ Outputs:
   --out dist/android/arm64/splitter
 ```
 
-### 3) go-nfqueue/netlink android build tags
+### 3) Package Magisk module
+
+```
+./scripts/android/build_magisk_module.sh \
+  --template scripts/android/magisk \
+  --splitter dist/android/arm64/splitter \
+  --lib-dir third_party/android/arm64/lib \
+  --out dist/gov-pass-magisk.zip \
+  --version 0.1.0 \
+  --version-code 1
+```
+
+### 4) Install on device (Magisk)
+
+- Copy `dist/gov-pass-magisk.zip` to the device.
+- Install via Magisk Manager (Modules -> Install from storage).
+- Reboot if requested by Magisk.
+
+### 5) Configure runtime (optional)
+
+Config file: `/data/adb/gov-pass.conf`
+```
+QUEUE_NUM=100
+MARK=1
+EXTRA_ARGS="--split-mode tls-hello --split-chunk 5"
+```
+
+Log file: `/data/adb/gov-pass.log`
+
+### 6) Rule removal
+
+If you uninstall the Magisk module, `uninstall.sh` removes iptables rules and
+stops the process. You can also remove rules manually:
+```
+/data/adb/modules/gov-pass/iptables_del.sh --queue-num 100 --mark 1
+```
+
+### 7) go-nfqueue/netlink android build tags
 
 Upstream `go-nfqueue` and `mdlayher/netlink` are linux-only by build tags.
 This repo ships local forks with `android` build tags added:
@@ -83,33 +133,6 @@ lib/
   libmnl.so
   libnetfilter_queue.so
 ```
-
-### Magisk packaging
-
-```
-./scripts/android/build_magisk_module.sh \
-  --template scripts/android/magisk \
-  --splitter dist/android/arm64/splitter \
-  --lib-dir third_party/android/arm64/lib \
-  --out dist/gov-pass-magisk.zip \
-  --version 0.1.0 \
-  --version-code 1
-```
-
-## Configuration
-
-Optional config file: `/data/adb/gov-pass.conf`
-
-Example:
-```
-QUEUE_NUM=100
-MARK=1
-EXTRA_ARGS="--split-mode tls-hello --split-chunk 5"
-```
-
-## Logging
-
-Suggested log path: `/data/adb/gov-pass.log`
 
 ## Open questions
 

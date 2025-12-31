@@ -2,6 +2,7 @@
 
 This project includes and depends on third-party software. Versions are listed
 in `go.mod`/`go.sum` for Go modules.
+For upstream sources and local patches, see `docs/THIRD_PARTY_SOURCES.md`.
 
 ## Bundled
 
