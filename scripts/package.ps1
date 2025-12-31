@@ -16,6 +16,18 @@ if (-not (Test-Path $WinDivertDir)) {
   exit 1
 }
 
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$licenseSrc = Join-Path $repoRoot "LICENSE"
+$noticesSrc = Join-Path $repoRoot "docs\\THIRD_PARTY_NOTICES.md"
+if (-not (Test-Path $licenseSrc)) {
+  Write-Error "LICENSE not found: $licenseSrc"
+  exit 1
+}
+if (-not (Test-Path $noticesSrc)) {
+  Write-Error "THIRD_PARTY_NOTICES.md not found: $noticesSrc"
+  exit 1
+}
+
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 
 $exeName = Split-Path -Leaf $ExePath
@@ -46,6 +58,24 @@ foreach ($file in $files) {
 if (-not $copiedSys) {
   Write-Error "No WinDivert .sys found in $WinDivertDir"
   exit 1
+}
+
+Copy-Item -Force $licenseSrc (Join-Path $OutDir "LICENSE")
+$docsOut = Join-Path $OutDir "docs"
+New-Item -ItemType Directory -Force -Path $docsOut | Out-Null
+Copy-Item -Force $noticesSrc (Join-Path $docsOut "THIRD_PARTY_NOTICES.md")
+
+$licensesOut = Join-Path $OutDir "licenses"
+New-Item -ItemType Directory -Force -Path $licensesOut | Out-Null
+$licenseFiles = @(
+  @{ Src = Join-Path $repoRoot "third_party\\windivert\\WinDivert-2.2.2-A\\LICENSE"; Dest = Join-Path $licensesOut "WinDivert-LICENSE.txt" },
+  @{ Src = Join-Path $repoRoot "third_party\\go-nfqueue\\LICENSE"; Dest = Join-Path $licensesOut "go-nfqueue-LICENSE.txt" },
+  @{ Src = Join-Path $repoRoot "third_party\\netlink\\LICENSE.md"; Dest = Join-Path $licensesOut "netlink-LICENSE.txt" }
+)
+foreach ($item in $licenseFiles) {
+  if (Test-Path $item.Src) {
+    Copy-Item -Force $item.Src $item.Dest
+  }
 }
 
 Write-Host "Packaged to $OutDir"

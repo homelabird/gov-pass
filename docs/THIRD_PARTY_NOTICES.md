@@ -9,6 +9,12 @@ For upstream sources and local patches, see `docs/THIRD_PARTY_SOURCES.md`.
 - WinDivert 2.2.2-A (binaries/docs)
   - License: `third_party\windivert\WinDivert-2.2.2-A\LICENSE`
 
+## System dependencies (Linux)
+
+- libnetfilter_queue (GPL-2.0-only)
+  - https://git.netfilter.org/libnetfilter_queue/plain/COPYING
+  - Provided by distro packages (e.g., `libnetfilter-queue-dev`)
+
 ## Go module dependencies (Linux NFQUEUE path)
 
 - github.com/florianl/go-nfqueue v1.3.2 (MIT)
