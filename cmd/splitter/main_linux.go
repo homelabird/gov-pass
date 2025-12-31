@@ -31,6 +31,7 @@ func main() {
 	collectTimeout := flag.Duration("collect-timeout", cfg.CollectTimeout, "reassembly collect timeout")
 	maxBuffer := flag.Int("max-buffer", cfg.MaxBufferBytes, "max reassembly buffer size in bytes")
 	maxHeld := flag.Int("max-held-pkts", cfg.MaxHeldPackets, "max held packets per flow")
+	maxSegPayload := flag.Int("max-seg-payload", cfg.MaxSegmentPayload, "max segment payload size (0=unlimited)")
 	workers := flag.Int("workers", cfg.WorkerCount, "worker count for sharded processing")
 	flowTimeout := flag.Duration("flow-timeout", cfg.FlowIdleTimeout, "idle timeout for flow cleanup")
 	gcInterval := flag.Duration("gc-interval", cfg.GCInterval, "flow GC interval")
@@ -52,6 +53,9 @@ func main() {
 	}
 	if *maxHeld < 1 {
 		log.Fatal("max-held-pkts must be >= 1")
+	}
+	if *maxSegPayload < 0 {
+		log.Fatal("max-seg-payload must be >= 0")
 	}
 	if *workers < 1 {
 		log.Fatal("workers must be >= 1")
@@ -77,6 +81,7 @@ func main() {
 	cfg.CollectTimeout = *collectTimeout
 	cfg.MaxBufferBytes = *maxBuffer
 	cfg.MaxHeldPackets = *maxHeld
+	cfg.MaxSegmentPayload = *maxSegPayload
 	cfg.WorkerCount = *workers
 	cfg.FlowIdleTimeout = *flowTimeout
 	cfg.GCInterval = *gcInterval

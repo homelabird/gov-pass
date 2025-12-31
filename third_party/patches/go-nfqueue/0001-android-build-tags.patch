@@ -1,0 +1,18 @@
+diff --git a/internal/unix/types_linux.go b/internal/unix/types_linux.go
+index 0000000..0000000 100644
+--- a/internal/unix/types_linux.go
++++ b/internal/unix/types_linux.go
+@@ -1,2 +1,2 @@
+-//go:build linux
+-// +build linux
++//go:build linux || android
++// +build linux android
+diff --git a/internal/unix/types_other.go b/internal/unix/types_other.go
+index 0000000..0000000 100644
+--- a/internal/unix/types_other.go
++++ b/internal/unix/types_other.go
+@@ -1,2 +1,2 @@
+-//go:build !linux
+-// +build !linux
++//go:build !linux && !android
++// +build !linux,!android

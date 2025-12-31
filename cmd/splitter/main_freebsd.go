@@ -1,4 +1,4 @@
-//go:build windows
+//go:build freebsd
 
 package main
 
@@ -9,24 +9,18 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 
 	"fk-gov/internal/adapter"
-	"fk-gov/internal/driver"
 	"fk-gov/internal/engine"
 )
 
 func main() {
 	cfg := engine.DefaultConfig()
-	const (
-		defaultQueueLen    = 4096
-		defaultQueueTimeMs = 2000
-		defaultQueueSize   = 32 * 1024 * 1024
-		defaultServiceName = "WinDivert"
-	)
+	const defaultDivertPort = 10000
+
 	splitMode := flag.String("split-mode", "tls-hello", "split trigger: tls-hello or immediate")
 	splitChunk := flag.Int("split-chunk", cfg.SplitChunk, "first split size in bytes")
 	collectTimeout := flag.Duration("collect-timeout", cfg.CollectTimeout, "reassembly collect timeout")
@@ -36,14 +30,7 @@ func main() {
 	workers := flag.Int("workers", cfg.WorkerCount, "worker count for sharded processing")
 	flowTimeout := flag.Duration("flow-timeout", cfg.FlowIdleTimeout, "idle timeout for flow cleanup")
 	gcInterval := flag.Duration("gc-interval", cfg.GCInterval, "flow GC interval")
-	filter := flag.String("filter", "outbound and ip and tcp.DstPort == 443", "WinDivert filter")
-	queueLen := flag.Uint("queue-len", defaultQueueLen, "WinDivert queue length (0=driver default)")
-	queueTime := flag.Uint("queue-time", defaultQueueTimeMs, "WinDivert queue time in ms (0=driver default)")
-	queueSize := flag.Uint("queue-size", defaultQueueSize, "WinDivert queue size in bytes (0=driver default)")
-	driverDir := flag.String("windivert-dir", "", "directory containing WinDivert.dll/.sys/.cat (default: exe dir)")
-	driverSys := flag.String("windivert-sys", "", "driver sys filename (default: WinDivert64.sys or WinDivert.sys)")
-	autoInstall := flag.Bool("auto-install", true, "auto install/start WinDivert driver")
-	autoUninstall := flag.Bool("auto-uninstall", true, "auto uninstall if installed by this run")
+	divertPort := flag.Int("divert-port", defaultDivertPort, "pf divert-to port")
 	flag.Parse()
 
 	mode, err := parseSplitMode(*splitMode)
@@ -68,6 +55,9 @@ func main() {
 	if *collectTimeout < 1*time.Millisecond {
 		log.Fatal("collect-timeout must be >= 1ms")
 	}
+	if *divertPort < 1 || *divertPort > 65535 {
+		log.Fatal("divert-port must be in 1..65535")
+	}
 
 	cfg.SplitMode = mode
 	cfg.SplitChunk = *splitChunk
@@ -82,47 +72,12 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	exeDir := ""
-	if *driverDir == "" {
-		if exe, err := os.Executable(); err == nil {
-			exeDir = filepath.Dir(exe)
-		}
-	} else {
-		exeDir = *driverDir
+	opts := adapter.DivertOptions{
+		Port: uint16(*divertPort),
 	}
-	if exeDir != "" {
-		if err := driver.PrependPath(exeDir); err != nil {
-			log.Fatalf("set PATH failed: %v", err)
-		}
-	}
-
-	cleanup, err := driver.Ensure(ctx, driver.Config{
-		Dir:           exeDir,
-		SysName:       *driverSys,
-		ServiceName:   defaultServiceName,
-		AutoInstall:   *autoInstall,
-		AutoUninstall: *autoUninstall,
-		AutoStop:      true,
-	})
+	ad, err := adapter.NewDivert(opts)
 	if err != nil {
-		log.Fatalf("driver ensure failed: %v", err)
-	}
-	if cleanup != nil {
-		defer func() {
-			if err := cleanup(); err != nil {
-				log.Printf("driver cleanup failed: %v", err)
-			}
-		}()
-	}
-
-	opts := adapter.WinDivertOptions{
-		QueueLen:  uint64(*queueLen),
-		QueueTime: uint64(*queueTime),
-		QueueSize: uint64(*queueSize),
-	}
-	ad, err := adapter.NewWinDivert(*filter, opts)
-	if err != nil {
-		log.Fatalf("WinDivert open failed: %v", err)
+		log.Fatalf("divert open failed: %v", err)
 	}
 	eng := engine.New(cfg, ad)
 

@@ -21,6 +21,7 @@
 - collect-timeout: 250ms
 - max-buffer: 64KB
 - max-held-pkts: 32
+- max-seg-payload: 1460 (0 = unlimited)
 
 ## Architecture overview
 
@@ -110,6 +111,7 @@ Window to split:
 Split segments:
 - First segment size = split-chunk (default 5)
 - Remaining bytes in one segment (or multiple if needed)
+- Cap segment payload size to max-seg-payload and IPv4 total length
 
 Segment build rules:
 - seq = baseSeq + offset

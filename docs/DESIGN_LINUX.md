@@ -119,6 +119,7 @@ Wait for full first TLS record (5 + recordLen), then split.
 - Split window: first TLS record only
 - First segment size = split-chunk (default 5)
 - Remaining bytes in one or more segments
+- Cap segment payload size to max-seg-payload (default 1460) and IPv4 total length
 - seq = baseSeq + offset
 - Recompute checksums (custom helper on Linux)
 

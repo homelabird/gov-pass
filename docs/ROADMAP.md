@@ -164,6 +164,40 @@ If recordLen exceeds max-buffer or timeout occurs, fail-open.
 - Integration tests (netns + pcap validation)
 - systemd unit and capability setup guidance
 - Packaging docs for Linux (rules, permissions, dist layout)
+
+## BSD roadmap (pf divert, pfSense/OPNsense)
+
+### Scope (MVP)
+
+- FreeBSD-based pfSense CE 2.7.x and OPNsense 24.x
+- LAN -> WAN outbound IPv4 TCP 443 only
+- Split only (no payload mutation), first ClientHello per flow
+- Fail-open on error/timeout; exclude loopback/VPN/VLAN initially
+
+### Phase B1 (Target + PoC)
+
+- Confirm target OS versions and interface scope (LAN -> WAN only)
+- Verify pf divert availability (IPDIVERT) on target kernels
+- FreeBSD VM PoC: divert socket recv + reinject pass-through
+- Validate with tcpdump/curl and confirm no reinjection loops
+
+### Phase B2 (Adapter + flags)
+
+- Add freebsd build tags and divert adapter implementation
+- Add CLI flags: divert-port, pf anchor path, bypass tag
+- Implement checksum handling and reinjection parity with Linux
+
+### Phase B3 (Rules + packaging)
+
+- pf anchor install/remove scripts
+- rc.d service template for FreeBSD
+- pfSense/OPNsense install notes and defaults
+
+### Phase B4 (Validation)
+
+- PCAP verification, fail-open behavior, split correctness
+- Offload guidance (TSO/LRO/CSUM) and performance tuning
+
 ## Open questions
 
 - Production tuning for timeout/buffer/held-pkts defaults (start: 250ms/64KB/32)

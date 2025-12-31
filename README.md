@@ -56,6 +56,11 @@ If you want to keep the driver installed after exit:
 .\dist\splitter.exe --auto-uninstall=false
 ```
 
+Optional: cap injected segment payload size (default 1460):
+```powershell
+.\dist\splitter.exe --max-seg-payload 1200
+```
+
 ## Linux build and run (NFQUEUE MVP)
 
 Linux support is beta. Expect breaking changes and validate in your environment.
@@ -94,6 +99,11 @@ Run (root or with capabilities):
 sudo ./dist/splitter --queue-num 100 --mark 1
 ```
 
+Optional: cap injected segment payload size (default 1460):
+```bash
+sudo ./dist/splitter --queue-num 100 --mark 1 --max-seg-payload 1200
+```
+
 Optional capabilities instead of root:
 ```bash
 sudo setcap 'cap_net_admin,cap_net_raw=+ep' ./dist/splitter
@@ -118,6 +128,26 @@ Load probe (basic throughput/latency sanity check):
 ```bash
 ./scripts/linux/load_probe.sh --target https://example.com --concurrency 50 --requests 500
 ```
+
+## FreeBSD / pfSense (pf divert, experimental)
+
+Prerequisites:
+- FreeBSD 14.x or pfSense 2.7.x (IPDIVERT enabled)
+- root privileges
+- pf divert rules in place (see `docs/POC_BSD.md` and `docs/pf/*`)
+
+Build:
+```bash
+GOOS=freebsd GOARCH=amd64 go build -o dist/splitter-freebsd ./cmd/splitter
+```
+
+Run:
+```bash
+sudo ./dist/splitter-freebsd --divert-port 10000
+```
+
+The `--divert-port` must match the pf `divert-to` port.
+Use `--max-seg-payload` to cap injected segment size (default 1460).
 
 ## Android (root, Magisk)
 

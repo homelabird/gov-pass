@@ -12,6 +12,8 @@ import (
 	"fk-gov/internal/tls"
 )
 
+const maxIPv4TotalLen = 0xffff
+
 type worker struct {
 	id      int
 	cfg     Config
@@ -174,6 +176,8 @@ func (w *worker) injectWindow(ctx context.Context, key flow.Key, st *flow.FlowSt
 		return w.failOpen(ctx, key, st)
 	}
 	maxPayload := len(tpl.Payload())
+	headerLen := tpl.Meta.IPHeaderLen + tpl.Meta.TCPHeaderLen
+	maxPayload = clampSegmentPayload(maxPayload, headerLen, w.cfg.MaxSegmentPayload)
 	if maxPayload < 1 {
 		return w.failOpen(ctx, key, st)
 	}
@@ -353,6 +357,24 @@ func splitFirst(payload []byte, firstLen int, maxPayload int) [][]byte {
 		offset += chunk
 	}
 	return segments
+}
+
+func clampSegmentPayload(payloadLen int, headerLen int, capPayload int) int {
+	if payloadLen < 1 {
+		return 0
+	}
+	if headerLen < 1 || headerLen > maxIPv4TotalLen {
+		return 0
+	}
+	maxPayload := payloadLen
+	ipMax := maxIPv4TotalLen - headerLen
+	if maxPayload > ipMax {
+		maxPayload = ipMax
+	}
+	if capPayload > 0 && maxPayload > capPayload {
+		maxPayload = capPayload
+	}
+	return maxPayload
 }
 
 func chunkPayload(payload []byte, maxPayload int) [][]byte {

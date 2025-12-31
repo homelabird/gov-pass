@@ -18,6 +18,7 @@ type Config struct {
 	CollectTimeout  time.Duration
 	MaxBufferBytes  int
 	MaxHeldPackets  int
+	MaxSegmentPayload int
 	WorkerCount     int
 	WorkerQueueSize int
 	FlowIdleTimeout time.Duration
@@ -31,6 +32,7 @@ func DefaultConfig() Config {
 		CollectTimeout:  250 * time.Millisecond,
 		MaxBufferBytes:  64 * 1024,
 		MaxHeldPackets:  32,
+		MaxSegmentPayload: 1460,
 		WorkerCount:     runtime.NumCPU(),
 		WorkerQueueSize: 1024,
 		FlowIdleTimeout: 30 * time.Second,
