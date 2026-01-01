@@ -9,9 +9,7 @@ Environment=GOV_PASS_QUEUE_NUM=100
 Environment=GOV_PASS_MARK=1
 Environment=GOV_PASS_ARGS=
 EnvironmentFile=-/etc/default/gov-pass
-ExecStartPre=/opt/gov-pass/scripts/linux/install_nfqueue.sh --queue-num $GOV_PASS_QUEUE_NUM --mark $GOV_PASS_MARK
 ExecStart=/opt/gov-pass/dist/splitter --queue-num $GOV_PASS_QUEUE_NUM --mark $GOV_PASS_MARK $GOV_PASS_ARGS
-ExecStopPost=/opt/gov-pass/scripts/linux/uninstall_nfqueue.sh --queue-num $GOV_PASS_QUEUE_NUM --mark $GOV_PASS_MARK
 Restart=on-failure
 RestartSec=2
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW

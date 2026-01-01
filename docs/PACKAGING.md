@@ -63,10 +63,27 @@ Dependencies:
 - `libnetfilter_queue` (runtime)
 - root or capabilities: `CAP_NET_ADMIN`, `CAP_NET_RAW`
 
-Install/Run (example):
+Install/Run (default, root):
+```bash
+sudo ./dist/splitter --queue-num 100 --mark 1
+```
+
+By default the Linux binary will:
+- install NFQUEUE rules using nft or iptables
+- disable GRO/GSO/TSO on the egress interface (auto-detected)
+- offload changes persist until re-enabled with ethtool
+
+Override defaults:
+- `--auto-rules=false` to manage rules manually
+- `--auto-offload=false` to skip offload changes
+- `--iface <iface>` to override the auto-detected interface
+
+Note: auto rules/offload require root because they invoke `nft/iptables/ethtool`.
+If using `setcap`, disable the auto helpers and manage rules/offload manually.
+
+Manual rule install (optional):
 ```bash
 sudo ./scripts/linux/install_nfqueue.sh --queue-num 100 --mark 1
-sudo ./dist/splitter --queue-num 100 --mark 1
 ```
 
 Systemd template:
@@ -75,7 +92,7 @@ Systemd template:
   - optional override file: `/etc/default/gov-pass`
     - `GOV_PASS_QUEUE_NUM=100`
     - `GOV_PASS_MARK=1`
-    - `GOV_PASS_ARGS=` (optional extra flags)
+    - `GOV_PASS_ARGS=` (optional extra flags, e.g. `--auto-offload=false`)
 
 Suggested installation:
 ```bash

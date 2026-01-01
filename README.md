@@ -69,10 +69,7 @@ Prerequisites:
 - Linux x86_64
 - Go 1.21+
 - `libnetfilter_queue` development package (cgo required)
-- Disable GRO/GSO/TSO on the egress interface for stable behavior:
-```bash
-sudo ethtool -K <iface> gro off gso off tso off
-```
+- root privileges (default run installs rules and disables offload)
 
 Install dependencies:
 ```bash
@@ -89,14 +86,24 @@ Build:
 CGO_ENABLED=1 go build -o dist/splitter ./cmd/splitter
 ```
 
-Install NFQUEUE rules (iptables or nftables):
-```bash
-sudo ./scripts/linux/install_nfqueue.sh --queue-num 100 --mark 1
-```
-
 Run (root or with capabilities):
 ```bash
 sudo ./dist/splitter --queue-num 100 --mark 1
+```
+
+By default the Linux binary will:
+- install NFQUEUE rules using nft or iptables
+- disable GRO/GSO/TSO on the egress interface (auto-detected)
+- offload changes persist until re-enabled with ethtool
+
+Override defaults:
+- `--auto-rules=false` to manage rules manually
+- `--auto-offload=false` to skip offload changes
+- `--iface <iface>` to override the auto-detected interface
+
+Manual rule install (optional):
+```bash
+sudo ./scripts/linux/install_nfqueue.sh --queue-num 100 --mark 1
 ```
 
 Optional: cap injected segment payload size (default 1460):
@@ -107,6 +114,11 @@ sudo ./dist/splitter --queue-num 100 --mark 1 --max-seg-payload 1200
 Optional capabilities instead of root:
 ```bash
 sudo setcap 'cap_net_admin,cap_net_raw=+ep' ./dist/splitter
+```
+
+If using capabilities, disable auto rules/offload and manage them manually:
+```bash
+./dist/splitter --auto-rules=false --auto-offload=false --queue-num 100 --mark 1
 ```
 
 Cleanup rules:
