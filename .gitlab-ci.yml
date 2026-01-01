@@ -1,0 +1,76 @@
+stages:
+  - build
+  - release
+
+variables:
+  DIST_DIR: "dist/release"
+
+build_release:
+  stage: build
+  image: golang:1.21
+  rules:
+    - if: $CI_COMMIT_TAG
+  before_script:
+    - apt-get update
+    - apt-get install -y --no-install-recommends libnetfilter-queue-dev pkg-config zip
+  script:
+    - set -eu
+    - mkdir -p "$DIST_DIR"
+    - PKG_VERSION="$CI_COMMIT_TAG"
+    - BASE_DIR="$DIST_DIR"
+    - stage_common() {
+        dest="$1";
+        mkdir -p "$dest/docs" "$dest/licenses";
+        cp LICENSE "$dest/";
+        cp docs/THIRD_PARTY_NOTICES.md "$dest/docs/";
+        cp third_party/windivert/WinDivert-2.2.2-A/LICENSE "$dest/licenses/WinDivert-LICENSE.txt";
+        cp third_party/go-nfqueue/LICENSE "$dest/licenses/go-nfqueue-LICENSE.txt";
+        cp third_party/netlink/LICENSE.md "$dest/licenses/netlink-LICENSE.txt";
+      }
+    - LINUX_DIR="$BASE_DIR/gov-pass-${PKG_VERSION}-linux-amd64"
+    - mkdir -p "$LINUX_DIR"
+    - CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -o "$LINUX_DIR/splitter" ./cmd/splitter
+    - stage_common "$LINUX_DIR"
+    - tar -C "$BASE_DIR" -czf "$BASE_DIR/gov-pass-${PKG_VERSION}-linux-amd64.tar.gz" "gov-pass-${PKG_VERSION}-linux-amd64"
+    - FREEBSD_DIR="$BASE_DIR/gov-pass-${PKG_VERSION}-freebsd-amd64"
+    - mkdir -p "$FREEBSD_DIR"
+    - CGO_ENABLED=0 GOOS=freebsd GOARCH=amd64 go build -o "$FREEBSD_DIR/splitter" ./cmd/splitter
+    - stage_common "$FREEBSD_DIR"
+    - tar -C "$BASE_DIR" -czf "$BASE_DIR/gov-pass-${PKG_VERSION}-freebsd-amd64.tar.gz" "gov-pass-${PKG_VERSION}-freebsd-amd64"
+    - WIN_DIR="$BASE_DIR/gov-pass-${PKG_VERSION}-windows-amd64"
+    - mkdir -p "$WIN_DIR"
+    - CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o "$WIN_DIR/splitter.exe" ./cmd/splitter
+    - cp third_party/windivert/WinDivert-2.2.2-A/x64/WinDivert.dll "$WIN_DIR/"
+    - cp third_party/windivert/WinDivert-2.2.2-A/x64/WinDivert64.sys "$WIN_DIR/"
+    - if [ -f third_party/windivert/WinDivert-2.2.2-A/x64/WinDivert.cat ]; then cp third_party/windivert/WinDivert-2.2.2-A/x64/WinDivert.cat "$WIN_DIR/"; fi
+    - stage_common "$WIN_DIR"
+    - (cd "$BASE_DIR" && zip -r "gov-pass-${PKG_VERSION}-windows-amd64.zip" "gov-pass-${PKG_VERSION}-windows-amd64")
+    - (cd "$BASE_DIR" && sha256sum "gov-pass-${PKG_VERSION}-linux-amd64.tar.gz" "gov-pass-${PKG_VERSION}-freebsd-amd64.tar.gz" "gov-pass-${PKG_VERSION}-windows-amd64.zip" > SHA256SUMS)
+  artifacts:
+    paths:
+      - dist/release/*.tar.gz
+      - dist/release/*.zip
+      - dist/release/SHA256SUMS
+    expire_in: never
+
+release:
+  stage: release
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  rules:
+    - if: $CI_COMMIT_TAG
+  script:
+    - echo "Release $CI_COMMIT_TAG"
+  release:
+    tag_name: "$CI_COMMIT_TAG"
+    name: "$CI_COMMIT_TAG"
+    description: "Automated release for $CI_COMMIT_TAG"
+    assets:
+      links:
+        - name: "gov-pass-linux-amd64.tar.gz"
+          url: "$CI_PROJECT_URL/-/jobs/artifacts/$CI_COMMIT_TAG/raw/dist/release/gov-pass-${CI_COMMIT_TAG}-linux-amd64.tar.gz?job=build_release"
+        - name: "gov-pass-freebsd-amd64.tar.gz"
+          url: "$CI_PROJECT_URL/-/jobs/artifacts/$CI_COMMIT_TAG/raw/dist/release/gov-pass-${CI_COMMIT_TAG}-freebsd-amd64.tar.gz?job=build_release"
+        - name: "gov-pass-windows-amd64.zip"
+          url: "$CI_PROJECT_URL/-/jobs/artifacts/$CI_COMMIT_TAG/raw/dist/release/gov-pass-${CI_COMMIT_TAG}-windows-amd64.zip?job=build_release"
+        - name: "SHA256SUMS"
+          url: "$CI_PROJECT_URL/-/jobs/artifacts/$CI_COMMIT_TAG/raw/dist/release/SHA256SUMS?job=build_release"
