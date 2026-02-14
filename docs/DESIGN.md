@@ -22,6 +22,14 @@
 - max-buffer: 64KB
 - max-held-pkts: 32
 - max-seg-payload: 1460 (0 = unlimited)
+- workers: NumCPU
+- worker-queue-size: 1024
+- max-flows-per-worker: 4096
+- max-reassembly-bytes-per-worker: 64MB
+- max-held-bytes-per-worker: 64MB
+- shutdown-fail-open-timeout: 5s
+- shutdown-fail-open-max-pkts: 200000
+- adapter-flush-timeout: 2s
 
 ## Architecture overview
 
@@ -29,6 +37,8 @@ WinDivert -> Decoder -> Flow Manager -> Reassembler -> TLS Inspector
 -> Split Plan -> Injector -> WinDivert send
 
 Non-target and completed flows bypass reassembly and are sent as-is.
+ACK-only packets are fast-pathed and are not enqueued into worker queues.
+FIN/RST packets go through workers so flow state is cleaned up promptly.
 
 ## WinDivert adapter
 
@@ -125,6 +135,9 @@ Segment build rules:
 - TLS header mismatch
 - Buffer exceeds max-buffer
 - Held packets exceed max-held-pkts
+- Worker flow cap exceeds max-flows-per-worker
+- Worker held bytes cap exceeds max-held-bytes-per-worker
+- Worker reassembly bytes cap exceeds max-reassembly-bytes-per-worker
 - collect-timeout exceeded
 - IP fragmentation or invalid TCP header
 - Any decode error
@@ -147,6 +160,13 @@ Selected model: sharded workers.
 - Optional single-worker mode remains for debug or low-throughput use.
 
 Use sync.Pool for packet buffers and avoid per-packet allocations.
+
+## Shutdown behavior
+
+On shutdown or worker exit:
+- Workers fail-open any held packets (reinject originals) and drain any queued-but-unprocessed packets (pass-through).
+- Shutdown draining is bounded by a timeout and max packet count to prevent Stop from hanging forever under load.
+- After workers stop, the adapter performs a best-effort flush of adapter-level pending packets before the handle is closed.
 
 ## Data structures (suggested)
 

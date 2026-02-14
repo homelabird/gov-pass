@@ -71,6 +71,13 @@ Pick one mechanism and standardize:
 - FAIL-OPEN: reinject held packets in original order.
 - PASS-THROUGH: reinject packets as-is for the rest of the flow.
 
+## Shutdown behavior
+
+On shutdown or worker exit:
+- Workers fail-open held packets and drain queued-but-unprocessed packets (pass-through).
+- Shutdown draining is bounded by a timeout and max packet count to prevent Stop from hanging forever under load.
+- After workers stop, the adapter performs a best-effort flush of adapter-level pending packets before the handle is closed.
+
 ## Split plan
 
 - Split window: first TLS record only

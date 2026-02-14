@@ -1,10 +1,15 @@
 # gov-pass
 
-Split-only TLS ClientHello splitter for outbound IPv4 TCP 443 on Windows.
+Split-only TLS ClientHello splitter for outbound IPv4 TCP 443.
 
 Demo video: https://www.youtube.com/watch?v=is96qPruy40
 
 Docs entry point: `docs/INDEX.md`
+
+Supported platforms:
+- Windows 10/11 x64 (WinDivert) - primary
+- Linux x86_64 (NFQUEUE) - beta
+- FreeBSD / pfSense (pf divert) - experimental
 
 ## Windows build (x64)
 
@@ -71,6 +76,8 @@ Notes:
 - Uninstalling gov-pass does not remove the global WinDivert driver service.
 - Service logs are written to `C:\ProgramData\gov-pass\splitter.log`.
 - Service config is read from `C:\ProgramData\gov-pass\config.json` (created on first run if missing).
+- In service mode, `C:\ProgramData\gov-pass\` is ACL-hardened (SYSTEM/Admin full, Users read-only).
+  Editing `config.json` requires Admin.
 
 To manage the service (Admin PowerShell):
 ```powershell
@@ -78,6 +85,38 @@ sc.exe query gov-pass
 sc.exe stop gov-pass
 sc.exe start gov-pass
 sc.exe control gov-pass paramchange  # reload config.json (in-place apply; restart required for some settings)
+```
+
+Reload semantics (service):
+- Applies in-place: `engine.*` (except worker topology), and non-zero WinDivert `queue_*` values.
+- Requires service restart: `windivert.filter`, `windivert_dir` / `windivert_sys`, and reverting `queue_*` to `0` (driver defaults).
+
+Service config example (`C:\ProgramData\gov-pass\config.json`):
+```json
+{
+  "engine": {
+    "split_mode": "tls-hello",
+    "split_chunk": 5,
+    "collect_timeout": "250ms",
+    "max_buffer_bytes": 65536,
+    "max_held_packets": 32,
+    "max_segment_payload": 1460,
+    "workers": 8,
+    "flow_idle_timeout": "30s",
+    "gc_interval": "5s",
+    "max_flows_per_worker": 4096,
+    "max_reassembly_bytes_per_worker": 67108864,
+    "max_held_bytes_per_worker": 67108864
+  },
+  "windivert": {
+    "filter": "outbound and ip and tcp.DstPort == 443",
+    "queue_len": 4096,
+    "queue_time_ms": 2000,
+    "queue_size_bytes": 33554432,
+    "auto_install_driver": true,
+    "auto_download_files": true
+  }
+}
 ```
 
 Optional interactive run:
@@ -97,6 +136,14 @@ If you want to keep the driver installed after exit:
 Optional: cap injected segment payload size (default 1460):
 ```powershell
 .\dist\splitter.exe --max-seg-payload 1200
+```
+
+Optional: DoS guards (per worker; fail-open on pressure):
+```powershell
+.\dist\splitter.exe `
+  --max-flows-per-worker 4096 `
+  --max-reassembly-bytes-per-worker 67108864 `
+  --max-held-bytes-per-worker 67108864
 ```
 
 ## Linux build and run (NFQUEUE MVP)
@@ -139,6 +186,14 @@ sudo ./scripts/linux/install_nfqueue.sh --queue-num 100 --mark 1
 Optional: cap injected segment payload size (default 1460):
 ```bash
 sudo ./dist/splitter --queue-num 100 --mark 1 --max-seg-payload 1200
+```
+
+Optional: DoS guards (per worker; fail-open on pressure):
+```bash
+sudo ./dist/splitter --queue-num 100 --mark 1 \
+  --max-flows-per-worker 4096 \
+  --max-reassembly-bytes-per-worker 67108864 \
+  --max-held-bytes-per-worker 67108864
 ```
 
 Optional capabilities instead of root:
@@ -194,8 +249,9 @@ Use `--max-seg-payload` to cap injected segment size (default 1460).
 ## Android (root, Magisk)
 
 Android support targets rooted arm64 devices with a custom kernel that enables
-NFQUEUE and iptables. See `docs/DESIGN_ANDROID.md` and `scripts/android/magisk` for
-the module template and build notes.
+NFQUEUE and iptables. Note: Android is currently design/PoC documentation only;
+the repo does not ship a maintained `GOOS=android` build target yet. See
+`docs/DESIGN_ANDROID.md` and `scripts/android/magisk` for notes.
 
 ## Third-party sources included
 

@@ -79,7 +79,7 @@ When using an `inet` table, ensure the queue rule is restricted to IPv4 only
 - Overlap/duplicate segments: de-duplicate and keep earliest bytes.
 - Buffer limit exceeded: fail-open and accept held packets.
 - Retransmissions after injection: pass-through only.
-- Ack-only packets: not queued unless payload exists.
+- ACK-only packets: fast-pathed (pass-through) and not enqueued unless FIN/RST.
 
 ## IP fragmentation
 
@@ -141,12 +141,24 @@ On any error, timeout, or buffer pressure:
 - Verdict accept all held packets
 - Mark flow PASS_THROUGH
 
+Additional pressure guards (per worker):
+- max-flows-per-worker
+- max-reassembly-bytes-per-worker
+- max-held-bytes-per-worker
+
 ## Concurrency model
 
 Same sharded worker model as Windows:
 - Single NFQUEUE recv loop
 - Hash FlowKey to worker shard
 - Per-worker in-order injection
+
+## Shutdown behavior
+
+On shutdown or worker exit:
+- Workers fail-open held packets and drain queued-but-unprocessed packets (pass-through).
+- Shutdown draining is bounded by a timeout and max packet count to prevent Stop from hanging forever under load.
+- After workers stop, the adapter performs a best-effort flush of adapter-level pending packets before the handle is closed.
 
 ## Linux-specific considerations
 

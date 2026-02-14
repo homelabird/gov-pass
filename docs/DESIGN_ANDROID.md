@@ -1,5 +1,9 @@
 # Detailed Design - Android Root NFQUEUE (Magisk, arm64)
 
+Status (as of 2026-02-14):
+- Android is not a maintained build target in this repo yet (no `GOOS=android` entrypoint under `cmd/splitter`).
+- The scripts under `scripts/android/` and the cgo/libnetfilter_queue build steps below are legacy notes and are expected to be incomplete/out-of-date.
+
 ## Assumptions
 
 - Android arm64 only
@@ -8,7 +12,11 @@
 - iptables available
 - SELinux permissive or policy adjusted
 
-## Build pipeline (NDK + cgo)
+## Legacy build pipeline (NDK + cgo) (stale)
+
+This section describes an older approach that links `libmnl`/`libnetfilter_queue`.
+The current Linux NFQUEUE path is pure-Go (`go-nfqueue`), and Android support
+should likely follow that direction instead of introducing new cgo dependencies.
 
 ### 0) Host requirements
 

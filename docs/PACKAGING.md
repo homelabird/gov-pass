@@ -49,6 +49,7 @@ Flags:
 - --auto-uninstall: uninstall if installed by this run (default true)
 - --auto-download-windivert: download pinned WinDivert zip if files are missing (default true)
   - if the exe directory is not writable, the downloader falls back to `C:\ProgramData\gov-pass\windivert`
+  - in service mode, the ProgramData fallback is ACL-hardened (SYSTEM/Admin full, Users read-only)
 - --service: run as a Windows service (SCM)
 
 ## Windows MSI (service auto-start)
@@ -60,7 +61,12 @@ Service notes:
 - The service runs `splitter.exe --service --service-name gov-pass`.
 - The service reads config from `C:\ProgramData\gov-pass\config.json` (created on first run if missing).
 - Logs are written to `C:\ProgramData\gov-pass\splitter.log`.
+- In service mode, `C:\ProgramData\gov-pass\` is ACL-hardened (SYSTEM/Admin full, Users read-only).
+  Editing `config.json` requires Admin.
 - The MSI does not remove the global WinDivert driver service on uninstall.
+- Config reload: `sc.exe control gov-pass paramchange`
+  - applies engine config in-place (except worker topology) and non-zero WinDivert queue settings
+  - requires service restart for: `windivert.filter`, `windivert_dir` / `windivert_sys`, and reverting `queue_*` to `0` (driver defaults)
 
 Build MSI in CI:
 - GitLab release builds use `msitools` (`wixl`) with the template in `installer/windows/`.
