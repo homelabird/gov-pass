@@ -20,13 +20,13 @@ func (s segment) end() uint32 {
 // Buffer reassembles TCP payload into a contiguous prefix from baseSeq.
 // It accepts out-of-order and overlapping fragments and merges them.
 type Buffer struct {
-	baseSeq  uint32
-	contig   []byte
+	baseSeq   uint32
+	contig    []byte
 	contigLen uint32
-	maxBytes uint32
+	maxBytes  uint32
 
-	totalBytes  uint32
-	segments    []segment
+	totalBytes    uint32
+	segments      []segment
 	hadOutOfOrder bool
 	hadOverlap    bool
 }
@@ -162,6 +162,10 @@ func (b *Buffer) Contiguous() []byte {
 
 func (b *Buffer) ContigLen() uint32 {
 	return b.contigLen
+}
+
+func (b *Buffer) TotalBytes() uint32 {
+	return b.totalBytes
 }
 
 func (b *Buffer) HadOutOfOrder() bool {

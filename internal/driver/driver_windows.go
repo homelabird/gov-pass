@@ -17,8 +17,8 @@ var ErrAdminRequired = errors.New("administrator privileges required")
 var ErrDriverNotFound = errors.New("WinDivert driver sys not found")
 
 var (
-	shell32            = syscall.NewLazyDLL("shell32.dll")
-	procIsUserAnAdmin  = shell32.NewProc("IsUserAnAdmin")
+	shell32           = syscall.NewLazyDLL("shell32.dll")
+	procIsUserAnAdmin = shell32.NewProc("IsUserAnAdmin")
 )
 
 // Ensure installs and starts the WinDivert driver if needed.

@@ -51,6 +51,44 @@ Run (Admin PowerShell):
 .\dist\splitter.exe
 ```
 
+If `WinDivert.dll` / `WinDivert64.sys` are missing, the app can auto-download the
+pinned WinDivert zip (SHA256-verified) and extract the x64 files. You can
+disable this with:
+```powershell
+.\dist\splitter.exe --auto-download-windivert=false
+```
+
+## Windows MSI install (x64)
+
+If you have a release build, you can install via the `.msi` package.
+The installer includes `splitter.exe` and the WinDivert `dll/sys` files.
+
+After installing, a Windows service named `gov-pass` is installed and started
+automatically (Startup type: Automatic).
+
+Notes:
+- WinDivert requires Administrator privileges.
+- Uninstalling gov-pass does not remove the global WinDivert driver service.
+- Service logs are written to `C:\ProgramData\gov-pass\splitter.log`.
+- Service config is read from `C:\ProgramData\gov-pass\config.json` (created on first run if missing).
+
+To manage the service (Admin PowerShell):
+```powershell
+sc.exe query gov-pass
+sc.exe stop gov-pass
+sc.exe start gov-pass
+sc.exe control gov-pass paramchange  # reload config.json (in-place apply; restart required for some settings)
+```
+
+Optional interactive run:
+- Use the Start Menu shortcuts:
+  - `gov-pass splitter (Admin)`
+  - `Start gov-pass service (Admin)`
+  - `Stop gov-pass service (Admin)`
+  - `Restart gov-pass service (Admin)`
+  - `Reload gov-pass config (Admin)`
+- Stop the `gov-pass` service first to avoid running two instances.
+
 If you want to keep the driver installed after exit:
 ```powershell
 .\dist\splitter.exe --auto-uninstall=false
@@ -68,22 +106,11 @@ Linux support is beta. Expect breaking changes and validate in your environment.
 Prerequisites:
 - Linux x86_64
 - Go 1.21+
-- `libnetfilter_queue` development package (cgo required)
 - root privileges (default run installs rules and disables offload)
-
-Install dependencies:
-```bash
-# Debian/Ubuntu
-sudo apt-get update
-sudo apt-get install -y libnetfilter-queue-dev
-
-# Fedora
-sudo dnf install -y libnetfilter_queue-devel
-```
 
 Build:
 ```bash
-CGO_ENABLED=1 go build -o dist/splitter ./cmd/splitter
+go build -o dist/splitter ./cmd/splitter
 ```
 
 Run (root or with capabilities):
@@ -94,12 +121,15 @@ sudo ./dist/splitter --queue-num 100 --mark 1
 By default the Linux binary will:
 - install NFQUEUE rules using nft or iptables
 - disable GRO/GSO/TSO on the egress interface (auto-detected)
-- offload changes persist until re-enabled with ethtool
+- by default, restore offload settings on exit when possible (`--auto-offload-restore=true`)
+- auto-install missing system tools (nft/iptables/ip/ethtool) when required
 
 Override defaults:
 - `--auto-rules=false` to manage rules manually
 - `--auto-offload=false` to skip offload changes
+- `--auto-offload-restore=false` to keep offload changes persistent after exit
 - `--iface <iface>` to override the auto-detected interface
+- `--auto-install-tools=false` to disable package-manager auto install of missing tools
 
 Manual rule install (optional):
 ```bash

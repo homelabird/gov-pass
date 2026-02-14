@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"time"
 
 	"fk-gov/internal/adapter"
@@ -14,28 +15,57 @@ import (
 
 const maxIPv4TotalLen = 0xffff
 
+var ErrShutdownFailOpenLimitReached = errors.New("shutdown fail-open packet limit reached")
+
 type worker struct {
 	id      int
-	cfg     Config
+	cfg     atomic.Pointer[Config]
 	adapter adapter.Adapter
 	in      chan *packet.Packet
+	touch   chan flow.Key
 	flows   *flow.Table
+
+	heldBytes       int64
+	reassemblyBytes int64
 }
 
 func newWorker(id int, cfg Config, ad adapter.Adapter) *worker {
 	if cfg.WorkerQueueSize < 1 {
 		cfg.WorkerQueueSize = 1024
 	}
-	return &worker{
+	if cfg.GCInterval <= 0 {
+		cfg.GCInterval = 5 * time.Second
+	}
+	if cfg.FlowIdleTimeout <= 0 {
+		cfg.FlowIdleTimeout = 30 * time.Second
+	}
+	if cfg.MaxFlowsPerWorker < 0 {
+		cfg.MaxFlowsPerWorker = 0
+	}
+	if cfg.MaxReassemblyBytesPerWorker < 0 {
+		cfg.MaxReassemblyBytesPerWorker = 0
+	}
+	if cfg.MaxHeldBytesPerWorker < 0 {
+		cfg.MaxHeldBytesPerWorker = 0
+	}
+	w := &worker{
 		id:      id,
-		cfg:     cfg,
 		adapter: ad,
 		in:      make(chan *packet.Packet, cfg.WorkerQueueSize),
+		touch:   make(chan flow.Key, cfg.WorkerQueueSize),
 		flows:   flow.NewTable(),
 	}
+	cfgCopy := cfg
+	w.cfg.Store(&cfgCopy)
+	return w
 }
 
 func (w *worker) enqueue(ctx context.Context, pkt *packet.Packet) error {
+	// Once canceled, never enqueue more packets. This avoids leaving captured
+	// packets stuck in the queue while workers are shutting down.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	select {
 	case w.in <- pkt:
 		return nil
@@ -44,13 +74,30 @@ func (w *worker) enqueue(ctx context.Context, pkt *packet.Packet) error {
 	}
 }
 
-func (w *worker) close() {
-	close(w.in)
+func (w *worker) touchFlow(key flow.Key) {
+	select {
+	case w.touch <- key:
+	default:
+	}
 }
 
-func (w *worker) run(ctx context.Context) error {
-	ticker := time.NewTicker(w.cfg.GCInterval)
-	defer ticker.Stop()
+func (w *worker) setConfig(cfg Config) {
+	cfgCopy := cfg
+	w.cfg.Store(&cfgCopy)
+}
+
+func (w *worker) close() {
+	close(w.in)
+	close(w.touch)
+}
+
+func (w *worker) run(ctx context.Context) (err error) {
+	interval := 5 * time.Second
+	if cfg := w.cfg.Load(); cfg != nil && cfg.GCInterval > 0 {
+		interval = cfg.GCInterval
+	}
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
 
 	for {
 		select {
@@ -61,10 +108,25 @@ func (w *worker) run(ctx context.Context) error {
 			if err := w.handlePacket(ctx, pkt); err != nil {
 				return err
 			}
-		case <-ticker.C:
+		case key, ok := <-w.touch:
+			if !ok {
+				w.touch = nil
+				continue
+			}
+			// Fast-path for ACK-only packets: keep existing flows alive without
+			// enqueueing the full packet through the worker queue.
+			if st, ok := w.flows.Get(key); ok {
+				st.LastActive = time.Now()
+			}
+		case <-timer.C:
 			if err := w.gc(ctx); err != nil {
 				return err
 			}
+			next := 5 * time.Second
+			if cfg := w.cfg.Load(); cfg != nil && cfg.GCInterval > 0 {
+				next = cfg.GCInterval
+			}
+			timer.Reset(next)
 		case <-ctx.Done():
 			return ctx.Err()
 		}
@@ -72,23 +134,145 @@ func (w *worker) run(ctx context.Context) error {
 }
 
 func (w *worker) handlePacket(ctx context.Context, pkt *packet.Packet) error {
-	now := time.Now()
-	key := flow.KeyFromMeta(pkt.Meta)
-	st := w.flows.GetOrCreate(key, now)
-	st.LastActive = now
-
-	if st.State == flow.StateInjected || st.State == flow.StatePassThrough {
-		return w.adapter.Send(ctx, pkt)
+	cfg := w.cfg.Load()
+	if cfg == nil {
+		return errors.New("worker config is nil")
 	}
 
+	now := time.Now()
+	key := flow.KeyFromMeta(pkt.Meta)
 	payload := pkt.Payload()
+	if st, ok := w.flows.Get(key); ok {
+		st.LastActive = now
+
+		// FIN/RST often have no payload; ensure they still clean up flow state
+		// promptly even when payloadless packets are fast-pathed.
+		if len(payload) == 0 && (pkt.HasFlag(packet.TCPFlagRST) || pkt.HasFlag(packet.TCPFlagFIN)) {
+			if st.State == flow.StateCollecting {
+				if err := w.failOpen(ctx, key, st); err != nil {
+					return err
+				}
+			}
+			if err := w.adapter.Send(ctx, pkt); err != nil {
+				return err
+			}
+			w.flows.Delete(key)
+			return nil
+		}
+
+		if st.State == flow.StateInjected || st.State == flow.StatePassThrough {
+			return w.adapter.Send(ctx, pkt)
+		}
+		if len(payload) == 0 {
+			return w.adapter.Send(ctx, pkt)
+		}
+
+		if st.State == flow.StateNew {
+			st.BaseSeq = pkt.Meta.Seq
+			st.Reassembler = reassembly.New(st.BaseSeq, uint32(cfg.MaxBufferBytes))
+			st.State = flow.StateCollecting
+			st.CollectStart = now
+			st.FirstPayloadLen = len(payload)
+			st.Template = pkt
+		} else {
+			st.Template = pkt
+		}
+
+		if cfg.MaxHeldBytesPerWorker > 0 {
+			need := int64(len(pkt.Data))
+			limit := int64(cfg.MaxHeldBytesPerWorker)
+			if w.heldBytes+need > limit {
+				if err := w.failOpen(ctx, key, st); err != nil {
+					return err
+				}
+				return w.adapter.Send(ctx, pkt)
+			}
+		}
+		st.HeldPackets = append(st.HeldPackets, pkt)
+		w.heldBytes += int64(len(pkt.Data))
+		if len(st.HeldPackets) > cfg.MaxHeldPackets {
+			return w.failOpen(ctx, key, st)
+		}
+		if now.Sub(st.CollectStart) > cfg.CollectTimeout {
+			return w.failOpen(ctx, key, st)
+		}
+		before := int64(st.Reassembler.TotalBytes())
+		err := st.Reassembler.Push(pkt.Meta.Seq, payload)
+		after := int64(st.Reassembler.TotalBytes())
+		w.reassemblyBytes += after - before
+		if w.reassemblyBytes < 0 {
+			w.reassemblyBytes = 0
+		}
+		if err != nil {
+			return w.failOpen(ctx, key, st)
+		}
+		if cfg.MaxReassemblyBytesPerWorker > 0 && w.reassemblyBytes > int64(cfg.MaxReassemblyBytesPerWorker) {
+			return w.failOpen(ctx, key, st)
+		}
+
+		if pkt.HasFlag(packet.TCPFlagSYN) {
+			return w.failOpen(ctx, key, st)
+		}
+
+		if pkt.HasFlag(packet.TCPFlagRST) {
+			if err := w.failOpen(ctx, key, st); err != nil {
+				return err
+			}
+			w.flows.Delete(key)
+			return nil
+		}
+
+		if pkt.HasFlag(packet.TCPFlagFIN) {
+			if err := w.failOpen(ctx, key, st); err != nil {
+				return err
+			}
+			w.flows.Delete(key)
+			return nil
+		}
+
+		if cfg.SplitMode == SplitModeImmediate {
+			return w.trySplitImmediate(ctx, key, st)
+		}
+
+		if cfg.SplitMode == SplitModeTLSHello {
+			return w.trySplitTLSHello(ctx, key, st)
+		}
+
+		return nil
+	}
+
+	// No existing state: fail-open for payloadless packets (no flow creation).
 	if len(payload) == 0 {
 		return w.adapter.Send(ctx, pkt)
 	}
 
+	// DoS guard: bound the number of tracked flows per worker.
+	if cfg.MaxFlowsPerWorker > 0 && w.flows.Len() >= cfg.MaxFlowsPerWorker {
+		return w.adapter.Send(ctx, pkt)
+	}
+
+	// Best-effort budget checks before creating per-flow state.
+	if cfg.MaxHeldBytesPerWorker > 0 {
+		need := int64(len(pkt.Data))
+		limit := int64(cfg.MaxHeldBytesPerWorker)
+		if w.heldBytes+need > limit {
+			return w.adapter.Send(ctx, pkt)
+		}
+	}
+	if cfg.MaxReassemblyBytesPerWorker > 0 {
+		need := int64(len(payload))
+		limit := int64(cfg.MaxReassemblyBytesPerWorker)
+		if w.reassemblyBytes+need > limit {
+			return w.adapter.Send(ctx, pkt)
+		}
+	}
+
+	st := w.flows.GetOrCreate(key, now)
+	st.LastActive = now
+
 	if st.State == flow.StateNew {
 		st.BaseSeq = pkt.Meta.Seq
-		st.Reassembler = reassembly.New(st.BaseSeq, uint32(w.cfg.MaxBufferBytes))
+		st.Reassembler = reassembly.New(st.BaseSeq, uint32(cfg.MaxBufferBytes))
 		st.State = flow.StateCollecting
 		st.CollectStart = now
 		st.FirstPayloadLen = len(payload)
@@ -97,19 +281,46 @@ func (w *worker) handlePacket(ctx context.Context, pkt *packet.Packet) error {
 		st.Template = pkt
 	}
 
+	if cfg.MaxHeldBytesPerWorker > 0 {
+		need := int64(len(pkt.Data))
+		limit := int64(cfg.MaxHeldBytesPerWorker)
+		if w.heldBytes+need > limit {
+			if err := w.failOpen(ctx, key, st); err != nil {
+				return err
+			}
+			return w.adapter.Send(ctx, pkt)
+		}
+	}
 	st.HeldPackets = append(st.HeldPackets, pkt)
-	if len(st.HeldPackets) > w.cfg.MaxHeldPackets {
+	w.heldBytes += int64(len(pkt.Data))
+	if len(st.HeldPackets) > cfg.MaxHeldPackets {
 		return w.failOpen(ctx, key, st)
 	}
-	if now.Sub(st.CollectStart) > w.cfg.CollectTimeout {
+	if now.Sub(st.CollectStart) > cfg.CollectTimeout {
 		return w.failOpen(ctx, key, st)
 	}
-	if err := st.Reassembler.Push(pkt.Meta.Seq, payload); err != nil {
+	before := int64(st.Reassembler.TotalBytes())
+	err := st.Reassembler.Push(pkt.Meta.Seq, payload)
+	after := int64(st.Reassembler.TotalBytes())
+	w.reassemblyBytes += after - before
+	if w.reassemblyBytes < 0 {
+		w.reassemblyBytes = 0
+	}
+	if err != nil {
+		return w.failOpen(ctx, key, st)
+	}
+	if cfg.MaxReassemblyBytesPerWorker > 0 && w.reassemblyBytes > int64(cfg.MaxReassemblyBytesPerWorker) {
 		return w.failOpen(ctx, key, st)
 	}
 
 	if pkt.HasFlag(packet.TCPFlagSYN) || pkt.HasFlag(packet.TCPFlagRST) {
-		return w.failOpen(ctx, key, st)
+		if err := w.failOpen(ctx, key, st); err != nil {
+			return err
+		}
+		if pkt.HasFlag(packet.TCPFlagRST) {
+			w.flows.Delete(key)
+		}
+		return nil
 	}
 
 	if pkt.HasFlag(packet.TCPFlagFIN) {
@@ -120,11 +331,11 @@ func (w *worker) handlePacket(ctx context.Context, pkt *packet.Packet) error {
 		return nil
 	}
 
-	if w.cfg.SplitMode == SplitModeImmediate {
+	if cfg.SplitMode == SplitModeImmediate {
 		return w.trySplitImmediate(ctx, key, st)
 	}
 
-	if w.cfg.SplitMode == SplitModeTLSHello {
+	if cfg.SplitMode == SplitModeTLSHello {
 		return w.trySplitTLSHello(ctx, key, st)
 	}
 
@@ -143,6 +354,11 @@ func (w *worker) trySplitImmediate(ctx context.Context, key flow.Key, st *flow.F
 }
 
 func (w *worker) trySplitTLSHello(ctx context.Context, key flow.Key, st *flow.FlowState) error {
+	cfg := w.cfg.Load()
+	if cfg == nil {
+		return errors.New("worker config is nil")
+	}
+
 	contig := st.Reassembler.Contiguous()
 	recordLen, result := tls.DetectClientHelloRecord(contig)
 	if result == tls.ResultNeedMore {
@@ -153,7 +369,7 @@ func (w *worker) trySplitTLSHello(ctx context.Context, key flow.Key, st *flow.Fl
 	}
 
 	need := 5 + int(recordLen)
-	if need > w.cfg.MaxBufferBytes {
+	if need > cfg.MaxBufferBytes {
 		return w.failOpen(ctx, key, st)
 	}
 	if len(contig) < need {
@@ -164,6 +380,11 @@ func (w *worker) trySplitTLSHello(ctx context.Context, key flow.Key, st *flow.Fl
 }
 
 func (w *worker) injectWindow(ctx context.Context, key flow.Key, st *flow.FlowState, windowLen int) error {
+	cfg := w.cfg.Load()
+	if cfg == nil {
+		return errors.New("worker config is nil")
+	}
+
 	if windowLen < 1 {
 		return w.failOpen(ctx, key, st)
 	}
@@ -177,7 +398,7 @@ func (w *worker) injectWindow(ctx context.Context, key flow.Key, st *flow.FlowSt
 	}
 	maxPayload := len(tpl.Payload())
 	headerLen := tpl.Meta.IPHeaderLen + tpl.Meta.TCPHeaderLen
-	maxPayload = clampSegmentPayload(maxPayload, headerLen, w.cfg.MaxSegmentPayload)
+	maxPayload = clampSegmentPayload(maxPayload, headerLen, cfg.MaxSegmentPayload)
 	if maxPayload < 1 {
 		return w.failOpen(ctx, key, st)
 	}
@@ -185,7 +406,7 @@ func (w *worker) injectWindow(ctx context.Context, key flow.Key, st *flow.FlowSt
 	window := contig[:windowLen]
 	remainder := contig[windowLen:]
 
-	splitSegs := splitFirst(window, w.cfg.SplitChunk, maxPayload)
+	splitSegs := splitFirst(window, cfg.SplitChunk, maxPayload)
 	if len(splitSegs) < 2 {
 		return w.failOpen(ctx, key, st)
 	}
@@ -220,9 +441,7 @@ func (w *worker) injectWindow(ctx context.Context, key flow.Key, st *flow.FlowSt
 	}
 
 	st.State = flow.StateInjected
-	st.HeldPackets = nil
-	st.Template = nil
-	st.Reassembler = nil
+	w.clearCollectingState(st)
 	st.Processed = true
 	return nil
 }
@@ -279,8 +498,8 @@ func buildPacket(tpl *packet.Packet, seq uint32, payload []byte, flags uint8, ip
 	packet.SetTCPChecksumZero(buf, ipHeaderLen)
 
 	return &packet.Packet{
-		Data: buf,
-		Addr: tpl.Addr,
+		Data:   buf,
+		Addr:   tpl.Addr,
 		Source: packet.SourceInjected,
 	}, nil
 }
@@ -396,15 +615,13 @@ func chunkPayload(payload []byte, maxPayload int) [][]byte {
 }
 
 func (w *worker) failOpen(ctx context.Context, key flow.Key, st *flow.FlowState) error {
-	st.State = flow.StatePassThrough
 	for _, pkt := range st.HeldPackets {
 		if err := w.adapter.Send(ctx, pkt); err != nil {
 			return err
 		}
 	}
-	st.HeldPackets = nil
-	st.Template = nil
-	st.Reassembler = nil
+	st.State = flow.StatePassThrough
+	w.clearCollectingState(st)
 	return nil
 }
 
@@ -417,19 +634,146 @@ func (w *worker) dropHeld(ctx context.Context, st *flow.FlowState) error {
 	return nil
 }
 
+func (w *worker) clearCollectingState(st *flow.FlowState) {
+	if st == nil {
+		return
+	}
+	for _, pkt := range st.HeldPackets {
+		if pkt == nil {
+			continue
+		}
+		w.heldBytes -= int64(len(pkt.Data))
+	}
+	if w.heldBytes < 0 {
+		w.heldBytes = 0
+	}
+	if st.Reassembler != nil {
+		w.reassemblyBytes -= int64(st.Reassembler.TotalBytes())
+		if w.reassemblyBytes < 0 {
+			w.reassemblyBytes = 0
+		}
+	}
+	st.HeldPackets = nil
+	st.Template = nil
+	st.Reassembler = nil
+}
+
 func (w *worker) gc(ctx context.Context) error {
+	idle := 30 * time.Second
+	if cfg := w.cfg.Load(); cfg != nil && cfg.FlowIdleTimeout > 0 {
+		idle = cfg.FlowIdleTimeout
+	}
+
 	now := time.Now()
 	var firstErr error
 	w.flows.Range(func(key flow.Key, st *flow.FlowState) {
-		if now.Sub(st.LastActive) <= w.cfg.FlowIdleTimeout {
+		if now.Sub(st.LastActive) <= idle {
 			return
 		}
 		if st.State == flow.StateCollecting && len(st.HeldPackets) > 0 {
-			if err := w.failOpen(ctx, key, st); err != nil && firstErr == nil {
-				firstErr = err
+			if err := w.failOpen(ctx, key, st); err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+				return
 			}
 		}
 		w.flows.Delete(key)
 	})
 	return firstErr
+}
+
+func (w *worker) shutdownFailOpen(ctx context.Context) error {
+	var firstErr error
+
+	maxPackets := 200000
+	if cfg := w.cfg.Load(); cfg != nil && cfg.ShutdownFailOpenMaxPackets > 0 {
+		maxPackets = cfg.ShutdownFailOpenMaxPackets
+	}
+	flushed := 0
+	reinject := func(pkt *packet.Packet) error {
+		if pkt == nil {
+			return nil
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if maxPackets > 0 && flushed >= maxPackets {
+			return ErrShutdownFailOpenLimitReached
+		}
+		if err := w.adapter.Send(ctx, pkt); err != nil {
+			return err
+		}
+		flushed++
+		return nil
+	}
+
+	// 1) Release any held packets for flows still collecting (or any flow that
+	//    has a non-empty HeldPackets slice).
+	stop := false
+	var stopErr error
+	w.flows.Range(func(key flow.Key, st *flow.FlowState) {
+		if stop {
+			return
+		}
+		if st == nil || len(st.HeldPackets) == 0 {
+			return
+		}
+		for _, pkt := range st.HeldPackets {
+			if err := reinject(pkt); err != nil {
+				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrShutdownFailOpenLimitReached) {
+					stop = true
+					stopErr = err
+					return
+				}
+				if firstErr == nil {
+					firstErr = err
+				}
+			}
+		}
+	})
+	if stopErr != nil {
+		if firstErr != nil {
+			return errors.Join(firstErr, stopErr)
+		}
+		return stopErr
+	}
+
+	// 2) Drain any queued-but-unprocessed packets and pass them through.
+	for {
+		if err := ctx.Err(); err != nil {
+			if firstErr != nil {
+				return errors.Join(firstErr, err)
+			}
+			return err
+		}
+		if maxPackets > 0 && flushed >= maxPackets {
+			if firstErr != nil {
+				return errors.Join(firstErr, ErrShutdownFailOpenLimitReached)
+			}
+			return ErrShutdownFailOpenLimitReached
+		}
+		select {
+		case pkt, ok := <-w.in:
+			if !ok {
+				return firstErr
+			}
+			if pkt == nil {
+				continue
+			}
+			if err := reinject(pkt); err != nil {
+				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrShutdownFailOpenLimitReached) {
+					if firstErr != nil {
+						return errors.Join(firstErr, err)
+					}
+					return err
+				}
+				if firstErr == nil {
+					firstErr = err
+				}
+			}
+		default:
+			return firstErr
+		}
+	}
 }

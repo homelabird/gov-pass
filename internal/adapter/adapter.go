@@ -13,6 +13,10 @@ type Adapter interface {
 	Send(ctx context.Context, pkt *packet.Packet) error
 	Drop(ctx context.Context, pkt *packet.Packet) error
 	CalcChecksums(pkt *packet.Packet) error
+	// Flush best-effort releases any adapter-level pending captured packets by
+	// passing them through (fail-open). It is intended for shutdown paths and
+	// should be called before Close().
+	Flush(ctx context.Context) error
 	Close() error
 }
 
@@ -54,6 +58,10 @@ func (s *StubAdapter) Drop(ctx context.Context, pkt *packet.Packet) error {
 
 func (s *StubAdapter) CalcChecksums(pkt *packet.Packet) error {
 	return ErrNotImplemented
+}
+
+func (s *StubAdapter) Flush(ctx context.Context) error {
+	return nil
 }
 
 func (s *StubAdapter) Close() error {

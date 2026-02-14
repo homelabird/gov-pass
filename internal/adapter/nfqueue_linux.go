@@ -4,7 +4,10 @@ package adapter
 
 import (
 	"context"
+	"errors"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	nfqueue "github.com/florianl/go-nfqueue"
 	"github.com/mdlayher/netlink"
@@ -27,6 +30,9 @@ type NFQueueAdapter struct {
 	mark  uint32
 
 	closeOnce sync.Once
+
+	flushing atomic.Bool
+	inFlight atomic.Int32
 }
 
 func NewNFQueue(opts NFQueueOptions) (*NFQueueAdapter, error) {
@@ -128,6 +134,54 @@ func (n *NFQueueAdapter) CalcChecksums(pkt *packet.Packet) error {
 	return nil
 }
 
+// Flush releases any packets already delivered to the adapter recv buffer by
+// accepting them (fail-open). It also stops new callbacks best-effort so no
+// additional packets are enqueued while draining.
+func (n *NFQueueAdapter) Flush(ctx context.Context) error {
+	if n.queue == nil {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	n.flushing.Store(true)
+	if n.stop != nil {
+		n.stop()
+	}
+
+	// Wait for in-flight callbacks to finish so no new packets are enqueued after
+	// we decide the recv buffer is drained.
+	for {
+		if n.inFlight.Load() == 0 {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+
+	var errs []error
+	for {
+		select {
+		case pkt := <-n.recv:
+			if pkt == nil {
+				continue
+			}
+			if err := n.setVerdict(pkt.NFQID, nfqueue.NfAccept); err != nil {
+				errs = append(errs, err)
+			}
+		default:
+			if len(errs) > 0 {
+				return errors.Join(errs...)
+			}
+			return nil
+		}
+	}
+}
+
 func (n *NFQueueAdapter) Close() error {
 	var err error
 	n.closeOnce.Do(func() {
@@ -148,21 +202,32 @@ func (n *NFQueueAdapter) Close() error {
 }
 
 func (n *NFQueueAdapter) onPacket(a nfqueue.Attribute) int {
+	n.inFlight.Add(1)
+	defer n.inFlight.Add(-1)
+
 	if a.Payload == nil || a.PacketID == nil {
 		return 0
 	}
+	id := *a.PacketID
+
+	// If we're flushing/shutting down, do not enqueue. Immediately fail-open.
+	if n.flushing.Load() || n.ctx.Err() != nil {
+		_ = n.setVerdict(id, nfqueue.NfAccept)
+		return 0
+	}
+
 	payload := append([]byte(nil), (*a.Payload)...)
 	pkt := &packet.Packet{
 		Data:   payload,
 		Source: packet.SourceCaptured,
-		NFQID:  *a.PacketID,
+		NFQID:  id,
 	}
 
 	select {
 	case n.recv <- pkt:
 		return 0
 	default:
-		_ = n.setVerdict(*a.PacketID, nfqueue.NfAccept)
+		_ = n.setVerdict(id, nfqueue.NfAccept)
 		return 0
 	}
 }

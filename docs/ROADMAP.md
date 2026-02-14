@@ -148,7 +148,7 @@ If recordLen exceeds max-buffer or timeout occurs, fail-open.
 
 ### Phase L1
 
-- Choose NFQUEUE Go binding (libnetfilter_queue via cgo)
+- Choose NFQUEUE Go binding (pure-Go `go-nfqueue`)
 - Add Linux build-tagged adapter stubs
 - Add flags: queue-num, copy-range, mark, rule-install/rule-remove
 - Script: install/remove NFQUEUE rules (iptables + nftables variants)

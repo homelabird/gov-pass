@@ -46,17 +46,24 @@ NFQUEUE responsibilities:
 Use mangle OUTPUT so we see post-routing packets:
 
 ```bash
+# Create a dedicated chain so we only manage our own rules
+iptables -t mangle -N GOVPASS_OUTPUT || true
+iptables -t mangle -F GOVPASS_OUTPUT
+iptables -t mangle -C OUTPUT -j GOVPASS_OUTPUT || iptables -t mangle -I OUTPUT 1 -j GOVPASS_OUTPUT
+
 # Mark reinjected packets to bypass NFQUEUE
-iptables -t mangle -A OUTPUT -m mark --mark 0x1/0x1 -j RETURN
+iptables -t mangle -A GOVPASS_OUTPUT -m mark --mark 0x1/0x1 -j RETURN
 
 # Optional: exclude loopback
-iptables -t mangle -A OUTPUT -o lo -j RETURN
+iptables -t mangle -A GOVPASS_OUTPUT -o lo -j RETURN
 
 # Queue outbound TCP 443
-iptables -t mangle -A OUTPUT -p tcp --dport 443 -j NFQUEUE --queue-num 100 --queue-bypass
+iptables -t mangle -A GOVPASS_OUTPUT -p tcp --dport 443 -j NFQUEUE --queue-num 100 --queue-bypass
 ```
 
 For nftables, use a similar rule set with `queue num 100 bypass`.
+When using an `inet` table, ensure the queue rule is restricted to IPv4 only
+(e.g., `meta nfproto ipv4 ...`) because the splitter currently binds AF_INET.
 
 ## Injection strategy (raw socket)
 
@@ -84,6 +91,11 @@ For nftables, use a similar rule set with `queue num 100 bypass`.
 Policy:
 - Disable GRO/GSO/TSO on the egress interface for stable behavior.
 - Raw socket reinjection does not re-segment large offloaded packets.
+
+Operational default:
+- If offload is disabled automatically, the app will attempt to restore the
+  original GRO/GSO/TSO settings on exit (`--auto-offload-restore=true`) when it
+  can read the initial state successfully.
 
 Example:
 ```bash

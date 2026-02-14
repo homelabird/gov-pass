@@ -26,7 +26,7 @@ type DivertOptions struct {
 
 // DivertAdapter handles pf divert recv/send.
 type DivertAdapter struct {
-	fd int
+	fd   int
 	port uint16
 
 	closeOnce sync.Once
@@ -130,6 +130,54 @@ func (d *DivertAdapter) CalcChecksums(pkt *packet.Packet) error {
 	tcpSum := packet.TCPChecksumIPv4(pkt.Data, ipHeaderLen)
 	packet.SetIPv4Checksum(pkt.Data, ipSum)
 	packet.SetTCPChecksum(pkt.Data, ipHeaderLen, tcpSum)
+	return nil
+}
+
+// Flush drains any packets already queued in the divert socket receive buffer
+// and reinjects them (fail-open). This is best-effort and intended for shutdown
+// paths.
+func (d *DivertAdapter) Flush(ctx context.Context) error {
+	if d.fd < 0 {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	buf := make([]byte, divertMaxPacket)
+	var errs []error
+	for {
+		select {
+		case <-ctx.Done():
+			if len(errs) > 0 {
+				return errors.Join(append(errs, ctx.Err())...)
+			}
+			return ctx.Err()
+		default:
+		}
+
+		n, from, err := unix.Recvfrom(d.fd, buf, unix.MSG_DONTWAIT)
+		if err != nil {
+			if err == unix.EINTR {
+				continue
+			}
+			if err == unix.EAGAIN || err == unix.EWOULDBLOCK {
+				break
+			}
+			errs = append(errs, err)
+			break
+		}
+		if n == 0 {
+			continue
+		}
+		if sendErr := unix.Sendto(d.fd, buf[:n], 0, from); sendErr != nil {
+			errs = append(errs, sendErr)
+		}
+	}
+
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
 	return nil
 }
 

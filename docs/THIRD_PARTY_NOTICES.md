@@ -11,9 +11,7 @@ For upstream sources and local patches, see `docs/THIRD_PARTY_SOURCES.md`.
 
 ## System dependencies (Linux)
 
-- libnetfilter_queue (GPL-2.0-only)
-  - https://git.netfilter.org/libnetfilter_queue/plain/COPYING
-  - Provided by distro packages (e.g., `libnetfilter-queue-dev`)
+None. The Linux NFQUEUE path uses a pure-Go netlink client (`go-nfqueue`).
 
 ## Go module dependencies (Linux NFQUEUE path)
 

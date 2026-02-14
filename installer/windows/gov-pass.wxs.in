@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product
+    Id="*"
+    Name="gov-pass"
+    Language="1033"
+    Version="{{VERSION}}"
+    Manufacturer="fk-gov"
+    UpgradeCode="8F8F2C6A-17F6-4E25-8D9E-0B3E2B3F35D0">
+    <Package
+      InstallerVersion="500"
+      Compressed="yes"
+      InstallScope="perMachine"
+      InstallPrivileges="elevated"
+      Platform="x64" />
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of gov-pass is already installed." />
+    <MediaTemplate />
+
+    <Feature Id="ProductFeature" Title="gov-pass" Level="1">
+      <ComponentRef Id="cmpMain" />
+      <ComponentRef Id="cmpDocs" />
+      <ComponentRef Id="cmpLicenses" />
+      <ComponentRef Id="cmpStartMenu" />
+    </Feature>
+  </Product>
+
+  <Fragment>
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="INSTALLFOLDER" Name="gov-pass">
+          <Directory Id="DocsFolder" Name="docs" />
+          <Directory Id="LicensesFolder" Name="licenses" />
+        </Directory>
+      </Directory>
+
+      <Directory Id="ProgramMenuFolder">
+        <Directory Id="ApplicationProgramsFolder" Name="gov-pass" />
+      </Directory>
+    </Directory>
+  </Fragment>
+
+  <Fragment>
+    <DirectoryRef Id="INSTALLFOLDER">
+      <Component Id="cmpMain" Guid="1E9D0A21-05D7-43D2-9B8D-3A3F1B2C9E0C" Win64="yes">
+        <File Id="fileSplitterExe" Source="{{SOURCE_DIR}}/splitter.exe" KeyPath="yes">
+          <ServiceInstall
+            Id="svcGovPass"
+            Name="gov-pass"
+            DisplayName="gov-pass splitter"
+            Description="Split-only TLS ClientHello splitter (WinDivert)"
+            Start="auto"
+            Type="ownProcess"
+            ErrorControl="normal"
+            Account="LocalSystem"
+            Arguments="--service --service-name gov-pass" />
+          <ServiceControl
+            Id="ctlGovPass"
+            Name="gov-pass"
+            Start="install"
+            Stop="both"
+            Remove="uninstall"
+            Wait="yes" />
+        </File>
+        <File Id="fileSplitterAdminCmd" Source="{{SOURCE_DIR}}/splitter-admin.cmd" />
+        <File Id="fileServiceStartAdminCmd" Source="{{SOURCE_DIR}}/service-start-admin.cmd" />
+        <File Id="fileServiceStopAdminCmd" Source="{{SOURCE_DIR}}/service-stop-admin.cmd" />
+        <File Id="fileServiceRestartAdminCmd" Source="{{SOURCE_DIR}}/service-restart-admin.cmd" />
+        <File Id="fileServiceReloadAdminCmd" Source="{{SOURCE_DIR}}/service-reload-admin.cmd" />
+        <File Id="fileWinDivertDll" Source="{{SOURCE_DIR}}/WinDivert.dll" />
+        <File Id="fileWinDivertSys" Source="{{SOURCE_DIR}}/WinDivert64.sys" />
+        <File Id="fileLicense" Source="{{SOURCE_DIR}}/LICENSE" />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="DocsFolder">
+      <Component Id="cmpDocs" Guid="F4C7B5C6-5C01-4C3F-9F0C-8A7A4B15F8A1" Win64="yes">
+        <File Id="fileThirdPartyNotices" Source="{{SOURCE_DIR}}/docs/THIRD_PARTY_NOTICES.md" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="LicensesFolder">
+      <Component Id="cmpLicenses" Guid="A4A60414-3FA4-4C47-8AB3-9A4E2BEEAA42" Win64="yes">
+        <File Id="fileWinDivertLicense" Source="{{SOURCE_DIR}}/licenses/WinDivert-LICENSE.txt" KeyPath="yes" />
+        <File Id="fileGoNfqueueLicense" Source="{{SOURCE_DIR}}/licenses/go-nfqueue-LICENSE.txt" />
+        <File Id="fileNetlinkLicense" Source="{{SOURCE_DIR}}/licenses/netlink-LICENSE.txt" />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="ApplicationProgramsFolder">
+      <Component Id="cmpStartMenu" Guid="0B7E4F39-8B5D-4DA3-9C62-35D8C29B9F6D" Win64="yes">
+        <Shortcut
+          Id="StartMenuShortcutAdmin"
+          Name="gov-pass splitter (Admin)"
+          Description="Run splitter with Administrator privileges"
+          Target="[INSTALLFOLDER]splitter-admin.cmd"
+          WorkingDirectory="INSTALLFOLDER" />
+        <Shortcut
+          Id="StartMenuShortcutServiceStart"
+          Name="Start gov-pass service (Admin)"
+          Description="Start the gov-pass Windows service"
+          Target="[INSTALLFOLDER]service-start-admin.cmd"
+          WorkingDirectory="INSTALLFOLDER" />
+        <Shortcut
+          Id="StartMenuShortcutServiceStop"
+          Name="Stop gov-pass service (Admin)"
+          Description="Stop the gov-pass Windows service"
+          Target="[INSTALLFOLDER]service-stop-admin.cmd"
+          WorkingDirectory="INSTALLFOLDER" />
+        <Shortcut
+          Id="StartMenuShortcutServiceRestart"
+          Name="Restart gov-pass service (Admin)"
+          Description="Restart the gov-pass Windows service"
+          Target="[INSTALLFOLDER]service-restart-admin.cmd"
+          WorkingDirectory="INSTALLFOLDER" />
+        <Shortcut
+          Id="StartMenuShortcutServiceReload"
+          Name="Reload gov-pass config (Admin)"
+          Description="Reload config.json (in-place apply)"
+          Target="[INSTALLFOLDER]service-reload-admin.cmd"
+          WorkingDirectory="INSTALLFOLDER" />
+        <RemoveFolder Id="RemoveApplicationProgramsFolder" Directory="ApplicationProgramsFolder" On="uninstall" />
+        <RegistryValue
+          Root="HKLM"
+          Key="Software\\fk-gov\\gov-pass"
+          Name="installed"
+          Type="integer"
+          Value="1"
+          KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+  </Fragment>
+</Wix>

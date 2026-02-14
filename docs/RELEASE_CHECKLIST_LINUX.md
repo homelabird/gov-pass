@@ -42,7 +42,7 @@ Linux build to a stable release.
 - Add a load probe script and document usage
 
 ### Packaging/Operations
-- Confirm CGO + libnetfilter_queue build steps
+- Confirm pure-Go build steps (no CGO / no libnetfilter_queue dependency)
 - Provide systemd unit and capability (setcap) guidance
 - Finalize dist packaging layout
 

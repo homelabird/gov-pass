@@ -37,15 +37,15 @@ const (
 )
 
 type FlowState struct {
-	State        State
-	BaseSeq      uint32
-	LastActive   time.Time
-	CollectStart time.Time
+	State           State
+	BaseSeq         uint32
+	LastActive      time.Time
+	CollectStart    time.Time
 	FirstPayloadLen int
-	Template     *packet.Packet
-	HeldPackets  []*packet.Packet
-	Reassembler  *reassembly.Buffer
-	Processed    bool
+	Template        *packet.Packet
+	HeldPackets     []*packet.Packet
+	Reassembler     *reassembly.Buffer
+	Processed       bool
 }
 
 type Table struct {
@@ -54,6 +54,10 @@ type Table struct {
 
 func NewTable() *Table {
 	return &Table{items: make(map[Key]*FlowState)}
+}
+
+func (t *Table) Len() int {
+	return len(t.items)
 }
 
 func (t *Table) Get(key Key) (*FlowState, bool) {

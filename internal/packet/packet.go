@@ -6,9 +6,9 @@ import (
 )
 
 var (
-	ErrNotIPv4 = errors.New("not ipv4")
-	ErrNotTCP  = errors.New("not tcp")
-	ErrTooShort = errors.New("packet too short")
+	ErrNotIPv4      = errors.New("not ipv4")
+	ErrNotTCP       = errors.New("not tcp")
+	ErrTooShort     = errors.New("packet too short")
 	ErrIPv4Fragment = errors.New("ipv4 fragment")
 )
 
@@ -23,11 +23,11 @@ const (
 )
 
 type Packet struct {
-	Data []byte
-	Addr Address
-	Meta Meta
+	Data   []byte
+	Addr   Address
+	Meta   Meta
 	Source Source
-	NFQID uint32
+	NFQID  uint32
 }
 
 // Address holds raw WinDivert address bytes for send/recv.
@@ -37,16 +37,16 @@ type Address struct {
 }
 
 type Meta struct {
-	SrcIP        [4]byte
-	DstIP        [4]byte
-	SrcPort      uint16
-	DstPort      uint16
-	Proto        uint8
-	Seq          uint32
-	Ack          uint32
-	Flags        uint8
-	IPHeaderLen  int
-	TCPHeaderLen int
+	SrcIP         [4]byte
+	DstIP         [4]byte
+	SrcPort       uint16
+	DstPort       uint16
+	Proto         uint8
+	Seq           uint32
+	Ack           uint32
+	Flags         uint8
+	IPHeaderLen   int
+	TCPHeaderLen  int
 	PayloadOffset int
 }
 

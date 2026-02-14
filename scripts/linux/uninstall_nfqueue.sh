@@ -42,8 +42,16 @@ fi
 
 if command -v nft >/dev/null 2>&1; then
   TABLE="gov_pass"
-  if nft list table inet "$TABLE" >/dev/null 2>&1; then
-    nft delete table inet "$TABLE"
+  CHAIN="output"
+  TAG="gov-pass"
+
+  if nft list chain inet "$TABLE" "$CHAIN" >/dev/null 2>&1; then
+    nft -a list chain inet "$TABLE" "$CHAIN" 2>/dev/null | \
+      awk -v tag="comment \\\"$TAG\\\"" '$0 ~ tag { for (i=1;i<=NF;i++) if ($i==\"handle\") print $(i+1) }' | \
+      while read -r h; do
+        [ -n "$h" ] || continue
+        nft delete rule inet "$TABLE" "$CHAIN" handle "$h" 2>/dev/null || true
+      done
   fi
   exit 0
 fi
@@ -53,10 +61,11 @@ if ! command -v iptables >/dev/null 2>&1; then
   exit 1
 fi
 
-iptables -t mangle -D OUTPUT -p tcp --dport 443 -j NFQUEUE --queue-num "$QUEUE_NUM" --queue-bypass 2>/dev/null || true
+CHAIN="GOVPASS_OUTPUT"
 
-if [ "$EXCLUDE_LOOPBACK" -eq 1 ]; then
-  iptables -t mangle -D OUTPUT -o lo -j RETURN 2>/dev/null || true
-fi
+while iptables -t mangle -D OUTPUT -j "$CHAIN" 2>/dev/null; do
+  :
+done
 
-iptables -t mangle -D OUTPUT -m mark --mark "$MARK"/"$MARK" -j RETURN 2>/dev/null || true
+iptables -t mangle -F "$CHAIN" 2>/dev/null || true
+iptables -t mangle -X "$CHAIN" 2>/dev/null || true

@@ -47,6 +47,26 @@ Flags:
 - --windivert-sys: override driver sys filename
 - --auto-install: enable auto install/start (default true)
 - --auto-uninstall: uninstall if installed by this run (default true)
+- --auto-download-windivert: download pinned WinDivert zip if files are missing (default true)
+  - if the exe directory is not writable, the downloader falls back to `C:\ProgramData\gov-pass\windivert`
+- --service: run as a Windows service (SCM)
+
+## Windows MSI (service auto-start)
+
+The MSI installer installs gov-pass under Program Files and registers a Windows
+service named `gov-pass` that starts automatically.
+
+Service notes:
+- The service runs `splitter.exe --service --service-name gov-pass`.
+- The service reads config from `C:\ProgramData\gov-pass\config.json` (created on first run if missing).
+- Logs are written to `C:\ProgramData\gov-pass\splitter.log`.
+- The MSI does not remove the global WinDivert driver service on uninstall.
+
+Build MSI in CI:
+- GitLab release builds use `msitools` (`wixl`) with the template in `installer/windows/`.
+- Optional: a Windows-runner E2E job (`verify_windows_msi_e2e`) can install/uninstall the MSI and
+  smoke-test service start/stop/reload. Enable it by setting `WINDOWS_E2E=1` and providing a
+  Windows runner tagged `windows`.
 
 ## Linux packaging and operations (NFQUEUE)
 
@@ -56,11 +76,10 @@ Default deployment layout:
 
 Build:
 ```bash
-CGO_ENABLED=1 go build -o dist/splitter ./cmd/splitter
+go build -o dist/splitter ./cmd/splitter
 ```
 
 Dependencies:
-- `libnetfilter_queue` (runtime)
 - root or capabilities: `CAP_NET_ADMIN`, `CAP_NET_RAW`
 
 Install/Run (default, root):
@@ -71,12 +90,14 @@ sudo ./dist/splitter --queue-num 100 --mark 1
 By default the Linux binary will:
 - install NFQUEUE rules using nft or iptables
 - disable GRO/GSO/TSO on the egress interface (auto-detected)
-- offload changes persist until re-enabled with ethtool
+- by default, restore offload settings on exit when possible (`--auto-offload-restore=true`)
 
 Override defaults:
 - `--auto-rules=false` to manage rules manually
 - `--auto-offload=false` to skip offload changes
+- `--auto-offload-restore=false` to keep offload changes persistent after exit
 - `--iface <iface>` to override the auto-detected interface
+- `--auto-install-tools=false` to disable package-manager auto install of missing tools
 
 Note: auto rules/offload require root because they invoke `nft/iptables/ethtool`.
 If using `setcap`, disable the auto helpers and manage rules/offload manually.

@@ -30,6 +30,9 @@ func main() {
 	workers := flag.Int("workers", cfg.WorkerCount, "worker count for sharded processing")
 	flowTimeout := flag.Duration("flow-timeout", cfg.FlowIdleTimeout, "idle timeout for flow cleanup")
 	gcInterval := flag.Duration("gc-interval", cfg.GCInterval, "flow GC interval")
+	maxFlows := flag.Int("max-flows-per-worker", cfg.MaxFlowsPerWorker, "max tracked flows per worker (0=unlimited)")
+	maxReassembly := flag.Int("max-reassembly-bytes-per-worker", cfg.MaxReassemblyBytesPerWorker, "max total reassembly bytes per worker (0=unlimited)")
+	maxHeldBytes := flag.Int("max-held-bytes-per-worker", cfg.MaxHeldBytesPerWorker, "max total held packet bytes per worker (0=unlimited)")
 	divertPort := flag.Int("divert-port", defaultDivertPort, "pf divert-to port")
 	flag.Parse()
 
@@ -55,6 +58,21 @@ func main() {
 	if *collectTimeout < 1*time.Millisecond {
 		log.Fatal("collect-timeout must be >= 1ms")
 	}
+	if *flowTimeout < 1*time.Millisecond {
+		log.Fatal("flow-timeout must be >= 1ms")
+	}
+	if *gcInterval < 1*time.Millisecond {
+		log.Fatal("gc-interval must be >= 1ms")
+	}
+	if *maxFlows < 0 {
+		log.Fatal("max-flows-per-worker must be >= 0")
+	}
+	if *maxReassembly < 0 {
+		log.Fatal("max-reassembly-bytes-per-worker must be >= 0")
+	}
+	if *maxHeldBytes < 0 {
+		log.Fatal("max-held-bytes-per-worker must be >= 0")
+	}
 	if *divertPort < 1 || *divertPort > 65535 {
 		log.Fatal("divert-port must be in 1..65535")
 	}
@@ -65,6 +83,9 @@ func main() {
 	cfg.MaxBufferBytes = *maxBuffer
 	cfg.MaxHeldPackets = *maxHeld
 	cfg.MaxSegmentPayload = *maxSegPayload
+	cfg.MaxFlowsPerWorker = *maxFlows
+	cfg.MaxReassemblyBytesPerWorker = *maxReassembly
+	cfg.MaxHeldBytesPerWorker = *maxHeldBytes
 	cfg.WorkerCount = *workers
 	cfg.FlowIdleTimeout = *flowTimeout
 	cfg.GCInterval = *gcInterval

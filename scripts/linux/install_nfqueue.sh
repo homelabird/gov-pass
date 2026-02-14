@@ -43,17 +43,26 @@ fi
 if command -v nft >/dev/null 2>&1; then
   TABLE="gov_pass"
   CHAIN="output"
+  TAG="gov-pass"
 
   nft list table inet "$TABLE" >/dev/null 2>&1 || nft add table inet "$TABLE"
   nft list chain inet "$TABLE" "$CHAIN" >/dev/null 2>&1 || \
     nft add chain inet "$TABLE" "$CHAIN" "{ type filter hook output priority mangle; policy accept; }"
 
-  nft flush chain inet "$TABLE" "$CHAIN"
-  nft add rule inet "$TABLE" "$CHAIN" meta mark \& "$MARK" == "$MARK" return
+  # Delete only rules we previously installed (tagged), do not flush user rules.
+  nft -a list chain inet "$TABLE" "$CHAIN" 2>/dev/null | \
+    awk -v tag="comment \\\"$TAG\\\"" '$0 ~ tag { for (i=1;i<=NF;i++) if ($i==\"handle\") print $(i+1) }' | \
+    while read -r h; do
+      [ -n "$h" ] || continue
+      nft delete rule inet "$TABLE" "$CHAIN" handle "$h" 2>/dev/null || true
+    done
+
+  nft add rule inet "$TABLE" "$CHAIN" meta mark \& "$MARK" == "$MARK" return comment "$TAG"
   if [ "$EXCLUDE_LOOPBACK" -eq 1 ]; then
-    nft add rule inet "$TABLE" "$CHAIN" oifname "lo" return
+    nft add rule inet "$TABLE" "$CHAIN" oifname "lo" return comment "$TAG"
   fi
-  nft add rule inet "$TABLE" "$CHAIN" tcp dport 443 queue num "$QUEUE_NUM" bypass
+  # Restrict to IPv4 only; the splitter currently only handles AF_INET packets.
+  nft add rule inet "$TABLE" "$CHAIN" meta nfproto ipv4 tcp dport 443 queue num "$QUEUE_NUM" bypass comment "$TAG"
   exit 0
 fi
 
@@ -62,13 +71,17 @@ if ! command -v iptables >/dev/null 2>&1; then
   exit 1
 fi
 
-iptables -t mangle -C OUTPUT -m mark --mark "$MARK"/"$MARK" -j RETURN 2>/dev/null || \
-  iptables -t mangle -A OUTPUT -m mark --mark "$MARK"/"$MARK" -j RETURN
+CHAIN="GOVPASS_OUTPUT"
 
+# Dedicated chain so we only manage our own rules and can cleanly uninstall.
+iptables -t mangle -N "$CHAIN" 2>/dev/null || true
+iptables -t mangle -F "$CHAIN"
+
+iptables -t mangle -C OUTPUT -j "$CHAIN" 2>/dev/null || \
+  iptables -t mangle -I OUTPUT 1 -j "$CHAIN"
+
+iptables -t mangle -A "$CHAIN" -m mark --mark "$MARK"/"$MARK" -j RETURN
 if [ "$EXCLUDE_LOOPBACK" -eq 1 ]; then
-  iptables -t mangle -C OUTPUT -o lo -j RETURN 2>/dev/null || \
-    iptables -t mangle -A OUTPUT -o lo -j RETURN
+  iptables -t mangle -A "$CHAIN" -o lo -j RETURN
 fi
-
-iptables -t mangle -C OUTPUT -p tcp --dport 443 -j NFQUEUE --queue-num "$QUEUE_NUM" --queue-bypass 2>/dev/null || \
-  iptables -t mangle -A OUTPUT -p tcp --dport 443 -j NFQUEUE --queue-num "$QUEUE_NUM" --queue-bypass
+iptables -t mangle -A "$CHAIN" -p tcp --dport 443 -j NFQUEUE --queue-num "$QUEUE_NUM" --queue-bypass
