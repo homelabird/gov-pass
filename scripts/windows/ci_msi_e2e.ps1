@@ -136,11 +136,17 @@ try {
   if (-not (Test-Path $exePath)) {
     throw "splitter.exe not found: $exePath"
   }
+  $trayExePath = Join-Path $installDir "gov-pass-tray.exe"
+  if (-not (Test-Path $trayExePath)) {
+    throw "gov-pass-tray.exe not found: $trayExePath"
+  }
 
   $menuDir = Join-Path $env:ProgramData "Microsoft\\Windows\\Start Menu\\Programs\\gov-pass"
+  $lnkTray = Join-Path $menuDir "gov-pass tray.lnk"
   $lnkStart = Join-Path $menuDir "Start gov-pass service (Admin).lnk"
   $lnkStop = Join-Path $menuDir "Stop gov-pass service (Admin).lnk"
   $lnkReload = Join-Path $menuDir "Reload gov-pass config (Admin).lnk"
+  Wait-PathExists -Path $lnkTray -TimeoutSeconds 30
   Wait-PathExists -Path $lnkStart -TimeoutSeconds 30
   Wait-PathExists -Path $lnkStop -TimeoutSeconds 30
   Wait-PathExists -Path $lnkReload -TimeoutSeconds 30

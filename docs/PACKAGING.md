@@ -67,6 +67,8 @@ Service notes:
 - Config reload: `sc.exe control gov-pass paramchange`
   - applies engine config in-place (except worker topology) and non-zero WinDivert queue settings
   - requires service restart for: `windivert.filter`, `windivert_dir` / `windivert_sys`, and reverting `queue_*` to `0` (driver defaults)
+- Tray UI: the MSI also installs `gov-pass-tray.exe` and a Start Menu shortcut (`gov-pass tray`)
+  to show service status and start/stop/reload it (with UAC prompt).
 
 Build MSI in CI:
 - GitLab release builds use `msitools` (`wixl`) with the template in `installer/windows/`.

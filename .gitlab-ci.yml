@@ -26,6 +26,7 @@ build_release:
         cp LICENSE "$dest/";
         cp docs/THIRD_PARTY_NOTICES.md "$dest/docs/";
         cp third_party/windivert/WinDivert-2.2.2-A/LICENSE "$dest/licenses/WinDivert-LICENSE.txt";
+        cp third_party/systray/LICENSE "$dest/licenses/systray-LICENSE.txt";
         cp third_party/go-nfqueue/LICENSE "$dest/licenses/go-nfqueue-LICENSE.txt";
         cp third_party/netlink/LICENSE.md "$dest/licenses/netlink-LICENSE.txt";
       }
@@ -42,6 +43,7 @@ build_release:
     - WIN_DIR="$BASE_DIR/gov-pass-${PKG_VERSION}-windows-amd64"
     - mkdir -p "$WIN_DIR"
     - CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o "$WIN_DIR/splitter.exe" ./cmd/splitter
+    - CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "-H=windowsgui" -o "$WIN_DIR/gov-pass-tray.exe" ./cmd/gov-pass-tray
     - cp third_party/windivert/WinDivert-2.2.2-A/x64/WinDivert.dll "$WIN_DIR/"
     - cp third_party/windivert/WinDivert-2.2.2-A/x64/WinDivert64.sys "$WIN_DIR/"
     - if [ -f third_party/windivert/WinDivert-2.2.2-A/x64/WinDivert.cat ]; then cp third_party/windivert/WinDivert-2.2.2-A/x64/WinDivert.cat "$WIN_DIR/"; fi
@@ -62,6 +64,7 @@ build_release:
     - (cd "$BASE_DIR" && msiinfo export "gov-pass-${PKG_VERSION}-windows-amd64.msi" ServiceInstall | grep -q "gov-pass")
     - (cd "$BASE_DIR" && msiinfo export "gov-pass-${PKG_VERSION}-windows-amd64.msi" ServiceControl | grep -q "gov-pass")
     - (cd "$BASE_DIR" && msiinfo export "gov-pass-${PKG_VERSION}-windows-amd64.msi" Shortcut | grep -q "Reload gov-pass config")
+    - (cd "$BASE_DIR" && msiinfo export "gov-pass-${PKG_VERSION}-windows-amd64.msi" Shortcut | grep -q "gov-pass tray")
     - (cd "$BASE_DIR" && sha256sum "gov-pass-${PKG_VERSION}-linux-amd64.tar.gz" "gov-pass-${PKG_VERSION}-freebsd-amd64.tar.gz" "gov-pass-${PKG_VERSION}-windows-amd64.zip" "gov-pass-${PKG_VERSION}-windows-amd64.msi" > SHA256SUMS)
   artifacts:
     paths:

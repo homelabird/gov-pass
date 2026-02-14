@@ -62,6 +62,7 @@
             Remove="uninstall"
             Wait="yes" />
         </File>
+        <File Id="fileTrayExe" Source="{{SOURCE_DIR}}/gov-pass-tray.exe" />
         <File Id="fileSplitterAdminCmd" Source="{{SOURCE_DIR}}/splitter-admin.cmd" />
         <File Id="fileServiceStartAdminCmd" Source="{{SOURCE_DIR}}/service-start-admin.cmd" />
         <File Id="fileServiceStopAdminCmd" Source="{{SOURCE_DIR}}/service-stop-admin.cmd" />
@@ -89,6 +90,12 @@
 
     <DirectoryRef Id="ApplicationProgramsFolder">
       <Component Id="cmpStartMenu" Guid="0B7E4F39-8B5D-4DA3-9C62-35D8C29B9F6D" Win64="yes">
+        <Shortcut
+          Id="StartMenuShortcutTray"
+          Name="gov-pass tray"
+          Description="Tray UI to start/stop the gov-pass service"
+          Target="[INSTALLFOLDER]gov-pass-tray.exe"
+          WorkingDirectory="INSTALLFOLDER" />
         <Shortcut
           Id="StartMenuShortcutAdmin"
           Name="gov-pass splitter (Admin)"

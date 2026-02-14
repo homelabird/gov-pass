@@ -125,6 +125,7 @@ Service config example (`C:\ProgramData\gov-pass\config.json`):
 
 Optional interactive run:
 - Use the Start Menu shortcuts:
+  - `gov-pass tray` (system tray UI to start/stop/status the service)
   - `gov-pass splitter (Admin)`
   - `Start gov-pass service (Admin)`
   - `Stop gov-pass service (Admin)`

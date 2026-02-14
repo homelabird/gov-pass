@@ -7,6 +7,7 @@ Highlights:
 - recvLoop ACK-only fast-path to reduce worker queue pressure.
 - DoS guards: per-worker caps for flows/held/reassembly bytes (fail-open on pressure).
 - Windows service/MSI: auto-start service + Start Menu admin shortcuts + ProgramData config/log.
+- Windows UX: system tray app (`gov-pass-tray.exe`) to start/stop/status the `gov-pass` service (with UAC prompt).
 - Windows security: ProgramData ACL hardening for service state (config/log/driver files).
 - Windows WinDivert self-heal: optional auto-download from a pinned zip (SHA256 verified).
 - Linux ops: safe "our rules only" nft/iptables management + offload restore + optional tool auto-install.
