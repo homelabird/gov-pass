@@ -3,6 +3,14 @@
 This project supports signing Windows release artifacts (EXE + MSI) in CI using
 `osslsigncode` and a code signing certificate (PFX/PKCS12).
 
+## SmartScreen Notes
+
+- SmartScreen warnings/blocks are not based on signing alone; SmartScreen is reputation-based.
+- To meaningfully reduce SmartScreen warnings, you need an Authenticode signature from a trusted public CA
+  (OV or EV code signing). Self-signed certificates do not help for end users.
+- Even with a valid signature, new publishers may still see SmartScreen warnings until reputation is established.
+  EV certificates often reduce friction, but they usually require hardware-backed or cloud signing.
+
 ## What Gets Signed
 
 On tag builds, GitLab CI signs:
@@ -32,6 +40,24 @@ Optional:
 - `WINDOWS_CODESIGN_TIMESTAMP_URLS`
   - RFC3161 timestamp server URLs (comma or space separated; tried in order).
   - Default: `http://timestamp.digicert.com,http://timestamp.sectigo.com`
+
+## Verify Signatures
+
+PowerShell:
+
+```powershell
+Get-AuthenticodeSignature .\dist\release\gov-pass-*-windows-amd64.msi |
+  Format-List Status,StatusMessage,SignerCertificate,TimeStamperCertificate
+```
+
+For CI, `scripts/windows/ci_msi_e2e.ps1` asserts that the MSI and installed EXEs are signed.
+
+## EV / Hardware-Backed Keys
+
+Many EV code signing certificates cannot be exported as a PFX (USB token or cloud signing).
+If you use EV:
+- this repo's current CI signing flow (PFX base64 variables + `osslsigncode`) may not apply as-is
+- you typically sign on a Windows runner with the vendor tooling (`signtool.exe`) or integrate the CA's cloud signing
 
 ## Local Signing (WSL/Linux)
 

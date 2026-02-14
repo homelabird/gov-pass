@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- (no entries yet)
+
+## v0.1.3
+
+- Windows MSI: embed the CAB so the installer is standalone (fixes tiny MSI output that referenced an external `cab1.cab`).
+
+## v0.1.2
+
 Highlights:
 - Engine shutdown hardening: bounded worker fail-open drain + adapter-level flush before close.
 - recvLoop ACK-only fast-path to reduce worker queue pressure.

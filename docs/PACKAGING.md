@@ -80,6 +80,42 @@ Build MSI in CI:
   smoke-test service start/stop/reload. Enable it by setting `WINDOWS_E2E=1` and providing a
   Windows runner tagged `windows`.
 
+Build MSI locally on Windows (WiX Toolset v6):
+- Install WiX Toolset v6 so `wix.exe` is available (e.g. `C:\Program Files\WiX Toolset v6.0\bin\wix.exe`).
+- The MSI template in `installer/windows/gov-pass.wxs.in` uses the WiX v3 schema for `wixl` compatibility.
+  WiX v6 builds WiX v4 sources, so you must convert the rendered `.wxs` before building.
+
+Example (PowerShell, repo root):
+
+```powershell
+$version = "v0.1.3"
+$msiVersion = "0.1.3" # MSI wants X.Y.Z
+
+$outDir = (Resolve-Path .\\dist\\release).Path
+$msiRootName = "gov-pass-msi-root-$version"
+$msiRoot = Join-Path $outDir $msiRootName
+
+# 1) Stage MSI root (copy files that the MSI installs).
+New-Item -ItemType Directory -Force -Path $msiRoot | Out-Null
+# Copy your built EXEs + WinDivert files + .cmd shortcuts + LICENSE/docs/licenses into $msiRoot.
+
+# 2) Render the WiX template.
+$tpl = Get-Content installer\\windows\\gov-pass.wxs.in -Raw
+$wxs = Join-Path $outDir "gov-pass-$version.wxs"
+$wxsV4 = Join-Path $outDir "gov-pass-$version.v4.wxs"
+$tpl = $tpl.Replace("{{VERSION}}", $msiVersion).Replace("{{SOURCE_DIR}}", $msiRootName)
+Set-Content -Encoding UTF8 -Path $wxs -Value $tpl
+Copy-Item -Force $wxs $wxsV4
+
+# 3) Convert WiX v3 -> v4 and build.
+$wix = "C:\\Program Files\\WiX Toolset v6.0\\bin\\wix.exe"
+& $wix convert $wxsV4
+& $wix build $wxsV4 -arch x64 -b $outDir -out (Join-Path $outDir "gov-pass-$version-windows-amd64.msi")
+```
+
+Note:
+- Local MSIs/EXEs are unsigned by default; see `docs/CODESIGNING.md` for signing in CI.
+
 ## Linux packaging and operations (NFQUEUE)
 
 Default deployment layout:

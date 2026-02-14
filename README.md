@@ -70,6 +70,16 @@ If you have a release build, you can install via the `.msi` package.
 The installer includes `splitter.exe` and the WinDivert `dll/sys` files.
 Release builds are Authenticode-signed (EXE/MSI); see `docs/CODESIGNING.md`.
 
+SmartScreen notes:
+- Local builds are unsigned by default; Windows may block them ("untrusted app").
+- SmartScreen is reputation-based; even correctly signed builds may warn until publisher reputation is established.
+
+Verify the MSI signature (PowerShell):
+```powershell
+Get-AuthenticodeSignature .\\gov-pass-*-windows-amd64.msi |
+  Format-List Status,StatusMessage,SignerCertificate,TimeStamperCertificate
+```
+
 After installing, a Windows service named `gov-pass` is installed and started
 automatically (Startup type: Automatic).
 

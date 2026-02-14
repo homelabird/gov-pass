@@ -27,12 +27,22 @@ Run (Admin):
 .\\dist\\splitter.exe
 ```
 
+### Windows (tray UI)
+
+```powershell
+go build -ldflags "-H=windowsgui" -o dist\\gov-pass-tray.exe .\\cmd\\gov-pass-tray
+```
+
 ### Windows (service)
 
 - Default service config: `C:\ProgramData\gov-pass\config.json`
 - Default service log: `C:\ProgramData\gov-pass\splitter.log`
 - Reload: `sc.exe control gov-pass paramchange`
 - Service mode hardens ACL on `C:\ProgramData\gov-pass\` (SYSTEM/Admin full, Users read-only). Editing `config.json` requires Admin.
+
+### Windows (MSI)
+
+For MSI packaging details (CI and local WiX v6 build), see `docs/PACKAGING.md`.
 
 ### Linux (NFQUEUE)
 
@@ -68,4 +78,3 @@ sudo ./scripts/linux/uninstall_nfqueue.sh --queue-num 100 --mark 1
 - Keep shutdown paths bounded (timeouts + max packet caps) so Stop does not hang under load.
 - Avoid unbounded growth: flows/held/reassembly bytes should be capped (per worker).
 - Keep cross-platform builds working: use build tags and avoid OS-specific code in shared packages without guards.
-
