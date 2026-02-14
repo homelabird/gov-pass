@@ -1,4 +1,4 @@
 dist/
 *.test.exe
-splitter
-
+/splitter
+/splitter.exe
