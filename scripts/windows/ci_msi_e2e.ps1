@@ -188,11 +188,40 @@ function Assert-RunValueMissing {
   }
 }
 
+function Assert-AuthenticodeSigned {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Path
+  )
+
+  if (-not (Test-Path $Path)) {
+    throw "Signature check failed: file not found: $Path"
+  }
+
+  $sig = Get-AuthenticodeSignature -FilePath $Path
+  if (-not $sig) {
+    throw "Signature check failed: Get-AuthenticodeSignature returned null: $Path"
+  }
+
+  if ($sig.Status -eq "NotSigned" -or $sig.SignatureType -eq "None" -or -not $sig.SignerCertificate) {
+    throw "Expected Authenticode signature but file is not signed: $Path (Status=$($sig.Status))"
+  }
+  if ($sig.Status -eq "HashMismatch") {
+    throw "Authenticode signature hash mismatch: $Path"
+  }
+  if ($sig.Status -ne "Valid") {
+    Write-Host "warning: signature status for ${Path}: $($sig.Status) - $($sig.StatusMessage)"
+  }
+}
+
 $installed = $false
 $trayExePath = ""
 $prevHKCU = @{ Exists = $false; Value = "" }
 $prevHKLM = @{ Exists = $false; Value = "" }
 $regTouched = $false
+
+# Require signed MSI/EXEs in Windows MSI CI.
+Assert-AuthenticodeSigned -Path $MsiPath
 
 try {
   # Best-effort uninstall any previous install matching this package (1605 = not installed).
@@ -218,14 +247,17 @@ try {
   if (-not (Test-Path $exePath)) {
     throw "splitter.exe not found: $exePath"
   }
+  Assert-AuthenticodeSigned -Path $exePath
   $trayExePath = Join-Path $installDir "gov-pass-tray.exe"
   if (-not (Test-Path $trayExePath)) {
     throw "gov-pass-tray.exe not found: $trayExePath"
   }
+  Assert-AuthenticodeSigned -Path $trayExePath
   $helperExePath = Join-Path $installDir "gov-pass-msi-helper.exe"
   if (-not (Test-Path $helperExePath)) {
     throw "gov-pass-msi-helper.exe not found: $helperExePath"
   }
+  Assert-AuthenticodeSigned -Path $helperExePath
 
   $menuDir = Join-Path $env:ProgramData "Microsoft\\Windows\\Start Menu\\Programs\\gov-pass"
   $lnkTray = Join-Path $menuDir "gov-pass tray.lnk"
