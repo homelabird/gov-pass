@@ -68,6 +68,7 @@ disable this with:
 
 If you have a release build, you can install via the `.msi` package.
 The installer includes `splitter.exe` and the WinDivert `dll/sys` files.
+Release builds are Authenticode-signed (EXE/MSI); see `docs/CODESIGNING.md`.
 
 After installing, a Windows service named `gov-pass` is installed and started
 automatically (Startup type: Automatic).

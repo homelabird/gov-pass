@@ -13,7 +13,7 @@ build_release:
     - if: $CI_COMMIT_TAG
   before_script:
     - apt-get update
-    - apt-get install -y --no-install-recommends zip msitools
+    - apt-get install -y --no-install-recommends zip msitools osslsigncode
   script:
     - set -eu
     - mkdir -p "$DIST_DIR"
@@ -45,6 +45,7 @@ build_release:
     - CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o "$WIN_DIR/splitter.exe" ./cmd/splitter
     - CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "-H=windowsgui" -o "$WIN_DIR/gov-pass-tray.exe" ./cmd/gov-pass-tray
     - CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o "$WIN_DIR/gov-pass-msi-helper.exe" ./cmd/gov-pass-msi-helper
+    - WINDOWS_CODESIGN_DESC="gov-pass" WINDOWS_CODESIGN_URL="$CI_PROJECT_URL" bash scripts/ci/sign_windows_artifacts.sh "$WIN_DIR/splitter.exe" "$WIN_DIR/gov-pass-tray.exe" "$WIN_DIR/gov-pass-msi-helper.exe"
     - cp third_party/windivert/WinDivert-2.2.2-A/x64/WinDivert.dll "$WIN_DIR/"
     - cp third_party/windivert/WinDivert-2.2.2-A/x64/WinDivert64.sys "$WIN_DIR/"
     - if [ -f third_party/windivert/WinDivert-2.2.2-A/x64/WinDivert.cat ]; then cp third_party/windivert/WinDivert-2.2.2-A/x64/WinDivert.cat "$WIN_DIR/"; fi
@@ -62,6 +63,7 @@ build_release:
     - WXS_OUT="$BASE_DIR/gov-pass.wxs"
     - sed -e "s/{{VERSION}}/$MSI_VERSION/g" -e "s|{{SOURCE_DIR}}|gov-pass-msi-root|g" installer/windows/gov-pass.wxs.in > "$WXS_OUT"
     - (cd "$BASE_DIR" && wixl -a x64 -o "gov-pass-${PKG_VERSION}-windows-amd64.msi" "gov-pass.wxs")
+    - WINDOWS_CODESIGN_DESC="gov-pass" WINDOWS_CODESIGN_URL="$CI_PROJECT_URL" bash scripts/ci/sign_windows_artifacts.sh "$BASE_DIR/gov-pass-${PKG_VERSION}-windows-amd64.msi"
     - (cd "$BASE_DIR" && msiinfo export "gov-pass-${PKG_VERSION}-windows-amd64.msi" ServiceInstall | grep -q "gov-pass")
     - (cd "$BASE_DIR" && msiinfo export "gov-pass-${PKG_VERSION}-windows-amd64.msi" ServiceControl | grep -q "gov-pass")
     - (cd "$BASE_DIR" && msiinfo export "gov-pass-${PKG_VERSION}-windows-amd64.msi" Shortcut | grep -q "Reload gov-pass config")

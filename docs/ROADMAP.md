@@ -36,6 +36,7 @@ Optional verification:
 Implemented:
 - WinDivert adapter with safer shutdown (cancel-aware recv path + adapter Flush).
 - MSI installs `gov-pass` service (LocalSystem) with auto-start.
+- Code signing for Windows EXE/MSI in CI (Authenticode via `osslsigncode`).
 - ProgramData state:
   - config: `C:\ProgramData\gov-pass\config.json`
   - log: `C:\ProgramData\gov-pass\splitter.log`
@@ -49,7 +50,6 @@ Implemented:
   - extract x64 `WinDivert.dll` + `WinDivert64.sys`
 
 Next:
-- Code signing for Windows binaries and MSI (reduce SmartScreen friction).
 - Explicit versioned config schema docs and examples (service safe defaults).
 - Service hardening follow-ups:
   - optional Event Log integration
@@ -117,4 +117,3 @@ Config/UX:
 Security/Operations:
 - Maintain `SECURITY.md` and keep hardening features documented.
 - Ensure all auto-mutating features have clear opt-out flags (rules/offload/tool install/download).
-
