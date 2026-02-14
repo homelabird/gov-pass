@@ -74,11 +74,20 @@ automatically (Startup type: Automatic).
 
 Notes:
 - WinDivert requires Administrator privileges.
-- Uninstalling gov-pass does not remove the global WinDivert driver service.
+- Uninstalling gov-pass keeps the global WinDivert driver service and `C:\ProgramData\gov-pass\` by default.
 - Service logs are written to `C:\ProgramData\gov-pass\splitter.log`.
 - Service config is read from `C:\ProgramData\gov-pass\config.json` (created on first run if missing).
 - In service mode, `C:\ProgramData\gov-pass\` is ACL-hardened (SYSTEM/Admin full, Users read-only).
   Editing `config.json` requires Admin.
+
+Uninstall options:
+- Purge ProgramData state on uninstall:
+  - `msiexec.exe /x <gov-pass.msi> /qn /norestart GOVPASS_PURGE_PROGRAMDATA=1`
+- Remove the global WinDivert driver service on uninstall:
+  - `msiexec.exe /x <gov-pass.msi> /qn /norestart GOVPASS_REMOVE_WINDIVERT=1`
+  - This may affect other WinDivert-based apps on the machine.
+- Tray autorun cleanup:
+  - On uninstall, gov-pass best-effort removes the `gov-pass-tray` Run value from both HKCU/HKLM.
 
 To manage the service (Admin PowerShell):
 ```powershell

@@ -44,6 +44,7 @@ build_release:
     - mkdir -p "$WIN_DIR"
     - CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o "$WIN_DIR/splitter.exe" ./cmd/splitter
     - CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "-H=windowsgui" -o "$WIN_DIR/gov-pass-tray.exe" ./cmd/gov-pass-tray
+    - CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o "$WIN_DIR/gov-pass-msi-helper.exe" ./cmd/gov-pass-msi-helper
     - cp third_party/windivert/WinDivert-2.2.2-A/x64/WinDivert.dll "$WIN_DIR/"
     - cp third_party/windivert/WinDivert-2.2.2-A/x64/WinDivert64.sys "$WIN_DIR/"
     - if [ -f third_party/windivert/WinDivert-2.2.2-A/x64/WinDivert.cat ]; then cp third_party/windivert/WinDivert-2.2.2-A/x64/WinDivert.cat "$WIN_DIR/"; fi
@@ -60,7 +61,7 @@ build_release:
     - cp -a "$WIN_DIR/." "$MSI_ROOT/"
     - WXS_OUT="$BASE_DIR/gov-pass.wxs"
     - sed -e "s/{{VERSION}}/$MSI_VERSION/g" -e "s|{{SOURCE_DIR}}|gov-pass-msi-root|g" installer/windows/gov-pass.wxs.in > "$WXS_OUT"
-    - (cd "$BASE_DIR" && wixl -o "gov-pass-${PKG_VERSION}-windows-amd64.msi" "gov-pass.wxs")
+    - (cd "$BASE_DIR" && wixl -a x64 -o "gov-pass-${PKG_VERSION}-windows-amd64.msi" "gov-pass.wxs")
     - (cd "$BASE_DIR" && msiinfo export "gov-pass-${PKG_VERSION}-windows-amd64.msi" ServiceInstall | grep -q "gov-pass")
     - (cd "$BASE_DIR" && msiinfo export "gov-pass-${PKG_VERSION}-windows-amd64.msi" ServiceControl | grep -q "gov-pass")
     - (cd "$BASE_DIR" && msiinfo export "gov-pass-${PKG_VERSION}-windows-amd64.msi" Shortcut | grep -q "Reload gov-pass config")

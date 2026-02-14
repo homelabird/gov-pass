@@ -63,7 +63,11 @@ Service notes:
 - Logs are written to `C:\ProgramData\gov-pass\splitter.log`.
 - In service mode, `C:\ProgramData\gov-pass\` is ACL-hardened (SYSTEM/Admin full, Users read-only).
   Editing `config.json` requires Admin.
-- The MSI does not remove the global WinDivert driver service on uninstall.
+- Uninstall behavior:
+  - By default, the MSI keeps `C:\ProgramData\gov-pass\` (config/log) and does not remove the global `WinDivert` driver service.
+  - To purge ProgramData state on uninstall: `msiexec.exe /x <gov-pass.msi> /qn /norestart GOVPASS_PURGE_PROGRAMDATA=1`
+  - To remove the global WinDivert service on uninstall: `msiexec.exe /x <gov-pass.msi> /qn /norestart GOVPASS_REMOVE_WINDIVERT=1`
+    - This may affect other WinDivert-based apps on the machine.
 - Config reload: `sc.exe control gov-pass paramchange`
   - applies engine config in-place (except worker topology) and non-zero WinDivert queue settings
   - requires service restart for: `windivert.filter`, `windivert_dir` / `windivert_sys`, and reverting `queue_*` to `0` (driver defaults)

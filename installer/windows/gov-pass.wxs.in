@@ -11,11 +11,71 @@
       InstallerVersion="500"
       Compressed="yes"
       InstallScope="perMachine"
-      InstallPrivileges="elevated"
-      Platform="x64" />
+      />
+
+    <!--
+      Uninstall options (pass as MSI properties to msiexec /x):
+      - GOVPASS_PURGE_PROGRAMDATA=1: delete %ProgramData%\gov-pass on uninstall
+      - GOVPASS_REMOVE_WINDIVERT=1: stop/delete the global WinDivert driver service
+    -->
+    <Property Id="GOVPASS_PURGE_PROGRAMDATA" Value="0" />
+    <Property Id="GOVPASS_REMOVE_WINDIVERT" Value="0" />
 
     <MajorUpgrade DowngradeErrorMessage="A newer version of gov-pass is already installed." />
     <MediaTemplate />
+
+    <!-- Best-effort cleanup on uninstall. Return="ignore" so uninstall doesn't fail on "not found". -->
+    <CustomAction
+      Id="caKillTray"
+      FileKey="fileMsiHelperExe"
+      ExeCommand="--action kill-tray"
+      Execute="deferred"
+      Impersonate="no"
+      Return="ignore" />
+    <CustomAction
+      Id="caCleanTrayAutorunHKCU"
+      FileKey="fileMsiHelperExe"
+      ExeCommand="--action clean-autorun-hkcu"
+      Execute="deferred"
+      Impersonate="yes"
+      Return="ignore" />
+    <CustomAction
+      Id="caCleanTrayAutorunHKLM"
+      FileKey="fileMsiHelperExe"
+      ExeCommand="--action clean-autorun-hklm"
+      Execute="deferred"
+      Impersonate="no"
+      Return="ignore" />
+    <CustomAction
+      Id="caPurgeProgramData"
+      FileKey="fileMsiHelperExe"
+      ExeCommand="--action purge-programdata"
+      Execute="deferred"
+      Impersonate="no"
+      Return="ignore" />
+    <CustomAction
+      Id="caStopWinDivert"
+      FileKey="fileMsiHelperExe"
+      ExeCommand="--action stop-windivert"
+      Execute="deferred"
+      Impersonate="no"
+      Return="ignore" />
+    <CustomAction
+      Id="caDeleteWinDivert"
+      FileKey="fileMsiHelperExe"
+      ExeCommand="--action delete-windivert"
+      Execute="deferred"
+      Impersonate="no"
+      Return="ignore" />
+
+    <InstallExecuteSequence>
+      <Custom Action="caKillTray" After="StopServices">REMOVE="ALL"</Custom>
+      <Custom Action="caCleanTrayAutorunHKCU" After="caKillTray">REMOVE="ALL"</Custom>
+      <Custom Action="caCleanTrayAutorunHKLM" After="caCleanTrayAutorunHKCU">REMOVE="ALL"</Custom>
+      <Custom Action="caPurgeProgramData" After="caCleanTrayAutorunHKLM">REMOVE="ALL" AND GOVPASS_PURGE_PROGRAMDATA="1"</Custom>
+      <Custom Action="caStopWinDivert" After="caPurgeProgramData">REMOVE="ALL" AND GOVPASS_REMOVE_WINDIVERT="1"</Custom>
+      <Custom Action="caDeleteWinDivert" After="caStopWinDivert">REMOVE="ALL" AND GOVPASS_REMOVE_WINDIVERT="1"</Custom>
+    </InstallExecuteSequence>
 
     <Feature Id="ProductFeature" Title="gov-pass" Level="1">
       <ComponentRef Id="cmpMain" />
@@ -43,25 +103,25 @@
   <Fragment>
     <DirectoryRef Id="INSTALLFOLDER">
       <Component Id="cmpMain" Guid="1E9D0A21-05D7-43D2-9B8D-3A3F1B2C9E0C" Win64="yes">
-        <File Id="fileSplitterExe" Source="{{SOURCE_DIR}}/splitter.exe" KeyPath="yes">
-          <ServiceInstall
-            Id="svcGovPass"
-            Name="gov-pass"
-            DisplayName="gov-pass splitter"
-            Description="Split-only TLS ClientHello splitter (WinDivert)"
-            Start="auto"
-            Type="ownProcess"
-            ErrorControl="normal"
-            Account="LocalSystem"
-            Arguments="--service --service-name gov-pass" />
-          <ServiceControl
-            Id="ctlGovPass"
-            Name="gov-pass"
-            Start="install"
-            Stop="both"
-            Remove="uninstall"
-            Wait="yes" />
-        </File>
+        <File Id="fileSplitterExe" Source="{{SOURCE_DIR}}/splitter.exe" KeyPath="yes" />
+        <File Id="fileMsiHelperExe" Source="{{SOURCE_DIR}}/gov-pass-msi-helper.exe" />
+        <ServiceInstall
+          Id="svcGovPass"
+          Name="gov-pass"
+          DisplayName="gov-pass splitter"
+          Description="Split-only TLS ClientHello splitter (WinDivert)"
+          Start="auto"
+          Type="ownProcess"
+          ErrorControl="normal"
+          Account="LocalSystem"
+          Arguments="--service --service-name gov-pass" />
+        <ServiceControl
+          Id="ctlGovPass"
+          Name="gov-pass"
+          Start="install"
+          Stop="both"
+          Remove="uninstall"
+          Wait="yes" />
         <File Id="fileTrayExe" Source="{{SOURCE_DIR}}/gov-pass-tray.exe" />
         <File Id="fileSplitterAdminCmd" Source="{{SOURCE_DIR}}/splitter-admin.cmd" />
         <File Id="fileServiceStartAdminCmd" Source="{{SOURCE_DIR}}/service-start-admin.cmd" />
@@ -126,7 +186,7 @@
           Description="Reload config.json (in-place apply)"
           Target="[INSTALLFOLDER]service-reload-admin.cmd"
           WorkingDirectory="INSTALLFOLDER" />
-        <RemoveFolder Id="RemoveApplicationProgramsFolder" Directory="ApplicationProgramsFolder" On="uninstall" />
+        <RemoveFolder Id="RemoveApplicationProgramsFolder" On="uninstall" />
         <RegistryValue
           Root="HKLM"
           Key="Software\\fk-gov\\gov-pass"
