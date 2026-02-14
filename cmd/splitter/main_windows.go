@@ -49,6 +49,9 @@ func run() error {
 	maxFlows := flag.Int("max-flows-per-worker", defaultCfg.MaxFlowsPerWorker, "max tracked flows per worker (0=unlimited)")
 	maxReassembly := flag.Int("max-reassembly-bytes-per-worker", defaultCfg.MaxReassemblyBytesPerWorker, "max total reassembly bytes per worker (0=unlimited)")
 	maxHeldBytes := flag.Int("max-held-bytes-per-worker", defaultCfg.MaxHeldBytesPerWorker, "max total held packet bytes per worker (0=unlimited)")
+	shutdownFailOpenTimeout := flag.Duration("shutdown-fail-open-timeout", defaultCfg.ShutdownFailOpenTimeout, "shutdown fail-open drain timeout per worker (0=use default)")
+	shutdownFailOpenMaxPkts := flag.Int("shutdown-fail-open-max-pkts", defaultCfg.ShutdownFailOpenMaxPackets, "shutdown fail-open max packets per worker (0=use default)")
+	adapterFlushTimeout := flag.Duration("adapter-flush-timeout", defaultCfg.AdapterFlushTimeout, "adapter flush timeout on shutdown (0=use default)")
 	filter := flag.String("filter", defaultWinDivertFilter, "WinDivert filter")
 	queueLen := flag.Uint("queue-len", uint(defaultQueueLen), "WinDivert queue length (0=driver default)")
 	queueTime := flag.Uint("queue-time", uint(defaultQueueTimeMs), "WinDivert queue time in ms (0=driver default)")
@@ -86,6 +89,9 @@ func run() error {
 		MaxFlows:       *maxFlows,
 		MaxReassembly:  *maxReassembly,
 		MaxHeldBytes:   *maxHeldBytes,
+		ShutdownFailOpenTimeout:    *shutdownFailOpenTimeout,
+		ShutdownFailOpenMaxPackets: *shutdownFailOpenMaxPkts,
+		AdapterFlushTimeout:        *adapterFlushTimeout,
 
 		Filter:    *filter,
 		QueueLen:  uint64(*queueLen),

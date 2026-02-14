@@ -106,7 +106,10 @@ Service config example (`C:\ProgramData\gov-pass\config.json`):
     "gc_interval": "5s",
     "max_flows_per_worker": 4096,
     "max_reassembly_bytes_per_worker": 67108864,
-    "max_held_bytes_per_worker": 67108864
+    "max_held_bytes_per_worker": 67108864,
+    "shutdown_fail_open_timeout": "5s",
+    "shutdown_fail_open_max_packets": 200000,
+    "adapter_flush_timeout": "2s"
   },
   "windivert": {
     "filter": "outbound and ip and tcp.DstPort == 443",
@@ -144,6 +147,14 @@ Optional: DoS guards (per worker; fail-open on pressure):
   --max-flows-per-worker 4096 `
   --max-reassembly-bytes-per-worker 67108864 `
   --max-held-bytes-per-worker 67108864
+```
+
+Optional: shutdown guardrails (advanced):
+```powershell
+.\dist\splitter.exe `
+  --shutdown-fail-open-timeout 5s `
+  --shutdown-fail-open-max-pkts 200000 `
+  --adapter-flush-timeout 2s
 ```
 
 ## Linux build and run (NFQUEUE MVP)
@@ -194,6 +205,14 @@ sudo ./dist/splitter --queue-num 100 --mark 1 \
   --max-flows-per-worker 4096 \
   --max-reassembly-bytes-per-worker 67108864 \
   --max-held-bytes-per-worker 67108864
+```
+
+Optional: shutdown guardrails (advanced):
+```bash
+sudo ./dist/splitter --queue-num 100 --mark 1 \
+  --shutdown-fail-open-timeout 5s \
+  --shutdown-fail-open-max-pkts 200000 \
+  --adapter-flush-timeout 2s
 ```
 
 Optional capabilities instead of root:

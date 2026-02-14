@@ -49,6 +49,9 @@ func run() error {
 	maxFlows := flag.Int("max-flows-per-worker", cfg.MaxFlowsPerWorker, "max tracked flows per worker (0=unlimited)")
 	maxReassembly := flag.Int("max-reassembly-bytes-per-worker", cfg.MaxReassemblyBytesPerWorker, "max total reassembly bytes per worker (0=unlimited)")
 	maxHeldBytes := flag.Int("max-held-bytes-per-worker", cfg.MaxHeldBytesPerWorker, "max total held packet bytes per worker (0=unlimited)")
+	shutdownFailOpenTimeout := flag.Duration("shutdown-fail-open-timeout", cfg.ShutdownFailOpenTimeout, "shutdown fail-open drain timeout per worker (0=use default)")
+	shutdownFailOpenMaxPkts := flag.Int("shutdown-fail-open-max-pkts", cfg.ShutdownFailOpenMaxPackets, "shutdown fail-open max packets per worker (0=use default)")
+	adapterFlushTimeout := flag.Duration("adapter-flush-timeout", cfg.AdapterFlushTimeout, "adapter flush timeout on shutdown (0=use default)")
 	queueNum := flag.Int("queue-num", defaultQueueNum, "NFQUEUE number")
 	queueMaxLen := flag.Int("queue-maxlen", defaultQueueMaxLen, "NFQUEUE maxlen (0=kernel default)")
 	copyRange := flag.Int("copy-range", defaultCopyRange, "NFQUEUE copy range in bytes (0=full packet)")
@@ -98,6 +101,15 @@ func run() error {
 	if *maxHeldBytes < 0 {
 		return errors.New("max-held-bytes-per-worker must be >= 0")
 	}
+	if *shutdownFailOpenTimeout < 0 {
+		return errors.New("shutdown-fail-open-timeout must be >= 0")
+	}
+	if *shutdownFailOpenMaxPkts < 0 {
+		return errors.New("shutdown-fail-open-max-pkts must be >= 0")
+	}
+	if *adapterFlushTimeout < 0 {
+		return errors.New("adapter-flush-timeout must be >= 0")
+	}
 	if *queueNum < 0 || *queueNum > 65535 {
 		return errors.New("queue-num must be in 0..65535")
 	}
@@ -123,6 +135,9 @@ func run() error {
 	cfg.MaxFlowsPerWorker = *maxFlows
 	cfg.MaxReassemblyBytesPerWorker = *maxReassembly
 	cfg.MaxHeldBytesPerWorker = *maxHeldBytes
+	cfg.ShutdownFailOpenTimeout = *shutdownFailOpenTimeout
+	cfg.ShutdownFailOpenMaxPackets = *shutdownFailOpenMaxPkts
+	cfg.AdapterFlushTimeout = *adapterFlushTimeout
 	cfg.WorkerCount = *workers
 	cfg.FlowIdleTimeout = *flowTimeout
 	cfg.GCInterval = *gcInterval

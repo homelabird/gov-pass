@@ -33,6 +33,9 @@ type engineJSONConfig struct {
 	MaxFlowsPerWorker           *int    `json:"max_flows_per_worker,omitempty"`
 	MaxReassemblyBytesPerWorker *int    `json:"max_reassembly_bytes_per_worker,omitempty"`
 	MaxHeldBytesPerWorker       *int    `json:"max_held_bytes_per_worker,omitempty"`
+	ShutdownFailOpenTimeout     *string `json:"shutdown_fail_open_timeout,omitempty"`
+	ShutdownFailOpenMaxPackets  *int    `json:"shutdown_fail_open_max_packets,omitempty"`
+	AdapterFlushTimeout         *string `json:"adapter_flush_timeout,omitempty"`
 }
 
 type winDivertJSONConfig struct {
@@ -59,6 +62,9 @@ type windowsCLIArgs struct {
 	MaxFlows       int
 	MaxReassembly  int
 	MaxHeldBytes   int
+	ShutdownFailOpenTimeout    time.Duration
+	ShutdownFailOpenMaxPackets int
+	AdapterFlushTimeout        time.Duration
 
 	Filter    string
 	QueueLen  uint64
@@ -186,6 +192,23 @@ func applyWindowsJSONConfig(dstEngine *engine.Config, dstWin *windowsRunConfig, 
 		if cfg.Engine.MaxHeldBytesPerWorker != nil {
 			dstEngine.MaxHeldBytesPerWorker = *cfg.Engine.MaxHeldBytesPerWorker
 		}
+		if cfg.Engine.ShutdownFailOpenTimeout != nil && strings.TrimSpace(*cfg.Engine.ShutdownFailOpenTimeout) != "" {
+			d, err := time.ParseDuration(*cfg.Engine.ShutdownFailOpenTimeout)
+			if err != nil {
+				return fmt.Errorf("engine.shutdown_fail_open_timeout: %w", err)
+			}
+			dstEngine.ShutdownFailOpenTimeout = d
+		}
+		if cfg.Engine.ShutdownFailOpenMaxPackets != nil {
+			dstEngine.ShutdownFailOpenMaxPackets = *cfg.Engine.ShutdownFailOpenMaxPackets
+		}
+		if cfg.Engine.AdapterFlushTimeout != nil && strings.TrimSpace(*cfg.Engine.AdapterFlushTimeout) != "" {
+			d, err := time.ParseDuration(*cfg.Engine.AdapterFlushTimeout)
+			if err != nil {
+				return fmt.Errorf("engine.adapter_flush_timeout: %w", err)
+			}
+			dstEngine.AdapterFlushTimeout = d
+		}
 	}
 
 	if cfg.WinDivert != nil {
@@ -226,6 +249,8 @@ func windowsJSONConfigFromDefaults(cfg engine.Config, wc windowsRunConfig) windo
 	collectTimeout := cfg.CollectTimeout.String()
 	flowTimeout := cfg.FlowIdleTimeout.String()
 	gcInterval := cfg.GCInterval.String()
+	shutdownFailOpenTimeout := cfg.ShutdownFailOpenTimeout.String()
+	adapterFlushTimeout := cfg.AdapterFlushTimeout.String()
 
 	engineCfg := &engineJSONConfig{
 		SplitMode:                   &mode,
@@ -240,6 +265,9 @@ func windowsJSONConfigFromDefaults(cfg engine.Config, wc windowsRunConfig) windo
 		MaxFlowsPerWorker:           &cfg.MaxFlowsPerWorker,
 		MaxReassemblyBytesPerWorker: &cfg.MaxReassemblyBytesPerWorker,
 		MaxHeldBytesPerWorker:       &cfg.MaxHeldBytesPerWorker,
+		ShutdownFailOpenTimeout:     &shutdownFailOpenTimeout,
+		ShutdownFailOpenMaxPackets:  &cfg.ShutdownFailOpenMaxPackets,
+		AdapterFlushTimeout:         &adapterFlushTimeout,
 	}
 
 	filter := wc.Filter
@@ -299,6 +327,15 @@ func validateEngineConfig(cfg engine.Config) error {
 	}
 	if cfg.MaxHeldBytesPerWorker < 0 {
 		return errors.New("max-held-bytes-per-worker must be >= 0")
+	}
+	if cfg.ShutdownFailOpenTimeout < 0 {
+		return errors.New("shutdown-fail-open-timeout must be >= 0")
+	}
+	if cfg.ShutdownFailOpenMaxPackets < 0 {
+		return errors.New("shutdown-fail-open-max-pkts must be >= 0")
+	}
+	if cfg.AdapterFlushTimeout < 0 {
+		return errors.New("adapter-flush-timeout must be >= 0")
 	}
 	return nil
 }
@@ -417,6 +454,15 @@ func effectiveWindowsConfig(args windowsCLIArgs, setFlags map[string]bool, asSer
 	}
 	if setFlags["max-held-bytes-per-worker"] {
 		cfg.MaxHeldBytesPerWorker = args.MaxHeldBytes
+	}
+	if setFlags["shutdown-fail-open-timeout"] {
+		cfg.ShutdownFailOpenTimeout = args.ShutdownFailOpenTimeout
+	}
+	if setFlags["shutdown-fail-open-max-pkts"] {
+		cfg.ShutdownFailOpenMaxPackets = args.ShutdownFailOpenMaxPackets
+	}
+	if setFlags["adapter-flush-timeout"] {
+		cfg.AdapterFlushTimeout = args.AdapterFlushTimeout
 	}
 	if setFlags["filter"] {
 		wc.Filter = args.Filter

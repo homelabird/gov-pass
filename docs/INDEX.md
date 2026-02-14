@@ -1,5 +1,6 @@
 # Documentation Index
 
+- `CONTRIBUTING.md` - Dev workflow, build/test commands, and CI notes.
 - `docs/DESIGN.md` - Windows WinDivert architecture, state machine, and split/inject behavior.
 - `docs/DESIGN_LINUX.md` - NFQUEUE pipeline, reinjection flow, and Linux-specific edge cases.
 - `docs/DESIGN_BSD.md` - pf divert architecture and BSD-specific assumptions.
