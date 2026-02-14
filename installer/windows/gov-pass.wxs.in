@@ -22,7 +22,7 @@
     <Property Id="GOVPASS_REMOVE_WINDIVERT" Value="0" />
 
     <MajorUpgrade DowngradeErrorMessage="A newer version of gov-pass is already installed." />
-    <MediaTemplate />
+    <MediaTemplate EmbedCab="yes" />
 
     <!-- Best-effort cleanup on uninstall. Return="ignore" so uninstall doesn't fail on "not found". -->
     <CustomAction
