@@ -8,6 +8,11 @@ Highlights:
 - DoS guards: per-worker caps for flows/held/reassembly bytes (fail-open on pressure).
 - Windows service/MSI: auto-start service + Start Menu admin shortcuts + ProgramData config/log.
 - Windows UX: system tray app (`gov-pass-tray.exe`) to start/stop/status the `gov-pass` service (with UAC prompt).
+- Windows release signing: Authenticode-signed EXE/MSI in CI (see `docs/CODESIGNING.md`).
+- MSI uninstall cleanup options:
+  - `GOVPASS_PURGE_PROGRAMDATA=1` to delete `C:\ProgramData\gov-pass\`
+  - `GOVPASS_REMOVE_WINDIVERT=1` to stop/delete the global `WinDivert` service
+  - best-effort cleanup of the `gov-pass-tray` autorun Run value (HKCU/HKLM)
 - Windows security: ProgramData ACL hardening for service state (config/log/driver files).
 - Windows WinDivert self-heal: optional auto-download from a pinned zip (SHA256 verified).
 - Linux ops: safe "our rules only" nft/iptables management + offload restore + optional tool auto-install.

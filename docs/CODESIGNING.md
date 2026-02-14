@@ -28,8 +28,10 @@ fails before producing artifacts.
 
 Optional:
 - `WINDOWS_CODESIGN_TIMESTAMP_URL`
-  - RFC3161 timestamp server URL.
-  - Default: `http://timestamp.digicert.com`
+  - RFC3161 timestamp server URL (single).
+- `WINDOWS_CODESIGN_TIMESTAMP_URLS`
+  - RFC3161 timestamp server URLs (comma or space separated; tried in order).
+  - Default: `http://timestamp.digicert.com,http://timestamp.sectigo.com`
 
 ## Local Signing (WSL/Linux)
 
@@ -40,7 +42,7 @@ sudo apt-get install -y --no-install-recommends osslsigncode
 
 export WINDOWS_CODESIGN_PFX_B64="..."
 export WINDOWS_CODESIGN_PFX_PASSWORD="..."
-export WINDOWS_CODESIGN_TIMESTAMP_URL="http://timestamp.digicert.com"
+export WINDOWS_CODESIGN_TIMESTAMP_URLS="http://timestamp.digicert.com,http://timestamp.sectigo.com"
 export WINDOWS_CODESIGN_DESC="gov-pass"
 export WINDOWS_CODESIGN_URL="https://example.com"
 
