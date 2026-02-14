@@ -5,6 +5,7 @@ Split-only TLS ClientHello splitter for outbound IPv4 TCP 443.
 Demo video: https://www.youtube.com/watch?v=is96qPruy40
 
 Docs entry point: `docs/INDEX.md`
+Security/ops notes: `SECURITY.md`
 
 Supported platforms:
 - Windows 10/11 x64 (WinDivert) - primary
