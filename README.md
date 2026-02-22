@@ -10,6 +10,7 @@ platform-native packet interception paths.
 - Reduce TLS handshake overhead on constrained networks.
 - Route outbound TCP/443 traffic through a dedicated flow splitter.
 - Keep the binary small and service-friendly for desktop and server use.
+- Inspired by the `goodbye-dpi` project, gov-pass is designed for one-touch operation for quick TCP/443 split setup.
 
 ## Project support
 
@@ -83,6 +84,11 @@ When using kernel hooks, run with required privileges.
 
 This section matches the notice format used by
 `docs/THIRD_PARTY_NOTICES.md`.
+
+### Inspired project
+
+- GoodbyeDPI
+  - https://github.com/ValdikSS/GoodbyeDPI/blob/master/LICENSE
 
 ### Bundled
 
