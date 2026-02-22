@@ -23,10 +23,12 @@ Key behaviors (implemented):
 
 Produced on Git tags by GitLab CI:
 - Linux amd64 tar.gz
-- FreeBSD amd64 tar.gz
 - Windows amd64 zip
 - Windows amd64 MSI (service auto-start)
 - `SHA256SUMS`
+
+Experimental builds:
+- FreeBSD amd64 tar.gz (not production-ready)
 
 Optional verification:
 - Windows runner E2E can install/uninstall the MSI and smoke-test service start/stop/reload.
