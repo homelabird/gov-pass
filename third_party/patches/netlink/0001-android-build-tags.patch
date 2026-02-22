@@ -1,0 +1,18 @@
+diff --git a/conn_linux.go b/conn_linux.go
+index 0000000..0000000 100644
+--- a/conn_linux.go
++++ b/conn_linux.go
+@@ -1,2 +1,2 @@
+-//go:build linux
+-// +build linux
++//go:build linux || android
++// +build linux android
+diff --git a/conn_others.go b/conn_others.go
+index 0000000..0000000 100644
+--- a/conn_others.go
++++ b/conn_others.go
+@@ -1,2 +1,2 @@
+-//go:build !linux
+-// +build !linux
++//go:build !linux && !android
++// +build !linux,!android

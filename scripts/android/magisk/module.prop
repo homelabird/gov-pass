@@ -1,0 +1,6 @@
+id=gov-pass
+name=gov-pass NFQUEUE Splitter
+version=0.1.0
+versionCode=1
+author=gov-pass
+description=Root-only NFQUEUE TLS ClientHello splitter for Android (arm64)

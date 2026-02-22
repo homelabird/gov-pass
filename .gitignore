@@ -1,0 +1,4 @@
+dist/
+*.test.exe
+/splitter
+/splitter.exe
