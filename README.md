@@ -11,6 +11,7 @@ platform-native packet interception paths.
 - Route outbound TCP/443 traffic through a dedicated flow splitter.
 - Keep the binary small and service-friendly for desktop and server use.
 - Inspired by the `goodbye-dpi` project, gov-pass is designed for one-touch operation for quick TCP/443 split setup.
+- `gov-pass` was created to help in restrictive network environments, not to bypass enterprise security appliances; it focuses on split-only first-ClientHello handling to reduce fragility from coarse SNI filtering, with no roadmap toward enterprise-appliance bypass.
 
 ## Project support
 
