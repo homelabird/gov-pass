@@ -1,21 +1,13 @@
 # Detailed Design - Linux NFQUEUE Split-Only TLS ClientHello (Go)
 
-This doc follows the shared logic in [DESIGN_COMMON.md](DESIGN_COMMON.md).
-For platform-specific behavior, this file focuses on the NFQUEUE adapter, verdict
-handling, and Linux-specific offload/reinjection details.
+This document focuses on Linux-specific implementation details. Shared behavior is documented in
+[DESIGN_COMMON.md](DESIGN_COMMON.md).
 
-## Goals
+## Platform-specific notes
 
-- Intercept outbound IPv4 TCP dst port 443 on Linux using NFQUEUE.
-- Perform "split only" on the first ClientHello per flow.
-- Fail-open on any error, timeout, or buffer pressure.
-- Keep latency and memory overhead low.
-
-## Non-goals
-
-- No payload mutation, fake packets, TTL tricks, or reordering.
-- No IPv6 in this phase.
-- No full TLS parsing beyond record header + handshake type.
+- NFQUEUE packet metadata/verdict flow and raw-socket reinjection details.
+- Loop avoidance via SO_MARK and queue-bypass alignment.
+- Offload handling policy and adapter defaults.
 
 ## Architecture overview
 

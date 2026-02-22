@@ -8,7 +8,7 @@ splitter that targets outbound IPv4 TCP dst port 443 and performs "split only"
 
 - Windows (WinDivert): primary path
 - Linux (NFQUEUE): beta
-- FreeBSD / pfSense (pf divert): WIP (experimental)
+- FreeBSD / pfSense (pf divert): Experimental (not production)
 - Android: Deprecated / Historical (not a maintained build target)
 
 Key behaviors (implemented):

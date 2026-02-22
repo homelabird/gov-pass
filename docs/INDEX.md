@@ -13,8 +13,8 @@
 - [SECURITY.md](../SECURITY.md) (Stable) - Privilege model and operational hardening notes.
 - [DESIGN.md](DESIGN.md) (Stable) - Windows WinDivert architecture, state machine, and split/inject behavior.
 - [DESIGN_LINUX.md](DESIGN_LINUX.md) (Beta) - NFQUEUE pipeline, reinjection flow, and Linux-specific edge cases.
-- [DESIGN_BSD.md](DESIGN_BSD.md) (WIP) - pf divert architecture and BSD-specific assumptions.
-- [POC_BSD.md](POC_BSD.md) (WIP) - FreeBSD VM PoC checklist and pf anchor templates.
+- [DESIGN_BSD.md](DESIGN_BSD.md) (Experimental) - pf divert architecture and BSD-specific assumptions.
+- [POC_BSD.md](POC_BSD.md) (Experimental) - FreeBSD VM PoC checklist and pf anchor templates.
 - [DESIGN_ANDROID.md](DESIGN_ANDROID.md) (Deprecated) - Historical reference for rooted Android/Magisk work.
 - [ROADMAP.md](ROADMAP.md) (Stable) - Phased tasks, defaults, and long-term follow-up items.
 - [PACKAGING.md](PACKAGING.md) (Stable) - Build outputs, distribution layout, and install/run guidance.

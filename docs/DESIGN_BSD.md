@@ -1,22 +1,14 @@
 # Detailed Design - BSD (pf divert) Split-Only TLS ClientHello (Go)
 
-Status: WIP (implementation is incomplete / experimental).
-This doc follows the shared logic in [DESIGN_COMMON.md](DESIGN_COMMON.md); this file
-only covers pf-specific differences and open items.
+Status: Experimental (not production).
+This doc focuses on pf-divert implementation details. Shared behavior is documented in
+[DESIGN_COMMON.md](DESIGN_COMMON.md).
 
-## Goals
+## Platform-specific notes
 
-- Intercept outbound IPv4 TCP dst port 443 on BSD using pf divert.
-- Perform "split only" on the first ClientHello per flow.
-- Fail-open on any error, timeout, or buffer pressure.
-- Keep latency and memory overhead low.
-
-## Non-goals
-
-- No payload mutation, fake packets, TTL tricks, or reordering.
-- No IPv6 in this phase.
-- No TLS decryption or SNI/ECH changes.
-- No L2 bridge/tap support in this phase.
+- pf divert socket/reinject behavior and rule semantics.
+- Loop prevention approach (tagged packets, anchor behavior).
+- Open questions and platform caveats for FreeBSD/pfSense.
 
 ## Target platforms
 

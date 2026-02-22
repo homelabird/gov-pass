@@ -1,21 +1,13 @@
 # Detailed Design - WinDivert Split-Only TLS ClientHello (Go)
 
-This doc follows the shared logic in [DESIGN_COMMON.md](DESIGN_COMMON.md).
-For platform-specific behavior, this file focuses on the WinDivert adapter, filter
-defaults, and Windows packet I/O details.
+This document focuses on WinDivert-specific implementation details. Shared behavior is documented in
+[DESIGN_COMMON.md](DESIGN_COMMON.md).
 
-## Goals
+## Platform-specific notes
 
-- Intercept outbound IPv4 TCP dst port 443 on Windows 10/11 x64.
-- Perform "split only" on the first ClientHello per flow.
-- Fail-open on any error, timeout, or buffer pressure.
-- Keep latency and memory overhead low.
-
-## Non-goals
-
-- No payload mutation, fake packets, TTL tricks, or reordering.
-- No IPv6 support in this phase.
-- No full TLS parsing beyond record header and handshake type.
+- WinDivert filter defaults and queue tuning.
+- Packet receive/send path (WinDivert API behavior).
+- ACK-only fast path and checksum/header handling details.
 
 ## Defaults (current)
 

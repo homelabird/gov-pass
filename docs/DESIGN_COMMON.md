@@ -2,64 +2,35 @@
 
 This document captures behavior shared by Windows, Linux, and BSD engine paths.
 
-## Common goals
+## Shared design contract
 
-- Intercept outbound IPv4 TCP port 443.
-- Split only the first TLS ClientHello record per flow.
-- Favor low latency and bounded memory.
-- Fail-open on errors, parse failures, timeout, and pressure.
+- Target: outbound IPv4 TCP/443.
+- Strategy: split only the first TLS ClientHello record per flow.
+- Safety: fail-open on mismatch/parse error/timeout/pressure/error.
 
-## Shared flow model
-
-All platforms use the same flow lifecycle:
+## Shared flow lifecycle
 
 `NEW -> COLLECTING -> SPLIT_READY -> INJECTED -> PASS_THROUGH -> CLOSED`
 
 - `NEW`: first payload observed.
-- `COLLECTING`: reassembly window is filled while checking ClientHello.
-- `SPLIT_READY`: first TLS record satisfied split conditions.
-- `INJECTED`: split segments are emitted; flow becomes pass-through afterward.
-- `PASS_THROUGH`: no further packet rewriting for the flow.
-- `CLOSED`: FIN/RST/idle timeout.
+- `COLLECTING`: reassembly until split decision.
+- `SPLIT_READY`: first TLS record criteria met.
+- `INJECTED`: split segments emitted.
+- `PASS_THROUGH`: normal forwarding from this point.
+- `CLOSED`: FIN, RST, or timeout.
 
-## Shared ClientHello detection
+## Shared split detection and fail-open rules
 
-Detection occurs after at least 6 contiguous bytes are available:
+- Detect after 6 contiguous bytes:
+  - TLS content type `0x16`
+  - TLS version `0x0301..0x0304`
+  - Handshake type `0x01`
+- Read full record `5 + recordLen` before split.
+- Fail-open if checks fail, limits are exceeded, or timeout occurs.
 
-1. TLS content type: `0x16`
-2. TLS version: `0x0301..0x0304`
-3. Handshake type: `0x01`
-
-Then read TLS record length and wait for the full record (`5 + recordLen` bytes).
-
-- If record length exceeds buffers, mismatch occurs, or timeout is exceeded → fail-open.
-
-## Shared split plan
-
-- Split window is the first TLS record only.
-- First segment default size: `split-chunk` (default 5 bytes).
-- Remaining bytes in one or more segments, bounded by:
-  - `max-seg-payload`
-  - IPv4 total length limits.
-- Segment sequence starts from flow base sequence and increments by offset.
-- Keep TCP/IP header intent consistent with original headers and checksums recomputed by each platform.
-
-## Shared queue/fail-open behavior
+## Shared queue/shutdown policy
 
 - Hold packets while collecting.
-- If split succeeds: drop originals and inject split segments.
-- If fail-open: reinject held packets in original order.
-- Non-target packets generally pass immediately.
-- ACK-only packets are typically fast-path where explicitly stated per platform.
-
-## Shared limits and shutdown
-
-- `max-flows-per-worker`
-- `max-held-pkts`
-- `max-held-bytes-per-worker`
-- `max-reassembly-bytes-per-worker`
-- `collect-timeout`
-
-Shutdown behavior is bounded to avoid hang:
-- worker flush timeout / max packet drain
-- adapter pending packet flush before handle close
+- On success: drop originals and inject split segments.
+- On fail-open: reinject held packets in original order.
+- Shutdown is bounded (timeout + packet limit), then flush adapter pending packets best-effort.
