@@ -1,0 +1,127 @@
+stages:
+  - build
+  - verify
+  - release
+
+variables:
+  DIST_DIR: "dist/release"
+
+build_release:
+  stage: build
+  image: golang:1.21
+  variables:
+    COSIGN_YES: "true"
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  rules:
+    - if: $CI_COMMIT_TAG
+  before_script:
+    - apt-get update
+    - apt-get install -y --no-install-recommends zip msitools osslsigncode curl ca-certificates
+    - curl -fsSLo /usr/local/bin/cosign "https://github.com/sigstore/cosign/releases/latest/download/cosign-linux-amd64"
+    - chmod +x /usr/local/bin/cosign
+    - cosign version
+  script:
+    - set -eu
+    - mkdir -p "$DIST_DIR"
+    - PKG_VERSION="$CI_COMMIT_TAG"
+    - MSI_VERSION="$(echo "$PKG_VERSION" | sed -E 's/^v?([0-9]+)(\\.([0-9]+))?(\\.([0-9]+))?.*$/\\1.\\3.\\5/' | awk -F. '{ printf \"%d.%d.%d\", $1, ($2==\"\"?0:$2), ($3==\"\"?0:$3) }')"
+    - BASE_DIR="$DIST_DIR"
+    - stage_common() {
+        dest="$1";
+        mkdir -p "$dest/docs" "$dest/licenses";
+        cp LICENSE "$dest/";
+        cp docs/THIRD_PARTY_NOTICES.md "$dest/docs/";
+        cp third_party/windivert/WinDivert-2.2.2-A/LICENSE "$dest/licenses/WinDivert-LICENSE.txt";
+        cp third_party/systray/LICENSE "$dest/licenses/systray-LICENSE.txt";
+        cp third_party/go-nfqueue/LICENSE "$dest/licenses/go-nfqueue-LICENSE.txt";
+        cp third_party/netlink/LICENSE.md "$dest/licenses/netlink-LICENSE.txt";
+      }
+    - LINUX_DIR="$BASE_DIR/gov-pass-${PKG_VERSION}-linux-amd64"
+    - mkdir -p "$LINUX_DIR"
+    - CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o "$LINUX_DIR/splitter" ./cmd/splitter
+    - stage_common "$LINUX_DIR"
+    - tar -C "$BASE_DIR" -czf "$BASE_DIR/gov-pass-${PKG_VERSION}-linux-amd64.tar.gz" "gov-pass-${PKG_VERSION}-linux-amd64"
+    - FREEBSD_DIR="$BASE_DIR/gov-pass-${PKG_VERSION}-freebsd-amd64"
+    - mkdir -p "$FREEBSD_DIR"
+    - CGO_ENABLED=0 GOOS=freebsd GOARCH=amd64 go build -o "$FREEBSD_DIR/splitter" ./cmd/splitter
+    - stage_common "$FREEBSD_DIR"
+    - tar -C "$BASE_DIR" -czf "$BASE_DIR/gov-pass-${PKG_VERSION}-freebsd-amd64.tar.gz" "gov-pass-${PKG_VERSION}-freebsd-amd64"
+    - WIN_DIR="$BASE_DIR/gov-pass-${PKG_VERSION}-windows-amd64"
+    - mkdir -p "$WIN_DIR"
+    - CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o "$WIN_DIR/splitter.exe" ./cmd/splitter
+    - CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "-H=windowsgui" -o "$WIN_DIR/gov-pass-tray.exe" ./cmd/gov-pass-tray
+    - CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o "$WIN_DIR/gov-pass-msi-helper.exe" ./cmd/gov-pass-msi-helper
+    - WINDOWS_CODESIGN_DESC="gov-pass" WINDOWS_CODESIGN_URL="$CI_PROJECT_URL" bash scripts/ci/sign_windows_artifacts.sh "$WIN_DIR/splitter.exe" "$WIN_DIR/gov-pass-tray.exe" "$WIN_DIR/gov-pass-msi-helper.exe"
+    - cp third_party/windivert/WinDivert-2.2.2-A/x64/WinDivert.dll "$WIN_DIR/"
+    - cp third_party/windivert/WinDivert-2.2.2-A/x64/WinDivert64.sys "$WIN_DIR/"
+    - if [ -f third_party/windivert/WinDivert-2.2.2-A/x64/WinDivert.cat ]; then cp third_party/windivert/WinDivert-2.2.2-A/x64/WinDivert.cat "$WIN_DIR/"; fi
+    - cp installer/windows/splitter-admin.cmd "$WIN_DIR/"
+    - cp installer/windows/service-start-admin.cmd "$WIN_DIR/"
+    - cp installer/windows/service-stop-admin.cmd "$WIN_DIR/"
+    - cp installer/windows/service-restart-admin.cmd "$WIN_DIR/"
+    - cp installer/windows/service-reload-admin.cmd "$WIN_DIR/"
+    - stage_common "$WIN_DIR"
+    - (cd "$BASE_DIR" && zip -r "gov-pass-${PKG_VERSION}-windows-amd64.zip" "gov-pass-${PKG_VERSION}-windows-amd64")
+    - MSI_ROOT="$BASE_DIR/gov-pass-msi-root"
+    - rm -rf "$MSI_ROOT"
+    - mkdir -p "$MSI_ROOT"
+    - cp -a "$WIN_DIR/." "$MSI_ROOT/"
+    - WXS_OUT="$BASE_DIR/gov-pass.wxs"
+    - sed -e "s/{{VERSION}}/$MSI_VERSION/g" -e "s|{{SOURCE_DIR}}|gov-pass-msi-root|g" installer/windows/gov-pass.wxs.in > "$WXS_OUT"
+    - (cd "$BASE_DIR" && wixl -a x64 -o "gov-pass-${PKG_VERSION}-windows-amd64.msi" "gov-pass.wxs")
+    - WINDOWS_CODESIGN_DESC="gov-pass" WINDOWS_CODESIGN_URL="$CI_PROJECT_URL" bash scripts/ci/sign_windows_artifacts.sh "$BASE_DIR/gov-pass-${PKG_VERSION}-windows-amd64.msi"
+    - (cd "$BASE_DIR" && msiinfo export "gov-pass-${PKG_VERSION}-windows-amd64.msi" ServiceInstall | grep -q "gov-pass")
+    - (cd "$BASE_DIR" && msiinfo export "gov-pass-${PKG_VERSION}-windows-amd64.msi" ServiceControl | grep -q "gov-pass")
+    - (cd "$BASE_DIR" && msiinfo export "gov-pass-${PKG_VERSION}-windows-amd64.msi" Shortcut | grep -q "Reload gov-pass config")
+    - (cd "$BASE_DIR" && msiinfo export "gov-pass-${PKG_VERSION}-windows-amd64.msi" Shortcut | grep -q "gov-pass tray")
+    - (cd "$BASE_DIR" && sha256sum "gov-pass-${PKG_VERSION}-linux-amd64.tar.gz" "gov-pass-${PKG_VERSION}-freebsd-amd64.tar.gz" "gov-pass-${PKG_VERSION}-windows-amd64.zip" "gov-pass-${PKG_VERSION}-windows-amd64.msi" > SHA256SUMS)
+    - (cd "$BASE_DIR" && cosign sign-blob SHA256SUMS --bundle SHA256SUMS.sigstore.json)
+    - (cd "$BASE_DIR" && cosign verify-blob SHA256SUMS --bundle SHA256SUMS.sigstore.json --certificate-identity "${CI_PROJECT_URL}//${CI_CONFIG_PATH}@refs/tags/${CI_COMMIT_TAG}" --certificate-oidc-issuer "${CI_SERVER_URL}")
+  artifacts:
+    paths:
+      - dist/release/*.tar.gz
+      - dist/release/*.zip
+      - dist/release/*.msi
+      - dist/release/SHA256SUMS
+      - dist/release/SHA256SUMS.sigstore.json
+    expire_in: never
+
+verify_windows_msi_e2e:
+  stage: verify
+  rules:
+    - if: $CI_COMMIT_TAG && $WINDOWS_E2E == "1"
+  needs:
+    - job: build_release
+      artifacts: true
+  tags:
+    - windows
+  script:
+    - powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\\windows\\ci_msi_e2e.ps1
+
+release:
+  stage: release
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  rules:
+    - if: $CI_COMMIT_TAG
+  script:
+    - echo "Release $CI_COMMIT_TAG"
+  release:
+    tag_name: "$CI_COMMIT_TAG"
+    name: "$CI_COMMIT_TAG"
+    description: "Automated release for $CI_COMMIT_TAG"
+    assets:
+      links:
+        - name: "gov-pass-linux-amd64.tar.gz"
+          url: "$CI_PROJECT_URL/-/jobs/artifacts/$CI_COMMIT_TAG/raw/dist/release/gov-pass-${CI_COMMIT_TAG}-linux-amd64.tar.gz?job=build_release"
+        - name: "gov-pass-freebsd-amd64.tar.gz"
+          url: "$CI_PROJECT_URL/-/jobs/artifacts/$CI_COMMIT_TAG/raw/dist/release/gov-pass-${CI_COMMIT_TAG}-freebsd-amd64.tar.gz?job=build_release"
+        - name: "gov-pass-windows-amd64.zip"
+          url: "$CI_PROJECT_URL/-/jobs/artifacts/$CI_COMMIT_TAG/raw/dist/release/gov-pass-${CI_COMMIT_TAG}-windows-amd64.zip?job=build_release"
+        - name: "gov-pass-windows-amd64.msi"
+          url: "$CI_PROJECT_URL/-/jobs/artifacts/$CI_COMMIT_TAG/raw/dist/release/gov-pass-${CI_COMMIT_TAG}-windows-amd64.msi?job=build_release"
+        - name: "SHA256SUMS"
+          url: "$CI_PROJECT_URL/-/jobs/artifacts/$CI_COMMIT_TAG/raw/dist/release/SHA256SUMS?job=build_release"
+        - name: "SHA256SUMS.sigstore.json"
+          url: "$CI_PROJECT_URL/-/jobs/artifacts/$CI_COMMIT_TAG/raw/dist/release/SHA256SUMS.sigstore.json?job=build_release"
