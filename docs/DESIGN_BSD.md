@@ -32,7 +32,7 @@ Non-target and completed flows are reinjected as-is.
 
 ## Rule installation (pf)
 
-Anchor example (schematic; final rules TBD):
+Anchor example (schematic):
 
 ```pf
 anchor "gov-pass"
@@ -55,10 +55,9 @@ pass out on $wan_if inet proto tcp from $lan_net to any port 443 \
 
 ## Reinjection loop prevention
 
-Pick one mechanism and standardize:
-- Use `tag`/`tagged` to bypass divert on reinjected packets.
-- Use a dedicated anchor with `pass quick` for tagged packets.
-- Interface-based skip (e.g., loopback) where appropriate.
+Loop prevention is implemented with packet tags:
+- Tag reinjected packets as `GOVPASS`.
+- Add a bypass rule for tagged packets before divert rules are evaluated.
 
 ## Packet handling
 
