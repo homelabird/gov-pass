@@ -64,36 +64,36 @@ When using kernel hooks, run with required privileges.
 
 ## Project docs
 
-- Main docs index: `docs/INDEX.md`
-- Security and operations: `SECURITY.md`
-- Code signing: `docs/CODESIGNING.md`
-- Third-party notices: `docs/THIRD_PARTY_NOTICES.md`
-- Third-party source records: `docs/THIRD_PARTY_SOURCES.md`
+- Main docs index: [docs/INDEX.md](docs/INDEX.md)
+- Security and operations: [SECURITY.md](SECURITY.md)
+- Code signing: [docs/CODESIGNING.md](docs/CODESIGNING.md)
+- Third-party notices: [docs/THIRD_PARTY_NOTICES.md](docs/THIRD_PARTY_NOTICES.md)
+- Third-party source records: [docs/THIRD_PARTY_SOURCES.md](docs/THIRD_PARTY_SOURCES.md)
 
 ## Security notes
 
-- Core runtime dependency for Windows: WinDivert 2.2.2-A under `third_party`.
-- For threat model and release/security guidance, see `SECURITY.md`.
+- Core runtime dependency for Windows: WinDivert 2.2.2-A under [third_party](third_party).
+- For threat model and release/security guidance, see [SECURITY.md](SECURITY.md).
 
 ## Contributing
 
 - Open PRs after preparing a short issue or design note.
-- Keep platform-specific changes in `cmd/`, `internal/`, `scripts/`, and `docs/`.
+- Keep platform-specific changes in [cmd/](cmd/), [internal/](internal/), [scripts/](scripts/), and [docs/](docs/).
 
 ## Open Source and third-party notices
 
 This section matches the notice format used by
-`docs/THIRD_PARTY_NOTICES.md`.
+[docs/THIRD_PARTY_NOTICES.md](docs/THIRD_PARTY_NOTICES.md).
 
 ### Inspired project
 
-- GoodbyeDPI
+- [GoodbyeDPI](https://github.com/ValdikSS/GoodbyeDPI)
   - https://github.com/ValdikSS/GoodbyeDPI/blob/master/LICENSE
 
 ### Bundled
 
 - WinDivert 2.2.2-A (binaries/docs)
-  - License: `third_party\windivert\WinDivert-2.2.2-A\LICENSE`
+  - License: [third_party/windivert/WinDivert-2.2.2-A/LICENSE](third_party/windivert/WinDivert-2.2.2-A/LICENSE)
 
 ### System dependencies (Linux)
 
