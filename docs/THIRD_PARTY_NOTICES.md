@@ -7,7 +7,7 @@ For upstream sources and local patches, see `docs/THIRD_PARTY_SOURCES.md`.
 ## Bundled
 
 - WinDivert 2.2.2-A (binaries/docs)
-  - License: `third_party\windivert\WinDivert-2.2.2-A\LICENSE`
+  - License: [third_party/windivert/WinDivert-2.2.2-A/LICENSE](third_party/windivert/WinDivert-2.2.2-A/LICENSE)
 
 ## Inspired-by project
 

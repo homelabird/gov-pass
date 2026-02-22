@@ -1,8 +1,9 @@
 # Detailed Design - Android Root NFQUEUE (Magisk, arm64)
 
-Status (as of 2026-02-14):
+Status: Deprecated / Historical (as of 2026-02-14)
+
 - Android is not a maintained build target in this repo yet (no `GOOS=android` entrypoint under `cmd/splitter`).
-- The scripts under `scripts/android/` and the cgo/libnetfilter_queue build steps below are legacy notes and are expected to be incomplete/out-of-date.
+- The notes below are historical references only and may be incomplete or out-of-date.
 
 ## Assumptions
 

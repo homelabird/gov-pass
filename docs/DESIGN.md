@@ -1,5 +1,9 @@
 # Detailed Design - WinDivert Split-Only TLS ClientHello (Go)
 
+This doc follows the shared logic in [DESIGN_COMMON.md](DESIGN_COMMON.md).
+For platform-specific behavior, this file focuses on the WinDivert adapter, filter
+defaults, and Windows packet I/O details.
+
 ## Goals
 
 - Intercept outbound IPv4 TCP dst port 443 on Windows 10/11 x64.

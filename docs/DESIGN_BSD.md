@@ -1,5 +1,9 @@
 # Detailed Design - BSD (pf divert) Split-Only TLS ClientHello (Go)
 
+Status: WIP (implementation is incomplete / experimental).
+This doc follows the shared logic in [DESIGN_COMMON.md](DESIGN_COMMON.md); this file
+only covers pf-specific differences and open items.
+
 ## Goals
 
 - Intercept outbound IPv4 TCP dst port 443 on BSD using pf divert.

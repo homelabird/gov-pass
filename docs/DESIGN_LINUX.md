@@ -1,5 +1,9 @@
 # Detailed Design - Linux NFQUEUE Split-Only TLS ClientHello (Go)
 
+This doc follows the shared logic in [DESIGN_COMMON.md](DESIGN_COMMON.md).
+For platform-specific behavior, this file focuses on the NFQUEUE adapter, verdict
+handling, and Linux-specific offload/reinjection details.
+
 ## Goals
 
 - Intercept outbound IPv4 TCP dst port 443 on Linux using NFQUEUE.
