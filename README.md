@@ -1,13 +1,22 @@
 # gov-pass
 
 `gov-pass` is a split-only TLS ClientHello splitter for outbound TCP/443 traffic.
-It can run as a CLI process or as a Windows service (installer package).
+It supports lightweight deployment on Windows, Linux, and FreeBSD targets with
+platform-native packet interception paths.
 
-## What this project supports
+## Why gov-pass
 
-- Windows 10/11 x64 (WinDivert) ??main support
-- Linux x86_64 (NFQUEUE) ??beta
-- FreeBSD / pfSense (pf divert) ??experimental
+- Reduce TLS handshake overhead on constrained networks.
+- Route outbound TCP/443 traffic through a dedicated flow splitter.
+- Keep the binary small and service-friendly for desktop and server use.
+
+## Project support
+
+| Platform | Backend | Status |
+|---|---|---|
+| Windows 10/11 (x64) | WinDivert | Stable |
+| Linux (x86_64) | NFQUEUE | Beta |
+| FreeBSD / pfSense | pf divert | Experimental |
 
 ## Requirements
 
@@ -16,64 +25,74 @@ It can run as a CLI process or as a Windows service (installer package).
 
 ## Quick start
 
-### Windows (CLI)
+### 1) Build
+
+```bash
+go build -o dist/splitter ./cmd/splitter
+```
+
+### 2) Run (CLI)
+
+```bash
+sudo ./dist/splitter --queue-num 100 --mark 1
+```
+
+### 3) Windows run (CLI)
 
 ```powershell
 go build -o dist\splitter.exe .\cmd\splitter
 .\dist\splitter.exe
 ```
 
-### Linux
+## Common configuration
 
-```bash
-go build -o dist/splitter ./cmd/splitter
-sudo ./dist/splitter --queue-num 100 --mark 1
-```
+The most frequently used flags are shown below:
 
-## Common usage notes
+| Flag | Purpose | Tip |
+|---|---|---|
+| `--max-seg-payload` | Max TLS payload segment size | Tune with larger payload environments |
+| `--max-flows-per-worker` | Flow concurrency limit per worker | Reduce in memory-constrained hosts |
+| `--max-reassembly-bytes-per-worker` | Per-worker reassembly memory cap | Increase for high-latency links |
+| `--max-held-bytes-per-worker` | Additional buffered bytes per worker | Balance throughput vs memory |
 
-- Most defaults are safe for local testing; production environments should set
-  `workers`, DoS guard rails, and timeouts explicitly.
-- The CLI supports CLI flags for:
-  - `--max-seg-payload`
-  - `--max-flows-per-worker`
-  - `--max-reassembly-bytes-per-worker`
-  - `--max-held-bytes-per-worker`
-- Run with admin/root permissions where kernel hooks are required.
+When using kernel hooks, run with required privileges.
+
+- Windows: admin privileges are required for the driver path.
+- Linux: root or equivalent capability is required for NFQUEUE.
 
 ## Project docs
 
 - Main docs index: `docs/INDEX.md`
-- Security & operations: `SECURITY.md`
+- Security and operations: `SECURITY.md`
 - Code signing: `docs/CODESIGNING.md`
-- License and third-party notices: `docs/THIRD_PARTY_NOTICES.md`
+- Third-party notices: `docs/THIRD_PARTY_NOTICES.md`
+- Third-party source records: `docs/THIRD_PARTY_SOURCES.md`
 
-## Security
+## Security notes
 
-- Third-party binary/runtime dependency used: WinDivert 2.2.2-A (Windows path in `third_party`)
-- See `SECURITY.md` and `docs/THIRD_PARTY_NOTICES.md` for details.
+- Core runtime dependency for Windows: WinDivert 2.2.2-A under `third_party`.
+- For threat model and release/security guidance, see `SECURITY.md`.
 
 ## Contributing
 
-- Open PRs against the repository after creating a concise issue or design note.
-- Keep platform-specific changes isolated in `cmd`, `scripts`, and `docs`.
+- Open PRs after preparing a short issue or design note.
+- Keep platform-specific changes in `cmd/`, `internal/`, `scripts/`, and `docs/`.
 
-## Open Source Used
+## Open Source and third-party notices
 
-This project includes and depends on third-party software. Versions are listed
-in `go.mod`/`go.sum` for Go modules.
-For upstream sources and local patches, see `docs/THIRD_PARTY_SOURCES.md`.
+This section matches the notice format used by
+`docs/THIRD_PARTY_NOTICES.md`.
 
-## Bundled
+### Bundled
 
 - WinDivert 2.2.2-A (binaries/docs)
   - License: `third_party\windivert\WinDivert-2.2.2-A\LICENSE`
 
-## System dependencies (Linux)
+### System dependencies (Linux)
 
 None. The Linux NFQUEUE path uses a pure-Go netlink client (`go-nfqueue`).
 
-## Go module dependencies (Linux NFQUEUE path)
+### Go module dependencies (Linux NFQUEUE path)
 
 - github.com/florianl/go-nfqueue v1.3.2 (MIT)
   - https://github.com/florianl/go-nfqueue/blob/v1.3.2/LICENSE
@@ -92,7 +111,7 @@ None. The Linux NFQUEUE path uses a pure-Go netlink client (`go-nfqueue`).
 - golang.org/x/sys v0.1.0 (BSD-3-Clause)
   - https://cs.opensource.google/go/x/sys/+/refs/tags/v0.1.0:LICENSE
 
-## Go module dependencies (Windows tray UI)
+### Go module dependencies (Windows tray UI)
 
 - github.com/getlantern/systray v1.2.2 (Apache-2.0)
   - https://github.com/getlantern/systray/blob/v1.2.2/LICENSE
