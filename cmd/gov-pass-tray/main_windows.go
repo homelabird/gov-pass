@@ -52,12 +52,13 @@ func main() {
 type trayUI struct {
 	serviceName string
 
-	mStatus   *systray.MenuItem
-	mToggle   *systray.MenuItem
-	mReload   *systray.MenuItem
-	mRestart  *systray.MenuItem
-	mRunAtLog *systray.MenuItem
-	mQuit     *systray.MenuItem
+	mDashboard *systray.MenuItem
+	mStatus    *systray.MenuItem
+	mToggle    *systray.MenuItem
+	mReload    *systray.MenuItem
+	mRestart   *systray.MenuItem
+	mRunAtLog  *systray.MenuItem
+	mQuit      *systray.MenuItem
 
 	iconOn  []byte
 	iconOff []byte
@@ -72,12 +73,15 @@ func (t *trayUI) onReady() {
 	systray.SetIcon(t.iconOff)
 	systray.SetTooltip("gov-pass")
 
+	t.mDashboard = systray.AddMenuItem("🎨 Dashboard", "")
+	systray.AddSeparator()
+
 	t.mStatus = systray.AddMenuItem("Status: ...", "")
 	t.mStatus.Disable()
 
 	systray.AddSeparator()
 
-	t.mToggle = systray.AddMenuItem("Start service (Admin)...", "")
+	t.mToggle = systray.AddMenuItem("Activate Protection (Admin)...", "")
 	t.mReload = systray.AddMenuItem("Reload config (Admin)...", "")
 	t.mRestart = systray.AddMenuItem("Restart service (Admin)...", "")
 	t.mReload.Disable()
@@ -104,6 +108,8 @@ func (t *trayUI) onReady() {
 	go func() {
 		for {
 			select {
+			case <-t.mDashboard.ClickedCh:
+				go t.showDashboard()
 			case <-t.mToggle.ClickedCh:
 				t.elevateToggle()
 			case <-t.mReload.ClickedCh:
@@ -131,6 +137,41 @@ func (t *trayUI) elevateToggle() {
 		return
 	}
 	_ = elevateSelf(t.serviceName, "start")
+}
+
+func (t *trayUI) showDashboard() {
+	state, err := queryServiceState(t.serviceName)
+	stStr := "Unknown"
+	if err == nil {
+		switch state {
+		case svc.Running:
+			stStr = "ACTIVE (Running)"
+		case svc.Stopped:
+			stStr = "INACTIVE (Stopped)"
+		default:
+			s := stateString(state)
+			if len(s) > 0 {
+				stStr = strings.ToUpper(s[:1]) + s[1:]
+			} else {
+				stStr = s
+			}
+		}
+	}
+
+	titlePtr, _ := windows.UTF16PtrFromString("gov-pass Dashboard")
+	textPtr, _ := windows.UTF16PtrFromString(fmt.Sprintf(
+		"gov-pass Splitter\n"+
+			"------------------\n\n"+
+			"Current Status: %s\n\n"+
+			"The splitter is used to bypass network restrictions by splitting TLS ClientHellos.\n\n"+
+			"Would you like to toggle the protection state?", stStr))
+
+	// MB_YESNO | MB_ICONQUESTION | MB_TOPMOST
+	// Note: windows.IDYES is often not defined in x/sys/windows; using literal 6.
+	ret, _ := windows.MessageBox(0, textPtr, titlePtr, windows.MB_YESNO|windows.MB_ICONQUESTION|windows.MB_TOPMOST)
+	if ret == 6 {
+		t.elevateToggle()
+	}
 }
 
 func (t *trayUI) toggleRunAtLogin() {
@@ -187,16 +228,16 @@ func (t *trayUI) pollStatus(ctx context.Context) {
 				switch state {
 				case svc.Running:
 					systray.SetIcon(t.iconOn)
-					systray.SetTooltip("gov-pass: running")
-					t.mStatus.SetTitle("Status: Running")
-					t.mToggle.SetTitle("Stop service (Admin)...")
+					systray.SetTooltip("gov-pass: Running")
+					t.mStatus.SetTitle("🟢 Status: Active")
+					t.mToggle.SetTitle("Deactivate Protection (Admin)...")
 					t.mReload.Enable()
 					t.mRestart.Enable()
 				case svc.Stopped:
 					systray.SetIcon(t.iconOff)
-					systray.SetTooltip("gov-pass: stopped")
-					t.mStatus.SetTitle("Status: Stopped")
-					t.mToggle.SetTitle("Start service (Admin)...")
+					systray.SetTooltip("gov-pass: Stopped")
+					t.mStatus.SetTitle("⚪ Status: Inactive")
+					t.mToggle.SetTitle("Activate Protection (Admin)...")
 					t.mReload.Disable()
 					t.mRestart.Enable()
 				case svc.StartPending:
