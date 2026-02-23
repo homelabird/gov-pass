@@ -1,4 +1,8 @@
 dist/
+bin/
 *.test.exe
 /splitter
 /splitter.exe
+/check.exe
+/gov-pass-tray
+/gov-pass-msi-helper
