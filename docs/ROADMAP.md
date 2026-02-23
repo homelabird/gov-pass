@@ -28,7 +28,7 @@ Produced on Git tags by GitLab CI:
 - `SHA256SUMS`
 
 Experimental builds:
-- FreeBSD amd64 tar.gz (not production-ready)
+- FreeBSD amd64 tar.gz (not production)
 
 Optional verification:
 - Windows runner E2E can install/uninstall the MSI and smoke-test service start/stop/reload.

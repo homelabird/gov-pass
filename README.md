@@ -3,7 +3,7 @@
 `gov-pass` is a split-only TLS ClientHello splitter for outbound TCP/443 traffic.
 It supports lightweight deployment on Windows, Linux, and FreeBSD targets with
 platform-native packet interception paths.  
-`FreeBSD / pfSense` support is currently experimental and not production-ready.
+`FreeBSD / pfSense` support is currently experimental and not production.
 
 ## Why gov-pass
 
