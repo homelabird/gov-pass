@@ -52,12 +52,13 @@ func main() {
 type trayUI struct {
 	serviceName string
 
-	mStatus   *systray.MenuItem
-	mToggle   *systray.MenuItem
-	mReload   *systray.MenuItem
-	mRestart  *systray.MenuItem
-	mRunAtLog *systray.MenuItem
-	mQuit     *systray.MenuItem
+	mDashboard *systray.MenuItem
+	mStatus    *systray.MenuItem
+	mToggle    *systray.MenuItem
+	mReload    *systray.MenuItem
+	mRestart   *systray.MenuItem
+	mRunAtLog  *systray.MenuItem
+	mQuit      *systray.MenuItem
 
 	iconOn  []byte
 	iconOff []byte
@@ -71,6 +72,9 @@ func (t *trayUI) onReady() {
 
 	systray.SetIcon(t.iconOff)
 	systray.SetTooltip("gov-pass")
+
+	t.mDashboard = systray.AddMenuItem("Open Dashboard...", "")
+	systray.AddSeparator()
 
 	t.mStatus = systray.AddMenuItem("Status: ...", "")
 	t.mStatus.Disable()
@@ -104,6 +108,8 @@ func (t *trayUI) onReady() {
 	go func() {
 		for {
 			select {
+			case <-t.mDashboard.ClickedCh:
+				go t.showDashboard()
 			case <-t.mToggle.ClickedCh:
 				t.elevateToggle()
 			case <-t.mReload.ClickedCh:
@@ -131,6 +137,36 @@ func (t *trayUI) elevateToggle() {
 		return
 	}
 	_ = elevateSelf(t.serviceName, "start")
+}
+
+func (t *trayUI) showDashboard() {
+	state, err := queryServiceState(t.serviceName)
+	stStr := "Unknown"
+	if err == nil {
+		switch state {
+		case svc.Running:
+			stStr = "Running (Active)"
+		case svc.Stopped:
+			stStr = "Stopped (Inactive)"
+		default:
+			s := stateString(state)
+			if len(s) > 0 {
+				stStr = strings.ToUpper(s[:1]) + s[1:]
+			} else {
+				stStr = s
+			}
+		}
+	}
+
+	titlePtr, _ := windows.UTF16PtrFromString("gov-pass Dashboard")
+	textPtr, _ := windows.UTF16PtrFromString(fmt.Sprintf("gov-pass is currently %s.\n\nWould you like to toggle the service state?", stStr))
+
+	// MB_YESNO | MB_ICONINFORMATION | MB_TOPMOST
+	// Note: windows.IDYES is often not defined in x/sys/windows; using literal 6.
+	ret, _ := windows.MessageBox(0, textPtr, titlePtr, windows.MB_YESNO|windows.MB_ICONINFORMATION|windows.MB_TOPMOST)
+	if ret == 6 {
+		t.elevateToggle()
+	}
 }
 
 func (t *trayUI) toggleRunAtLogin() {
