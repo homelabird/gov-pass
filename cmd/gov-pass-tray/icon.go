@@ -7,6 +7,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"math"
 	"sort"
 )
 
@@ -169,18 +170,42 @@ func buildPNGCircle(size int, c rgba) ([]byte, error) {
 	}
 	img := image.NewNRGBA(image.Rect(0, 0, size, size))
 
-	col := color.NRGBA{R: c.r, G: c.g, B: c.b, A: c.a}
-	cx := float64(size-1) / 2
-	cy := float64(size-1) / 2
-	r := float64(size) * 0.42
-	r2 := r * r
+	// Apple-style squircle (superellipse) shape.
+	cx := float64(size) / 2
+	cy := float64(size) / 2
+	pad := float64(size) * 0.08
+	rx := (float64(size) - 2*pad) / 2
+	ry := rx
+	n := 4.5 // continuous-curvature exponent
 
+	const samples = 4 // 4×4 super-sampling for anti-aliased edges
 	for y := 0; y < size; y++ {
-		dy := float64(y) - cy
 		for x := 0; x < size; x++ {
-			dx := float64(x) - cx
-			if dx*dx+dy*dy <= r2 {
-				img.SetNRGBA(x, y, col)
+			var coverage float64
+			for sy := 0; sy < samples; sy++ {
+				for sx := 0; sx < samples; sx++ {
+					px := float64(x) + (float64(sx)+0.5)/float64(samples)
+					py := float64(y) + (float64(sy)+0.5)/float64(samples)
+					dx := math.Abs(px-cx) / rx
+					dy := math.Abs(py-cy) / ry
+					if math.Pow(dx, n)+math.Pow(dy, n) <= 1.0 {
+						coverage += 1.0
+					}
+				}
+			}
+			coverage /= float64(samples * samples)
+
+			if coverage > 0 {
+				// Subtle vertical gradient for depth (brighter top, darker bottom).
+				t := float64(y) / float64(size)
+				brighten := 1.0 + 0.10*(0.5-t)
+
+				r := clampByte(float64(c.r) * brighten)
+				g := clampByte(float64(c.g) * brighten)
+				b := clampByte(float64(c.b) * brighten)
+				a := uint8(math.Round(float64(c.a) * coverage))
+
+				img.SetNRGBA(x, y, color.NRGBA{R: r, G: g, B: b, A: a})
 			}
 		}
 	}
@@ -190,6 +215,16 @@ func buildPNGCircle(size int, c rgba) ([]byte, error) {
 		return nil, err
 	}
 	return b.Bytes(), nil
+}
+
+func clampByte(v float64) uint8 {
+	if v < 0 {
+		return 0
+	}
+	if v > 255 {
+		return 255
+	}
+	return uint8(math.Round(v))
 }
 
 func buildPNGTransparent(size int) ([]byte, error) {

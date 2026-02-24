@@ -66,30 +66,30 @@ type trayUI struct {
 }
 
 func (t *trayUI) onReady() {
-	t.iconOn = mustBuildIcoCircle(32, rgba{0x2e, 0xcc, 0x71, 0xff})  // green
-	t.iconOff = mustBuildIcoCircle(32, rgba{0x95, 0xa5, 0xa6, 0xff}) // gray
-	t.iconErr = mustBuildIcoCircle(32, rgba{0xe7, 0x4c, 0x3c, 0xff}) // red
+	t.iconOn = mustBuildIcoCircle(32, rgba{0x34, 0xc7, 0x59, 0xff})  // Apple system green
+	t.iconOff = mustBuildIcoCircle(32, rgba{0x8e, 0x8e, 0x93, 0xff}) // Apple system gray
+	t.iconErr = mustBuildIcoCircle(32, rgba{0xff, 0x3b, 0x30, 0xff}) // Apple system red
 
 	systray.SetIcon(t.iconOff)
 	systray.SetTooltip("gov-pass")
 
-	t.mDashboard = systray.AddMenuItem("🎨 Dashboard", "")
+	t.mDashboard = systray.AddMenuItem("Dashboard", "Open dashboard")
 	systray.AddSeparator()
 
-	t.mStatus = systray.AddMenuItem("Status: ...", "")
+	t.mStatus = systray.AddMenuItem("Status: Checking…", "")
 	t.mStatus.Disable()
 
 	systray.AddSeparator()
 
-	t.mToggle = systray.AddMenuItem("Activate Protection (Admin)...", "")
-	t.mReload = systray.AddMenuItem("Reload config (Admin)...", "")
-	t.mRestart = systray.AddMenuItem("Restart service (Admin)...", "")
+	t.mToggle = systray.AddMenuItem("Activate Protection…", "Toggle protection on or off")
+	t.mReload = systray.AddMenuItem("Reload Config…", "Reload configuration")
+	t.mRestart = systray.AddMenuItem("Restart Service…", "Restart the background service")
 	t.mReload.Disable()
 
 	systray.AddSeparator()
 
 	enabled, _ := runAtLoginEnabled()
-	t.mRunAtLog = systray.AddMenuItemCheckbox("Start tray at login", "", enabled)
+	t.mRunAtLog = systray.AddMenuItemCheckbox("Open at Login", "Launch tray at login", enabled)
 	if enabled {
 		t.mRunAtLog.Check()
 	} else {
@@ -97,7 +97,7 @@ func (t *trayUI) onReady() {
 	}
 
 	systray.AddSeparator()
-	t.mQuit = systray.AddMenuItem("Quit", "")
+	t.mQuit = systray.AddMenuItem("Quit gov-pass", "Quit the application")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
@@ -158,12 +158,10 @@ func (t *trayUI) showDashboard() {
 		}
 	}
 
-	titlePtr, _ := windows.UTF16PtrFromString("gov-pass Dashboard")
+	titlePtr, _ := windows.UTF16PtrFromString("gov-pass")
 	textPtr, _ := windows.UTF16PtrFromString(fmt.Sprintf(
-		"gov-pass Splitter\n"+
-			"------------------\n\n"+
-			"Current Status: %s\n\n"+
-			"The splitter is used to bypass network restrictions by splitting TLS ClientHellos.\n\n"+
+		"gov-pass Splitter\n\n"+
+			"Status: %s\n\n"+
 			"Would you like to toggle the protection state?", stStr))
 
 	// MB_YESNO | MB_ICONQUESTION | MB_TOPMOST
@@ -210,9 +208,9 @@ func (t *trayUI) pollStatus(ctx context.Context) {
 			if err != nil {
 				if !lastErr {
 					systray.SetIcon(t.iconErr)
-					systray.SetTooltip("gov-pass: status unknown")
-					t.mStatus.SetTitle("Status: Unknown (service query failed)")
-					t.mToggle.SetTitle("Start service (Admin)...")
+					systray.SetTooltip("gov-pass — Status Unknown")
+					t.mStatus.SetTitle("Status: Unknown")
+					t.mToggle.SetTitle("Start Service…")
 					t.mReload.Disable()
 					t.mRestart.Disable()
 					lastErr = true
@@ -228,35 +226,35 @@ func (t *trayUI) pollStatus(ctx context.Context) {
 				switch state {
 				case svc.Running:
 					systray.SetIcon(t.iconOn)
-					systray.SetTooltip("gov-pass: Running")
-					t.mStatus.SetTitle("🟢 Status: Active")
-					t.mToggle.SetTitle("Deactivate Protection (Admin)...")
+					systray.SetTooltip("gov-pass — Active")
+					t.mStatus.SetTitle("● Status: Active")
+					t.mToggle.SetTitle("Deactivate Protection…")
 					t.mReload.Enable()
 					t.mRestart.Enable()
 				case svc.Stopped:
 					systray.SetIcon(t.iconOff)
-					systray.SetTooltip("gov-pass: Stopped")
-					t.mStatus.SetTitle("⚪ Status: Inactive")
-					t.mToggle.SetTitle("Activate Protection (Admin)...")
+					systray.SetTooltip("gov-pass — Stopped")
+					t.mStatus.SetTitle("○ Status: Inactive")
+					t.mToggle.SetTitle("Activate Protection…")
 					t.mReload.Disable()
 					t.mRestart.Enable()
 				case svc.StartPending:
 					systray.SetIcon(t.iconOff)
-					systray.SetTooltip("gov-pass: starting")
-					t.mStatus.SetTitle("Status: Starting...")
+					systray.SetTooltip("gov-pass — Starting")
+					t.mStatus.SetTitle("◌ Status: Starting…")
 					t.mToggle.Disable()
 					t.mReload.Disable()
 					t.mRestart.Disable()
 				case svc.StopPending:
 					systray.SetIcon(t.iconOff)
-					systray.SetTooltip("gov-pass: stopping")
-					t.mStatus.SetTitle("Status: Stopping...")
+					systray.SetTooltip("gov-pass — Stopping")
+					t.mStatus.SetTitle("◌ Status: Stopping…")
 					t.mToggle.Disable()
 					t.mReload.Disable()
 					t.mRestart.Disable()
 				default:
 					systray.SetIcon(t.iconOff)
-					systray.SetTooltip("gov-pass: state unknown")
+					systray.SetTooltip("gov-pass — Unknown")
 					t.mStatus.SetTitle(fmt.Sprintf("Status: %s", stateString(state)))
 					t.mToggle.Enable()
 					t.mReload.Disable()
