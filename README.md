@@ -47,6 +47,69 @@ go build -o dist\splitter.exe .\cmd\splitter
 .\dist\splitter.exe
 ```
 
+## Tray UI (one-touch GUI)
+
+`gov-pass-tray` provides a system-tray GUI for both Windows and Linux that lets
+you toggle protection on/off with a single click — similar to how commercial VPN
+apps (e.g. Unicorn) work, but with a minimal, distraction-free interface.
+
+### Build
+
+```bash
+# Windows
+go build -ldflags -H=windowsgui -o dist\gov-pass-tray.exe .\cmd\gov-pass-tray
+
+# Linux (requires libayatana-appindicator3-dev and libgtk-3-dev)
+go build -o dist/gov-pass-tray ./cmd/gov-pass-tray
+```
+
+### Screenshots
+
+**Tray status icons** — green (active), gray (inactive), red (error):
+
+![Tray status icons](https://github.com/user-attachments/assets/9416d0fb-05cb-4c9c-b572-91b71dad998c)
+
+**Windows tray menu:**
+
+![Windows tray menu](https://github.com/user-attachments/assets/00b24306-581e-4293-aff0-80188f3d770b)
+
+**Linux tray menu:**
+
+![Linux tray menu](https://github.com/user-attachments/assets/17f95aad-6c48-44f3-9c28-f64c310f2542)
+
+### GUI feature summary
+
+| Feature | Windows | Linux |
+|---|---|---|
+| System tray icon with status color | ✅ Green / Gray / Red | ✅ Green / Gray / Red |
+| One-touch activate / deactivate | ✅ (Admin elevation via UAC) | ✅ (pkexec polkit prompt) |
+| Real-time status polling (1.5 s) | ✅ | ✅ |
+| Dashboard dialog | ✅ MessageBox with toggle | — |
+| Reload config | ✅ | — |
+| Restart service | ✅ | ✅ |
+| Start tray at login | ✅ Registry-based | — |
+| Quit | ✅ | ✅ |
+| CLI action mode (`--action`) | ✅ start / stop / toggle / status | ✅ start / stop / toggle / status |
+| Privilege elevation | ShellExecute `runas` | `pkexec` (polkit) |
+| Service backend | Windows SCM | systemd (`systemctl`) |
+
+### Design evaluation
+
+The tray UI intentionally follows a **minimal, Unicorn-style** philosophy:
+
+- **Single-purpose**: the main action is always "toggle protection" — one click
+  to turn on, one click to turn off.
+- **Zero-configuration**: no settings dialogs, no complex options. All tuning
+  happens via CLI flags on the underlying `splitter` service.
+- **Status-at-a-glance**: the tray icon color instantly communicates the current
+  state — no need to open a window.
+- **Platform-native feel**: uses the OS system tray on both Windows
+  (Win32 notification area) and Linux (AppIndicator / ayatana), so it blends
+  with the user's existing desktop environment.
+- **Safe elevation**: privileged operations always prompt the user via the OS
+  native elevation dialog (Windows UAC or Linux polkit) rather than running
+  the entire tray app as root/admin.
+
 ## Common configuration
 
 The most frequently used flags are shown below:
@@ -119,7 +182,7 @@ None. The Linux NFQUEUE path uses a pure-Go netlink client (`go-nfqueue`).
 - golang.org/x/sys v0.1.0 (BSD-3-Clause)
   - https://cs.opensource.google/go/x/sys/+/refs/tags/v0.1.0:LICENSE
 
-### Go module dependencies (Windows tray UI)
+### Go module dependencies (tray UI — Windows & Linux)
 
 - github.com/getlantern/systray v1.2.2 (Apache-2.0)
   - https://github.com/getlantern/systray/blob/v1.2.2/LICENSE
