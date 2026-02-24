@@ -234,7 +234,7 @@ func (n *NFQueueAdapter) onPacket(a nfqueue.Attribute) int {
 
 func (n *NFQueueAdapter) onError(err error) int {
 	if opErr, ok := err.(*netlink.OpError); ok {
-		if opErr.Timeout() || opErr.Temporary() {
+		if opErr.Timeout() {
 			return 0
 		}
 	}

@@ -109,14 +109,15 @@ func (e *Engine) Run(ctx context.Context) error {
 	}()
 
 	var err error
-	var recvErr error
+	recvDrained := false
 	select {
 	case err = <-workerErrCh:
 		cancel()
 		// Ensure recvLoop has stopped sending into worker queues before we close them.
-		recvErr = <-recvErrCh
+		<-recvErrCh
+		recvDrained = true
 	case err = <-recvErrCh:
-		recvErr = err
+		recvDrained = true
 		cancel()
 	}
 
@@ -146,8 +147,8 @@ func (e *Engine) Run(ctx context.Context) error {
 	_ = e.adapter.Close()
 
 	// If recvLoop didn't drive shutdown, wait for it to exit now.
-	if recvErr == nil {
-		recvErr = <-recvErrCh
+	if !recvDrained {
+		<-recvErrCh
 	}
 
 	// If recvLoop exited due to cancellation, prefer a worker error if one exists
@@ -159,7 +160,6 @@ func (e *Engine) Run(ctx context.Context) error {
 		default:
 		}
 	}
-	_ = recvErr
 
 	if errors.Is(err, context.Canceled) {
 		return nil

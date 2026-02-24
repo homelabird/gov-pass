@@ -53,7 +53,12 @@ func (b *Buffer) Push(seq uint32, payload []byte) error {
 	}
 
 	contigLen := b.contigLen
-	end := offset + uint32(len(payload))
+	plen := uint32(len(payload))
+	end := offset + plen
+	if end < offset {
+		// uint32 overflow: fragment extends beyond address space.
+		return ErrBufferFull
+	}
 	if end <= contigLen {
 		return nil
 	}
@@ -62,7 +67,11 @@ func (b *Buffer) Push(seq uint32, payload []byte) error {
 		payload = payload[trim:]
 		offset = contigLen
 		b.hadOverlap = true
-		end = offset + uint32(len(payload))
+		plen = uint32(len(payload))
+		end = offset + plen
+		if end < offset {
+			return ErrBufferFull
+		}
 		if len(payload) == 0 {
 			return nil
 		}
