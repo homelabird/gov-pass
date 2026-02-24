@@ -56,22 +56,22 @@ type trayUI struct {
 }
 
 func (t *trayUI) onReady() {
-	t.iconOn = mustBuildIcoCircle(32, rgba{0x2e, 0xcc, 0x71, 0xff})  // green
-	t.iconOff = mustBuildIcoCircle(32, rgba{0x95, 0xa5, 0xa6, 0xff}) // gray
-	t.iconErr = mustBuildIcoCircle(32, rgba{0xe7, 0x4c, 0x3c, 0xff}) // red
+	t.iconOn = mustBuildIcoCircle(32, rgba{0x34, 0xc7, 0x59, 0xff})  // Apple system green
+	t.iconOff = mustBuildIcoCircle(32, rgba{0x8e, 0x8e, 0x93, 0xff}) // Apple system gray
+	t.iconErr = mustBuildIcoCircle(32, rgba{0xff, 0x3b, 0x30, 0xff}) // Apple system red
 
 	systray.SetIcon(t.iconOff)
 	systray.SetTooltip("gov-pass")
 
-	t.mStatus = systray.AddMenuItem("Status: ...", "")
+	t.mStatus = systray.AddMenuItem("Status: Checking…", "")
 	t.mStatus.Disable()
 	systray.AddSeparator()
 
-	t.mToggle = systray.AddMenuItem("Activate Protection...", "")
-	t.mRestart = systray.AddMenuItem("Restart service...", "")
+	t.mToggle = systray.AddMenuItem("Activate Protection…", "Toggle protection on or off")
+	t.mRestart = systray.AddMenuItem("Restart Service…", "Restart the background service")
 	systray.AddSeparator()
 
-	t.mQuit = systray.AddMenuItem("Quit", "")
+	t.mQuit = systray.AddMenuItem("Quit gov-pass", "Quit the application")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
@@ -133,9 +133,9 @@ func (t *trayUI) pollStatus(ctx context.Context) {
 			if err != nil {
 				if !lastErr {
 					systray.SetIcon(t.iconErr)
-					systray.SetTooltip("gov-pass: status unknown")
-					t.mStatus.SetTitle("Status: Unknown (service query failed)")
-					t.mToggle.SetTitle("Start service...")
+					systray.SetTooltip("gov-pass — Status Unknown")
+					t.mStatus.SetTitle("Status: Unknown")
+					t.mToggle.SetTitle("Start Service…")
 					t.mRestart.Disable()
 					lastErr = true
 					lastActive = nil
@@ -149,15 +149,15 @@ func (t *trayUI) pollStatus(ctx context.Context) {
 
 				if active {
 					systray.SetIcon(t.iconOn)
-					systray.SetTooltip("gov-pass: Running")
-					t.mStatus.SetTitle("🟢 Status: Active")
-					t.mToggle.SetTitle("Deactivate Protection...")
+					systray.SetTooltip("gov-pass — Active")
+					t.mStatus.SetTitle("● Status: Active")
+					t.mToggle.SetTitle("Deactivate Protection…")
 					t.mRestart.Enable()
 				} else {
 					systray.SetIcon(t.iconOff)
-					systray.SetTooltip("gov-pass: Stopped")
-					t.mStatus.SetTitle("⚪ Status: Inactive")
-					t.mToggle.SetTitle("Activate Protection...")
+					systray.SetTooltip("gov-pass — Stopped")
+					t.mStatus.SetTitle("○ Status: Inactive")
+					t.mToggle.SetTitle("Activate Protection…")
 					t.mRestart.Enable()
 				}
 			}

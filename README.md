@@ -67,15 +67,13 @@ go build -o dist/gov-pass-tray ./cmd/gov-pass-tray
 
 **Tray status icons** — green (active), gray (inactive), red (error):
 
-![Tray status icons](https://github.com/user-attachments/assets/9416d0fb-05cb-4c9c-b572-91b71dad998c)
+| Active | Inactive | Error |
+|:---:|:---:|:---:|
+| ![Active](docs/screenshots/icon_active_large.png) | ![Inactive](docs/screenshots/icon_inactive_large.png) | ![Error](docs/screenshots/icon_error_large.png) |
 
-**Windows tray menu:**
-
-![Windows tray menu](https://github.com/user-attachments/assets/00b24306-581e-4293-aff0-80188f3d770b)
-
-**Linux tray menu:**
-
-![Linux tray menu](https://github.com/user-attachments/assets/17f95aad-6c48-44f3-9c28-f64c310f2542)
+The icons use an Apple-style squircle (superellipse) shape with anti-aliased
+edges and a subtle vertical gradient for depth — inspired by iOS and macOS
+system iconography.
 
 ### GUI feature summary
 
@@ -95,14 +93,14 @@ go build -o dist/gov-pass-tray ./cmd/gov-pass-tray
 
 ### Design evaluation
 
-The tray UI intentionally follows a **minimal, Unicorn-style** philosophy:
+The tray UI follows an **Apple-inspired, minimal** philosophy:
 
 - **Single-purpose**: the main action is always "toggle protection" — one click
   to turn on, one click to turn off.
 - **Zero-configuration**: no settings dialogs, no complex options. All tuning
   happens via CLI flags on the underlying `splitter` service.
-- **Status-at-a-glance**: the tray icon color instantly communicates the current
-  state — no need to open a window.
+- **Status-at-a-glance**: the tray icon's Apple-style squircle shape and color
+  instantly communicates the current state — no need to open a window.
 - **Platform-native feel**: uses the OS system tray on both Windows
   (Win32 notification area) and Linux (AppIndicator / ayatana), so it blends
   with the user's existing desktop environment.
