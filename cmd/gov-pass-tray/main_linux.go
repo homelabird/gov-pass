@@ -6,6 +6,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"strings"
@@ -100,14 +101,20 @@ func (t *trayUI) onExit() {
 func (t *trayUI) toggleService() {
 	active, err := isServiceActive(t.serviceName)
 	if err == nil && active {
-		_ = elevatedSystemctl("stop", t.serviceName)
+		if err := elevatedSystemctl("stop", t.serviceName); err != nil {
+			log.Printf("stop service failed: %v", err)
+		}
 		return
 	}
-	_ = elevatedSystemctl("start", t.serviceName)
+	if err := elevatedSystemctl("start", t.serviceName); err != nil {
+		log.Printf("start service failed: %v", err)
+	}
 }
 
 func (t *trayUI) restartService() {
-	_ = elevatedSystemctl("restart", t.serviceName)
+	if err := elevatedSystemctl("restart", t.serviceName); err != nil {
+		log.Printf("restart service failed: %v", err)
+	}
 }
 
 func (t *trayUI) pollStatus(ctx context.Context) {
