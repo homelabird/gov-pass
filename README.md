@@ -53,6 +53,12 @@ go build -o dist\splitter.exe .\cmd\splitter
 you toggle protection on/off with a single click — similar to how commercial VPN
 apps (e.g. Unicorn) work, but with a minimal, distraction-free interface.
 
+### SET
+> linux
+``` bash
+sudo dnf install libayatana-appindicator-gtk3-devel
+```
+
 ### Build
 
 ```bash
