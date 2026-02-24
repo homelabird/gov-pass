@@ -190,10 +190,13 @@ func (w *worker) handlePacket(ctx context.Context, pkt *packet.Packet) error {
 		}
 		st.HeldPackets = append(st.HeldPackets, pkt)
 		w.heldBytes += int64(len(pkt.Data))
-		if len(st.HeldPackets) > cfg.MaxHeldPackets {
+		if len(st.HeldPackets) >= cfg.MaxHeldPackets {
 			return w.failOpen(ctx, key, st)
 		}
 		if now.Sub(st.CollectStart) > cfg.CollectTimeout {
+			return w.failOpen(ctx, key, st)
+		}
+		if st.Reassembler == nil {
 			return w.failOpen(ctx, key, st)
 		}
 		before := int64(st.Reassembler.TotalBytes())
@@ -293,7 +296,7 @@ func (w *worker) handlePacket(ctx context.Context, pkt *packet.Packet) error {
 	}
 	st.HeldPackets = append(st.HeldPackets, pkt)
 	w.heldBytes += int64(len(pkt.Data))
-	if len(st.HeldPackets) > cfg.MaxHeldPackets {
+	if len(st.HeldPackets) >= cfg.MaxHeldPackets {
 		return w.failOpen(ctx, key, st)
 	}
 	if now.Sub(st.CollectStart) > cfg.CollectTimeout {
@@ -346,6 +349,9 @@ func (w *worker) trySplitImmediate(ctx context.Context, key flow.Key, st *flow.F
 	if st.FirstPayloadLen <= 0 {
 		return nil
 	}
+	if st.Reassembler == nil {
+		return w.failOpen(ctx, key, st)
+	}
 	contig := st.Reassembler.Contiguous()
 	if len(contig) < st.FirstPayloadLen {
 		return nil
@@ -359,6 +365,9 @@ func (w *worker) trySplitTLSHello(ctx context.Context, key flow.Key, st *flow.Fl
 		return errors.New("worker config is nil")
 	}
 
+	if st.Reassembler == nil {
+		return w.failOpen(ctx, key, st)
+	}
 	contig := st.Reassembler.Contiguous()
 	recordLen, result := tls.DetectClientHelloRecord(contig)
 	if result == tls.ResultNeedMore {

@@ -89,3 +89,20 @@ func TestWrapAround(t *testing.T) {
 		t.Fatalf("contig wrap = %q", got)
 	}
 }
+
+func TestPushOverflow(t *testing.T) {
+	// maxBytes is large enough that offset passes the first check, but
+	// offset + len(payload) would overflow uint32.
+	base := uint32(0)
+	maxBytes := uint32(0xFFFFFFF0)
+	buf := New(base, maxBytes)
+
+	// offset = 0xFFFFFFE0, len(payload) = 32 → end wraps to 0
+	offset := uint32(0xFFFFFFE0)
+	seq := base + offset
+	payload := make([]byte, 32)
+	err := buf.Push(seq, payload)
+	if err != ErrBufferFull {
+		t.Fatalf("expected ErrBufferFull on overflow, got %v", err)
+	}
+}

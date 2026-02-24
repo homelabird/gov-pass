@@ -25,5 +25,8 @@ func DetectClientHelloRecord(buf []byte) (uint16, Result) {
 		return 0, ResultMismatch
 	}
 	recordLen := uint16(buf[3])<<8 | uint16(buf[4])
+	if recordLen == 0 {
+		return 0, ResultMismatch
+	}
 	return recordLen, ResultMatch
 }
