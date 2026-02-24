@@ -63,50 +63,6 @@ go build -ldflags -H=windowsgui -o dist\gov-pass-tray.exe .\cmd\gov-pass-tray
 go build -o dist/gov-pass-tray ./cmd/gov-pass-tray
 ```
 
-### Screenshots
-
-**Tray status icons** — green (active), gray (inactive), red (error):
-
-| Active | Inactive | Error |
-|:---:|:---:|:---:|
-| ![Active](docs/screenshots/icon_active_large.png) | ![Inactive](docs/screenshots/icon_inactive_large.png) | ![Error](docs/screenshots/icon_error_large.png) |
-
-The icons use an Apple-style squircle (superellipse) shape with anti-aliased
-edges and a subtle vertical gradient for depth — inspired by iOS and macOS
-system iconography.
-
-### GUI feature summary
-
-| Feature | Windows | Linux |
-|---|---|---|
-| System tray icon with status color | ✅ Green / Gray / Red | ✅ Green / Gray / Red |
-| One-touch activate / deactivate | ✅ (Admin elevation via UAC) | ✅ (pkexec polkit prompt) |
-| Real-time status polling (1.5 s) | ✅ | ✅ |
-| Dashboard dialog | ✅ MessageBox with toggle | — |
-| Reload config | ✅ | — |
-| Restart service | ✅ | ✅ |
-| Start tray at login | ✅ Registry-based | — |
-| Quit | ✅ | ✅ |
-| CLI action mode (`--action`) | ✅ start / stop / toggle / status | ✅ start / stop / toggle / status |
-| Privilege elevation | ShellExecute `runas` | `pkexec` (polkit) |
-| Service backend | Windows SCM | systemd (`systemctl`) |
-
-### Design evaluation
-
-The tray UI follows an **Apple-inspired, minimal** philosophy:
-
-- **Single-purpose**: the main action is always "toggle protection" — one click
-  to turn on, one click to turn off.
-- **Zero-configuration**: no settings dialogs, no complex options. All tuning
-  happens via CLI flags on the underlying `splitter` service.
-- **Status-at-a-glance**: the tray icon's Apple-style squircle shape and color
-  instantly communicates the current state — no need to open a window.
-- **Platform-native feel**: uses the OS system tray on both Windows
-  (Win32 notification area) and Linux (AppIndicator / ayatana), so it blends
-  with the user's existing desktop environment.
-- **Safe elevation**: privileged operations always prompt the user via the OS
-  native elevation dialog (Windows UAC or Linux polkit) rather than running
-  the entire tray app as root/admin.
 
 ## Common configuration
 
