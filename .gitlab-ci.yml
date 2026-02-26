@@ -77,6 +77,52 @@ build_release:
       - dist/release/SHA256SUMS
     expire_in: never
 
+build_rpm_release:
+  stage: build
+  image: registry.fedoraproject.org/fedora:43
+  rules:
+    - if: $CI_COMMIT_TAG
+  script:
+    - set -eu
+    - dnf -y install --setopt=install_weak_deps=False rpm-build golang gcc git systemd-rpm-macros rpmlint
+    - mkdir -p "$DIST_DIR"
+    - RAW_TAG="${CI_COMMIT_TAG#v}"
+    - |
+      if echo "$RAW_TAG" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([._-].*)?$'; then
+        RPM_VERSION="$(echo "$RAW_TAG" | sed -E 's/^([0-9]+\.[0-9]+\.[0-9]+).*/\1/')"
+        RPM_SUFFIX="$(echo "$RAW_TAG" | sed -E 's/^[0-9]+\.[0-9]+\.[0-9]+//')"
+      else
+        echo "Unsupported tag format for RPM: $CI_COMMIT_TAG"
+        exit 1
+      fi
+    - RPM_RELEASE="1"
+    - |
+      if [ -n "$RPM_SUFFIX" ]; then
+        CLEAN_SUFFIX="$(echo "$RPM_SUFFIX" | sed -E 's/^[._-]+//; s/[^A-Za-z0-9._]+/./g; s/^\.+//; s/\.+$//')"
+        if [ -n "$CLEAN_SUFFIX" ]; then
+          RPM_RELEASE="1.${CLEAN_SUFFIX}"
+        fi
+      fi
+    - RPM_TOP="$CI_PROJECT_DIR/rpmbuild"
+    - rm -rf "$RPM_TOP"
+    - mkdir -p "$RPM_TOP/BUILD" "$RPM_TOP/BUILDROOT" "$RPM_TOP/RPMS" "$RPM_TOP/SOURCES" "$RPM_TOP/SPECS" "$RPM_TOP/SRPMS"
+    - git archive --format=tar --prefix="gov-pass-${RPM_VERSION}/" "$CI_COMMIT_TAG" | gzip -n > "$RPM_TOP/SOURCES/gov-pass-${RPM_VERSION}.tar.gz"
+    - cp packaging/rpm/gov-pass.spec "$RPM_TOP/SPECS/"
+    - cp packaging/rpm/gov-pass.service packaging/rpm/gov-pass.sysconfig "$RPM_TOP/SOURCES/"
+    - rpmbuild -ba --define "_topdir $RPM_TOP" --define "gov_pass_version $RPM_VERSION" --define "gov_pass_release $RPM_RELEASE" "$RPM_TOP/SPECS/gov-pass.spec"
+    - BIN_RPM="$(ls "$RPM_TOP"/RPMS/x86_64/gov-pass-"$RPM_VERSION"-*.x86_64.rpm | head -n1)"
+    - SRC_RPM="$(ls "$RPM_TOP"/SRPMS/gov-pass-"$RPM_VERSION"-*.src.rpm | head -n1)"
+    - rpmlint "$RPM_TOP/SPECS/gov-pass.spec" "$BIN_RPM"
+    - cp "$BIN_RPM" "$DIST_DIR/gov-pass-${CI_COMMIT_TAG}-linux-amd64.rpm"
+    - cp "$SRC_RPM" "$DIST_DIR/gov-pass-${CI_COMMIT_TAG}-linux.src.rpm"
+    - (cd "$DIST_DIR" && sha256sum "gov-pass-${CI_COMMIT_TAG}-linux-amd64.rpm" "gov-pass-${CI_COMMIT_TAG}-linux.src.rpm" > SHA256SUMS.rpm)
+  artifacts:
+    paths:
+      - dist/release/*.rpm
+      - dist/release/*.src.rpm
+      - dist/release/SHA256SUMS.rpm
+    expire_in: never
+
 verify_windows_msi_e2e:
   stage: verify
   rules:
@@ -112,3 +158,9 @@ release:
           url: "$CI_PROJECT_URL/-/jobs/artifacts/$CI_COMMIT_TAG/raw/dist/release/gov-pass-${CI_COMMIT_TAG}-windows-amd64.msi?job=build_release"
         - name: "SHA256SUMS"
           url: "$CI_PROJECT_URL/-/jobs/artifacts/$CI_COMMIT_TAG/raw/dist/release/SHA256SUMS?job=build_release"
+        - name: "gov-pass-linux-amd64.rpm"
+          url: "$CI_PROJECT_URL/-/jobs/artifacts/$CI_COMMIT_TAG/raw/dist/release/gov-pass-${CI_COMMIT_TAG}-linux-amd64.rpm?job=build_rpm_release"
+        - name: "gov-pass-linux.src.rpm"
+          url: "$CI_PROJECT_URL/-/jobs/artifacts/$CI_COMMIT_TAG/raw/dist/release/gov-pass-${CI_COMMIT_TAG}-linux.src.rpm?job=build_rpm_release"
+        - name: "SHA256SUMS.rpm"
+          url: "$CI_PROJECT_URL/-/jobs/artifacts/$CI_COMMIT_TAG/raw/dist/release/SHA256SUMS.rpm?job=build_rpm_release"

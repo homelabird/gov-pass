@@ -1,0 +1,20 @@
+[Unit]
+Description=gov-pass NFQUEUE splitter
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=GOV_PASS_QUEUE_NUM=100
+Environment=GOV_PASS_MARK=1
+Environment=GOV_PASS_ARGS=--auto-install-tools=false
+EnvironmentFile=-/etc/sysconfig/gov-pass
+ExecStart=/usr/libexec/gov-pass/splitter --queue-num $GOV_PASS_QUEUE_NUM --mark $GOV_PASS_MARK $GOV_PASS_ARGS
+Restart=on-failure
+RestartSec=2
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
