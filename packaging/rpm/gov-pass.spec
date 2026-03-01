@@ -52,6 +52,11 @@ install -m 0755 scripts/linux/uninstall_nfqueue.sh %{buildroot}%{_libexecdir}/%{
 install -D -m 0644 %{SOURCE1} %{buildroot}%{_unitdir}/gov-pass.service
 install -D -m 0644 %{SOURCE2} %{buildroot}%{_sysconfdir}/sysconfig/gov-pass
 
+%pre
+if ! command -v nft >/dev/null 2>&1 && ! command -v iptables >/dev/null 2>&1; then
+  echo "Warning: neither nft nor iptables found; gov-pass requires one of them." >&2
+fi
+
 %post
 %systemd_post gov-pass.service
 
