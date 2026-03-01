@@ -22,7 +22,7 @@ test:
 vet:
 	$(GO) vet ./internal/... ./cmd/splitter/...
 
-# ── install / uninstall (Linux) ──────────────────────────────────────────
+# ── install / uninstall (Linux, requires root) ──────────────────────────
 install: build
 	install -d $(DESTDIR)$(PREFIX)/dist
 	install -m 0755 $(DISTDIR)/splitter $(DESTDIR)$(PREFIX)/dist/splitter
