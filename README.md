@@ -53,6 +53,8 @@ On Windows the binary will automatically:
 - download and install the WinDivert driver if missing
 - uninstall the driver on exit
 
+FreeBSD requires manual pf anchor configuration (see [docs/pf/](docs/pf/)).
+
 Stop with `Ctrl+C` or `SIGTERM`.
 
 ## Tray UI (one-touch GUI)
