@@ -132,7 +132,7 @@ Dependencies:
 
 Install/Run (default, root):
 ```bash
-sudo ./dist/splitter --queue-num 100 --mark 1
+sudo ./dist/splitter
 ```
 
 By default the Linux binary will:

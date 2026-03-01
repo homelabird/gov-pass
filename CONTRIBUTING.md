@@ -55,7 +55,7 @@ go build -o dist/splitter ./cmd/splitter
 Default run (root, installs rules + disables offload):
 
 ```bash
-sudo ./dist/splitter --queue-num 100 --mark 1
+sudo ./dist/splitter
 ```
 
 Manual rule install/remove:
