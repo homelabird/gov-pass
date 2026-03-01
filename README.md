@@ -63,20 +63,24 @@ Stop with `Ctrl+C` or `SIGTERM`.
 you toggle protection on/off with a single click — similar to how commercial VPN
 apps (e.g. Unicorn) work, but with a minimal, distraction-free interface.
 
-### SET
-> linux
-``` bash
-sudo dnf install libayatana-appindicator-gtk3-devel
-```
-
 ### Build
 
 ```bash
+# Linux — auto-installs required GUI libraries (libayatana-appindicator, GTK3)
+make build-tray
+
 # Windows
 go build -ldflags -H=windowsgui -o dist\gov-pass-tray.exe .\cmd\gov-pass-tray
+```
 
-# Linux (requires libayatana-appindicator3-dev and libgtk-3-dev)
-go build -o dist/gov-pass-tray ./cmd/gov-pass-tray
+On Linux, `make build-tray` automatically detects and installs the required
+system libraries (`libayatana-appindicator3-dev`, `libgtk-3-dev`) via
+`apt-get`, `dnf`, `yum`, `pacman`, `apk`, or `zypper`.
+
+To install the tray binary to the system:
+
+```bash
+sudo make install-tray
 ```
 
 ## CLI flag reference
