@@ -28,24 +28,32 @@ platform-native packet interception paths.
 
 ## Quick start
 
-### 1) Build
+All defaults are tuned for immediate use — **no flags are required**.
+
+### Linux
 
 ```bash
 go build -o dist/splitter ./cmd/splitter
+sudo ./dist/splitter
 ```
 
-### 2) Run (CLI)
-
-```bash
-sudo ./dist/splitter --queue-num 100 --mark 1
-```
-
-### 3) Windows run (CLI)
+### Windows
 
 ```powershell
 go build -o dist\splitter.exe .\cmd\splitter
 .\dist\splitter.exe
 ```
+
+On Linux the binary will automatically:
+- install NFQUEUE rules via `nft` or `iptables`
+- disable GRO/GSO/TSO on the detected egress interface
+- restore offload settings on exit
+
+On Windows the binary will automatically:
+- download and install the WinDivert driver if missing
+- uninstall the driver on exit
+
+Stop with `Ctrl+C` or `SIGTERM`.
 
 ## Tray UI (one-touch GUI)
 
@@ -69,22 +77,69 @@ go build -ldflags -H=windowsgui -o dist\gov-pass-tray.exe .\cmd\gov-pass-tray
 go build -o dist/gov-pass-tray ./cmd/gov-pass-tray
 ```
 
+## CLI flag reference
 
-## Common configuration
+Run `splitter --help` to see all flags with current defaults.
+Every flag has a sensible default; override only when needed.
 
-The most frequently used flags are shown below:
+### Common flags (all platforms)
 
-| Flag | Purpose | Tip |
+| Flag | Default | Description |
 |---|---|---|
-| `--max-seg-payload` | Max TLS payload segment size | Tune with larger payload environments |
-| `--max-flows-per-worker` | Flow concurrency limit per worker | Reduce in memory-constrained hosts |
-| `--max-reassembly-bytes-per-worker` | Per-worker reassembly memory cap | Increase for high-latency links |
-| `--max-held-bytes-per-worker` | Additional buffered bytes per worker | Balance throughput vs memory |
+| `--split-mode` | `tls-hello` | Split trigger: `tls-hello` or `immediate` |
+| `--split-chunk` | `5` | First segment size in bytes |
+| `--collect-timeout` | `250ms` | Reassembly collect timeout |
+| `--max-buffer` | `65536` | Max reassembly buffer per flow (bytes) |
+| `--max-held-pkts` | `32` | Max held packets per flow |
+| `--max-seg-payload` | `1460` | Max segment payload size (`0`=unlimited) |
+| `--workers` | CPU count | Worker count for sharded processing |
+| `--flow-timeout` | `30s` | Idle timeout for flow cleanup |
+| `--gc-interval` | `5s` | Flow GC interval |
+| `--max-flows-per-worker` | `4096` | Max tracked flows per worker (`0`=unlimited) |
+| `--max-reassembly-bytes-per-worker` | `67108864` | Reassembly memory cap per worker (`0`=unlimited) |
+| `--max-held-bytes-per-worker` | `67108864` | Held packet memory cap per worker (`0`=unlimited) |
+| `--shutdown-fail-open-timeout` | `5s` | Drain timeout during shutdown |
+| `--shutdown-fail-open-max-pkts` | `200000` | Max packets reinjected on shutdown |
+| `--adapter-flush-timeout` | `2s` | Adapter flush time on shutdown |
 
-When using kernel hooks, run with required privileges.
+### Linux flags
 
-- Windows: admin privileges are required for the driver path.
-- Linux: root or equivalent capability is required for NFQUEUE.
+| Flag | Default | Description |
+|---|---|---|
+| `--queue-num` | `100` | NFQUEUE number |
+| `--mark` | `1` | SO_MARK for reinjected packets |
+| `--auto-rules` | `true` | Auto install/uninstall nft/iptables rules |
+| `--auto-offload` | `true` | Auto disable GRO/GSO/TSO (ethtool) |
+| `--auto-offload-restore` | `true` | Restore offload settings on exit |
+| `--auto-install-tools` | `true` | Auto install missing system tools via package manager |
+| `--iface` | auto-detect | Egress interface for offload control |
+| `--no-loopback` | `false` | Include loopback in NFQUEUE rules |
+| `--queue-maxlen` | `4096` | NFQUEUE max length (`0`=kernel default) |
+| `--copy-range` | `65535` | NFQUEUE copy range in bytes |
+
+### Windows flags
+
+| Flag | Default | Description |
+|---|---|---|
+| `--filter` | `outbound and ip and tcp.DstPort == 443` | WinDivert filter expression |
+| `--queue-len` | `4096` | WinDivert queue length |
+| `--queue-time` | `2000` | WinDivert queue time (ms) |
+| `--queue-size` | `33554432` | WinDivert queue size (bytes) |
+| `--windivert-dir` | exe directory | Directory containing WinDivert files |
+| `--auto-install` | `true` | Auto install/start WinDivert driver |
+| `--auto-uninstall` | `true` | Auto uninstall driver on exit |
+| `--auto-download-windivert` | `true` | Auto download WinDivert if missing |
+| `--service` | `false` | Run as Windows service |
+| `--config` | _(service only)_ | JSON config file path |
+
+### FreeBSD flags
+
+| Flag | Default | Description |
+|---|---|---|
+| `--divert-port` | `10000` | pf divert-to port |
+
+Privileges: Linux requires root (or `CAP_NET_ADMIN` + `CAP_NET_RAW`);
+Windows requires Administrator.
 
 ## Project docs
 
