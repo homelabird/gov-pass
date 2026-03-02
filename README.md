@@ -30,6 +30,18 @@ platform-native packet interception paths.
 
 All defaults are tuned for immediate use — **no flags are required**.
 
+### One-touch install scripts
+
+```bash
+# Linux / FreeBSD (run as root)
+sudo ./scripts/install_one_touch.sh
+```
+
+```powershell
+# Windows (run in Administrator PowerShell)
+.\scripts\install_one_touch.ps1
+```
+
 ### Linux
 
 ```bash
