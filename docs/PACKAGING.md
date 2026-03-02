@@ -173,6 +173,18 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now gov-pass
 ```
 
+Build/install as RPM (Fedora/RHEL family):
+```bash
+rpmbuild -ba packaging/rpm/gov-pass.spec
+sudo rpm -Uvh ~/rpmbuild/RPMS/x86_64/gov-pass-*.x86_64.rpm
+```
+
+Build/install as DEB (Debian/Ubuntu family):
+```bash
+./packaging/deb/build_deb.sh
+sudo dpkg -i dist/gov-pass_*_amd64.deb
+```
+
 ## Android packaging (Magisk, arm64)
 
 See `docs/DESIGN_ANDROID.md` for build and packaging details.
