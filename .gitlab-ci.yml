@@ -135,7 +135,8 @@ build_deb_release:
     - mkdir -p "$DIST_DIR"
     - RAW_TAG="${CI_COMMIT_TAG#v}"
     - bash packaging/deb/build_deb.sh "$RAW_TAG"
-    - BIN_DEB="$(ls dist/gov-pass_"$RAW_TAG"_amd64.deb | head -n1)"
+    - BIN_DEB="dist/gov-pass_${RAW_TAG}_amd64.deb"
+    - test -f "$BIN_DEB"
     - cp "$BIN_DEB" "$DIST_DIR/gov-pass-${CI_COMMIT_TAG}-linux-amd64.deb"
     - (cd "$DIST_DIR" && sha256sum "gov-pass-${CI_COMMIT_TAG}-linux-amd64.deb" > SHA256SUMS.deb)
   artifacts:
