@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 
 if ! command -v go >/dev/null 2>&1; then
-  echo "go is required (1.21+) — install from https://go.dev/dl/"
+  echo "go is required — install from https://go.dev/dl/"
   exit 1
 fi
 
@@ -34,8 +34,8 @@ if [ "$OS" = "Linux" ]; then
 fi
 
 install -d /usr/local/sbin
-install -m 0755 dist/splitter /usr/local/sbin/gov-pass-splitter
+install -m 0755 dist/splitter /usr/local/sbin/splitter
 
-echo "Installed on FreeBSD: /usr/local/sbin/gov-pass-splitter"
+echo "Installed on FreeBSD: /usr/local/sbin/splitter"
 echo "Configure pf divert rules before starting (see docs/pf/ and docs/DESIGN_BSD.md)."
-echo "Start command: /usr/local/sbin/gov-pass-splitter"
+echo "Start command: /usr/local/sbin/splitter"
