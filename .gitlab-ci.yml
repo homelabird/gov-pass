@@ -123,6 +123,27 @@ build_rpm_release:
       - dist/release/SHA256SUMS.rpm
     expire_in: never
 
+build_deb_release:
+  stage: build
+  image: debian:12
+  rules:
+    - if: $CI_COMMIT_TAG
+  script:
+    - set -eu
+    - apt-get update
+    - apt-get install -y --no-install-recommends golang-go dpkg-dev git
+    - mkdir -p "$DIST_DIR"
+    - RAW_TAG="${CI_COMMIT_TAG#v}"
+    - bash packaging/deb/build_deb.sh "$RAW_TAG"
+    - BIN_DEB="$(ls dist/gov-pass_"$RAW_TAG"_amd64.deb | head -n1)"
+    - cp "$BIN_DEB" "$DIST_DIR/gov-pass-${CI_COMMIT_TAG}-linux-amd64.deb"
+    - (cd "$DIST_DIR" && sha256sum "gov-pass-${CI_COMMIT_TAG}-linux-amd64.deb" > SHA256SUMS.deb)
+  artifacts:
+    paths:
+      - dist/release/*.deb
+      - dist/release/SHA256SUMS.deb
+    expire_in: never
+
 verify_windows_msi_e2e:
   stage: verify
   rules:
@@ -164,3 +185,7 @@ release:
           url: "$CI_PROJECT_URL/-/jobs/artifacts/$CI_COMMIT_TAG/raw/dist/release/gov-pass-${CI_COMMIT_TAG}-linux.src.rpm?job=build_rpm_release"
         - name: "SHA256SUMS.rpm"
           url: "$CI_PROJECT_URL/-/jobs/artifacts/$CI_COMMIT_TAG/raw/dist/release/SHA256SUMS.rpm?job=build_rpm_release"
+        - name: "gov-pass-linux-amd64.deb"
+          url: "$CI_PROJECT_URL/-/jobs/artifacts/$CI_COMMIT_TAG/raw/dist/release/gov-pass-${CI_COMMIT_TAG}-linux-amd64.deb?job=build_deb_release"
+        - name: "SHA256SUMS.deb"
+          url: "$CI_PROJECT_URL/-/jobs/artifacts/$CI_COMMIT_TAG/raw/dist/release/SHA256SUMS.deb?job=build_deb_release"
