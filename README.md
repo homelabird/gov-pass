@@ -110,6 +110,10 @@ go build -o dist\gov-pass-tui.exe .\cmd\gov-pass-tui
 
 The controller is terminal-first TUI and does not rely on desktop GUI hosts.
 
+Screenshot:
+
+![gov-pass TUI main screen](docs/screenshots/gov-pass-tui-main.png)
+
 To install the TUI controller binary to the system:
 
 ```bash
