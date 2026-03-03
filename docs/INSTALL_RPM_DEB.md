@@ -12,6 +12,12 @@ Targets:
 curl -fsSL https://raw.githubusercontent.com/homelabird/gov-pass/main/scripts/install_one_touch_curl.sh | bash
 ```
 
+Install with GUI tray in one step:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/homelabird/gov-pass/main/scripts/install_one_touch_curl.sh | sudo INSTALL_TRAY=1 bash
+```
+
 Package-manager detection order:
 - `apt-get` + `dpkg`
 - `dnf`
@@ -23,6 +29,7 @@ Package-manager detection order:
 Optional environment variables:
 - `GOV_PASS_VERSION=vX.Y.Z` to install a specific release tag
 - `NO_START=1` to install without starting the systemd service
+- `INSTALL_TRAY=1` (or `INSTALL_GUI=1`) to also install `gov-pass-tray` and configure autostart for `$SUDO_USER`
 - `REPO_OWNER` / `REPO_NAME` to target a fork
 
 ## Common Preparation

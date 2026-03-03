@@ -38,13 +38,18 @@ sudo ./scripts/install_one_touch.sh
 ```
 
 ```bash
-# Linux tray UI 함께 설치 (GUI 라이브러리 자동 설치 포함)
+# Linux tray UI together
 sudo INSTALL_TRAY=1 ./scripts/install_one_touch.sh
 ```
 
 ```bash
 # Linux one-touch installer via curl (installs latest GitHub release package)
 curl -fsSL https://raw.githubusercontent.com/homelabird/gov-pass/main/scripts/install_one_touch_curl.sh | bash
+```
+
+```bash
+# Linux one-touch installer via curl + GUI tray install
+curl -fsSL https://raw.githubusercontent.com/homelabird/gov-pass/main/scripts/install_one_touch_curl.sh | sudo INSTALL_TRAY=1 bash
 ```
 
 Installer package-manager detection order (Linux):
