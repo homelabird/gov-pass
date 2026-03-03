@@ -15,7 +15,7 @@ This project supports signing Windows release artifacts (EXE + MSI) in CI using
 
 On tag builds, GitLab CI signs:
 - `splitter.exe`
-- `gov-pass-tray.exe`
+- `gov-pass-tui.exe`
 - `gov-pass-msi-helper.exe`
 - `gov-pass-<tag>-windows-amd64.msi`
 

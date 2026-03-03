@@ -37,9 +37,7 @@ None. The Linux NFQUEUE path uses a pure-Go netlink client (`go-nfqueue`).
 - golang.org/x/sys v0.1.0 (BSD-3-Clause)
   - https://cs.opensource.google/go/x/sys/+/refs/tags/v0.1.0:LICENSE
 
-## Go module dependencies (Windows tray UI)
+## Go module dependencies (TUI controller)
 
-- github.com/getlantern/systray v1.2.2 (Apache-2.0)
-  - https://github.com/getlantern/systray/blob/v1.2.2/LICENSE
-- github.com/getlantern/golog v0.0.0-20190830074920-4ef2e798c2d7 (Apache-2.0)
-  - https://github.com/getlantern/golog/blob/4ef2e798c2d7/LICENSE
+- golang.org/x/sys v0.15.0 (BSD-3-Clause)
+  - https://cs.opensource.google/go/x/sys/+/refs/tags/v0.15.0:LICENSE

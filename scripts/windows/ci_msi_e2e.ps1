@@ -131,62 +131,10 @@ function Wait-ServiceMissing {
 $programDataDir = "C:\\ProgramData\\gov-pass"
 $cfgPath = Join-Path $programDataDir "config.json"
 $logPath = Join-Path $programDataDir "splitter.log"
-$runKeyHKCU = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run"
-$runKeyHKLM = "HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Run"
-$runValueNameTray = "gov-pass-tray"
 
 $runningInCi = ($env:CI -eq "true")
 $wantPurgeProgramData = $PurgeProgramData.IsPresent -or $runningInCi
 $wantRemoveWinDivert = $RemoveWinDivert.IsPresent
-
-function Get-RunValue {
-  param(
-    [string]$Hive, # HKCU or HKLM
-    [string]$Name
-  )
-  $psPath = "${Hive}:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run"
-  try {
-    $item = Get-ItemProperty -Path $psPath -Name $Name -ErrorAction Stop
-    return @{ Exists = $true; Value = [string]$item.$Name }
-  } catch {
-    return @{ Exists = $false; Value = "" }
-  }
-}
-
-function Set-RunValue {
-  param(
-    [string]$Hive, # HKCU or HKLM
-    [string]$Name,
-    [string]$Value
-  )
-  $psPath = "${Hive}:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run"
-  New-Item -Path $psPath -Force | Out-Null
-  New-ItemProperty -Path $psPath -Name $Name -Value $Value -PropertyType String -Force | Out-Null
-}
-
-function Remove-RunValueBestEffort {
-  param(
-    [string]$Hive, # HKCU or HKLM
-    [string]$Name
-  )
-  $psPath = "${Hive}:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run"
-  try {
-    Remove-ItemProperty -Path $psPath -Name $Name -ErrorAction SilentlyContinue
-  } catch {
-    # ignore
-  }
-}
-
-function Assert-RunValueMissing {
-  param(
-    [string]$Key,
-    [string]$Name
-  )
-  & reg.exe query $Key /v $Name | Out-Null
-  if ($LASTEXITCODE -eq 0) {
-    throw "Registry autorun value still exists: $Key\\$Name"
-  }
-}
 
 function Assert-AuthenticodeSigned {
   param(
@@ -215,10 +163,7 @@ function Assert-AuthenticodeSigned {
 }
 
 $installed = $false
-$trayExePath = ""
-$prevHKCU = @{ Exists = $false; Value = "" }
-$prevHKLM = @{ Exists = $false; Value = "" }
-$regTouched = $false
+$tuiExePath = ""
 
 # Require signed MSI/EXEs in Windows MSI CI.
 Assert-AuthenticodeSigned -Path $MsiPath
@@ -248,11 +193,11 @@ try {
     throw "splitter.exe not found: $exePath"
   }
   Assert-AuthenticodeSigned -Path $exePath
-  $trayExePath = Join-Path $installDir "gov-pass-tray.exe"
-  if (-not (Test-Path $trayExePath)) {
-    throw "gov-pass-tray.exe not found: $trayExePath"
+  $tuiExePath = Join-Path $installDir "gov-pass-tui.exe"
+  if (-not (Test-Path $tuiExePath)) {
+    throw "gov-pass-tui.exe not found: $tuiExePath"
   }
-  Assert-AuthenticodeSigned -Path $trayExePath
+  Assert-AuthenticodeSigned -Path $tuiExePath
   $helperExePath = Join-Path $installDir "gov-pass-msi-helper.exe"
   if (-not (Test-Path $helperExePath)) {
     throw "gov-pass-msi-helper.exe not found: $helperExePath"
@@ -260,11 +205,11 @@ try {
   Assert-AuthenticodeSigned -Path $helperExePath
 
   $menuDir = Join-Path $env:ProgramData "Microsoft\\Windows\\Start Menu\\Programs\\gov-pass"
-  $lnkTray = Join-Path $menuDir "gov-pass tray.lnk"
+  $lnkTui = Join-Path $menuDir "gov-pass TUI.lnk"
   $lnkStart = Join-Path $menuDir "Start gov-pass service (Admin).lnk"
   $lnkStop = Join-Path $menuDir "Stop gov-pass service (Admin).lnk"
   $lnkReload = Join-Path $menuDir "Reload gov-pass config (Admin).lnk"
-  Wait-PathExists -Path $lnkTray -TimeoutSeconds 30
+  Wait-PathExists -Path $lnkTui -TimeoutSeconds 30
   Wait-PathExists -Path $lnkStart -TimeoutSeconds 30
   Wait-PathExists -Path $lnkStop -TimeoutSeconds 30
   Wait-PathExists -Path $lnkReload -TimeoutSeconds 30
@@ -314,13 +259,6 @@ try {
   Start-Service -Name $svcName -ErrorAction Stop
   $svc = Wait-ServiceStatus -Name $svcName -Status "Running" -TimeoutSeconds 60
 
-  # Create fake autorun entries so MSI uninstall cleanup is verifiable.
-  # We restore previous values afterwards (if they existed) to avoid side effects.
-  $prevHKCU = Get-RunValue -Hive "HKCU" -Name $runValueNameTray
-  $prevHKLM = Get-RunValue -Hive "HKLM" -Name $runValueNameTray
-  Set-RunValue -Hive "HKCU" -Name $runValueNameTray -Value $trayExePath
-  Set-RunValue -Hive "HKLM" -Name $runValueNameTray -Value $trayExePath
-  $regTouched = $true
 } finally {
   # Best-effort uninstall.
   try {
@@ -341,27 +279,8 @@ try {
     Write-Host "warning: service removal check failed: $($_.Exception.Message)"
   }
 
-  if ($installed) {
-    # Uninstall should clean up the tray autorun Run value (best-effort for both HKCU/HKLM).
-    # If this fails, a stale autorun entry will remain on the machine.
-    Assert-RunValueMissing -Key $runKeyHKCU -Name $runValueNameTray
-    Assert-RunValueMissing -Key $runKeyHKLM -Name $runValueNameTray
-
-    if ($wantPurgeProgramData) {
-      Wait-PathMissing -Path $programDataDir -TimeoutSeconds 30
-    }
-  }
-
-  if ($regTouched) {
-    # Restore pre-existing autorun settings (if any) to avoid impacting developer machines.
-    Remove-RunValueBestEffort -Hive "HKCU" -Name $runValueNameTray
-    Remove-RunValueBestEffort -Hive "HKLM" -Name $runValueNameTray
-    if ($prevHKCU.Exists) {
-      Set-RunValue -Hive "HKCU" -Name $runValueNameTray -Value $prevHKCU.Value
-    }
-    if ($prevHKLM.Exists) {
-      Set-RunValue -Hive "HKLM" -Name $runValueNameTray -Value $prevHKLM.Value
-    }
+  if ($installed -and $wantPurgeProgramData) {
+    Wait-PathMissing -Path $programDataDir -TimeoutSeconds 30
   }
 }
 

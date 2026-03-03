@@ -20,7 +20,7 @@ func TestRunAction_ValidActions(t *testing.T) {
 	// These actions are recognized by runAction but will fail because systemd
 	// is not managing our test service. We just verify that they don't return
 	// the "unknown action" error.
-	for _, action := range []string{"start", "stop", "restart", "toggle", "status"} {
+	for _, action := range []string{"start", "stop", "restart", "reload", "enable", "disable", "toggle", "status"} {
 		err := runAction("nonexistent-test-service-gov-pass", action)
 		if err != nil && err.Error() == "unknown action: "+action {
 			t.Errorf("action %q should be recognized", action)

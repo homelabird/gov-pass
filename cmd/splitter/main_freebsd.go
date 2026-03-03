@@ -4,8 +4,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -37,7 +39,43 @@ func main() {
 	shutdownFailOpenMaxPkts := flag.Int("shutdown-fail-open-max-pkts", cfg.ShutdownFailOpenMaxPackets, "shutdown fail-open max packets per worker (0=use default)")
 	adapterFlushTimeout := flag.Duration("adapter-flush-timeout", cfg.AdapterFlushTimeout, "adapter flush timeout on shutdown (0=use default)")
 	divertPort := flag.Int("divert-port", defaultDivertPort, "pf divert-to port")
+	configPath := flag.String("config", "", "path to config json")
+	checkMode := flag.Bool("check", false, "run preflight checks and exit")
+	checkJSON := flag.Bool("check-json", false, "run preflight checks and print JSON")
 	flag.Parse()
+
+	setFlags := make(map[string]bool)
+	flag.CommandLine.Visit(func(f *flag.Flag) {
+		setFlags[f.Name] = true
+	})
+
+	if *checkJSON {
+		*checkMode = true
+	}
+
+	if path := strings.TrimSpace(*configPath); path != "" {
+		refs := &freebsdFlagRefs{
+			SplitMode:                  splitMode,
+			SplitChunk:                 splitChunk,
+			CollectTimeout:             collectTimeout,
+			MaxBuffer:                  maxBuffer,
+			MaxHeld:                    maxHeld,
+			MaxSegPayload:              maxSegPayload,
+			Workers:                    workers,
+			FlowTimeout:                flowTimeout,
+			GCInterval:                 gcInterval,
+			MaxFlows:                   maxFlows,
+			MaxReassembly:              maxReassembly,
+			MaxHeldBytes:               maxHeldBytes,
+			ShutdownFailOpenTimeout:    shutdownFailOpenTimeout,
+			ShutdownFailOpenMaxPackets: shutdownFailOpenMaxPkts,
+			AdapterFlushTimeout:        adapterFlushTimeout,
+			DivertPort:                 divertPort,
+		}
+		if err := applyFreeBSDJSONConfig(path, setFlags, refs); err != nil {
+			log.Fatalf("apply config failed: %v", err)
+		}
+	}
 
 	mode, err := parseSplitMode(*splitMode)
 	if err != nil {
@@ -108,6 +146,13 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	if *checkMode {
+		if err := runFreeBSDPreflight(*checkJSON); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+
 	opts := adapter.DivertOptions{
 		Port: uint16(*divertPort),
 	}
@@ -131,4 +176,212 @@ func parseSplitMode(value string) (engine.SplitMode, error) {
 	default:
 		return engine.SplitModeTLSHello, errors.New("expected tls-hello or immediate")
 	}
+}
+
+type freebsdJSONConfig struct {
+	Engine  *freebsdEngineJSONConfig  `json:"engine,omitempty"`
+	FreeBSD *freebsdRuntimeJSONConfig `json:"freebsd,omitempty"`
+}
+
+type freebsdEngineJSONConfig struct {
+	SplitMode                   *string `json:"split_mode,omitempty"`
+	SplitChunk                  *int    `json:"split_chunk,omitempty"`
+	CollectTimeout              *string `json:"collect_timeout,omitempty"`
+	MaxBufferBytes              *int    `json:"max_buffer_bytes,omitempty"`
+	MaxHeldPackets              *int    `json:"max_held_packets,omitempty"`
+	MaxSegmentPayload           *int    `json:"max_segment_payload,omitempty"`
+	Workers                     *int    `json:"workers,omitempty"`
+	FlowIdleTimeout             *string `json:"flow_idle_timeout,omitempty"`
+	GCInterval                  *string `json:"gc_interval,omitempty"`
+	MaxFlowsPerWorker           *int    `json:"max_flows_per_worker,omitempty"`
+	MaxReassemblyBytesPerWorker *int    `json:"max_reassembly_bytes_per_worker,omitempty"`
+	MaxHeldBytesPerWorker       *int    `json:"max_held_bytes_per_worker,omitempty"`
+	ShutdownFailOpenTimeout     *string `json:"shutdown_fail_open_timeout,omitempty"`
+	ShutdownFailOpenMaxPackets  *int    `json:"shutdown_fail_open_max_packets,omitempty"`
+	AdapterFlushTimeout         *string `json:"adapter_flush_timeout,omitempty"`
+}
+
+type freebsdRuntimeJSONConfig struct {
+	DivertPort *int `json:"divert_port,omitempty"`
+}
+
+type freebsdFlagRefs struct {
+	SplitMode                  *string
+	SplitChunk                 *int
+	CollectTimeout             *time.Duration
+	MaxBuffer                  *int
+	MaxHeld                    *int
+	MaxSegPayload              *int
+	Workers                    *int
+	FlowTimeout                *time.Duration
+	GCInterval                 *time.Duration
+	MaxFlows                   *int
+	MaxReassembly              *int
+	MaxHeldBytes               *int
+	ShutdownFailOpenTimeout    *time.Duration
+	ShutdownFailOpenMaxPackets *int
+	AdapterFlushTimeout        *time.Duration
+	DivertPort                 *int
+}
+
+func applyFreeBSDJSONConfig(path string, setFlags map[string]bool, refs *freebsdFlagRefs) error {
+	if refs == nil {
+		return errors.New("nil refs")
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+
+	var cfg freebsdJSONConfig
+	if err := json.Unmarshal(b, &cfg); err != nil {
+		return err
+	}
+
+	if cfg.Engine != nil {
+		if cfg.Engine.SplitMode != nil && !setFlags["split-mode"] {
+			v := strings.TrimSpace(*cfg.Engine.SplitMode)
+			if v != "" {
+				*refs.SplitMode = v
+			}
+		}
+		if cfg.Engine.SplitChunk != nil && !setFlags["split-chunk"] {
+			*refs.SplitChunk = *cfg.Engine.SplitChunk
+		}
+		if cfg.Engine.CollectTimeout != nil && !setFlags["collect-timeout"] {
+			v := strings.TrimSpace(*cfg.Engine.CollectTimeout)
+			if v != "" {
+				d, err := time.ParseDuration(v)
+				if err != nil {
+					return fmt.Errorf("engine.collect_timeout: %w", err)
+				}
+				*refs.CollectTimeout = d
+			}
+		}
+		if cfg.Engine.MaxBufferBytes != nil && !setFlags["max-buffer"] {
+			*refs.MaxBuffer = *cfg.Engine.MaxBufferBytes
+		}
+		if cfg.Engine.MaxHeldPackets != nil && !setFlags["max-held-pkts"] {
+			*refs.MaxHeld = *cfg.Engine.MaxHeldPackets
+		}
+		if cfg.Engine.MaxSegmentPayload != nil && !setFlags["max-seg-payload"] {
+			*refs.MaxSegPayload = *cfg.Engine.MaxSegmentPayload
+		}
+		if cfg.Engine.Workers != nil && !setFlags["workers"] {
+			*refs.Workers = *cfg.Engine.Workers
+		}
+		if cfg.Engine.FlowIdleTimeout != nil && !setFlags["flow-timeout"] {
+			v := strings.TrimSpace(*cfg.Engine.FlowIdleTimeout)
+			if v != "" {
+				d, err := time.ParseDuration(v)
+				if err != nil {
+					return fmt.Errorf("engine.flow_idle_timeout: %w", err)
+				}
+				*refs.FlowTimeout = d
+			}
+		}
+		if cfg.Engine.GCInterval != nil && !setFlags["gc-interval"] {
+			v := strings.TrimSpace(*cfg.Engine.GCInterval)
+			if v != "" {
+				d, err := time.ParseDuration(v)
+				if err != nil {
+					return fmt.Errorf("engine.gc_interval: %w", err)
+				}
+				*refs.GCInterval = d
+			}
+		}
+		if cfg.Engine.MaxFlowsPerWorker != nil && !setFlags["max-flows-per-worker"] {
+			*refs.MaxFlows = *cfg.Engine.MaxFlowsPerWorker
+		}
+		if cfg.Engine.MaxReassemblyBytesPerWorker != nil && !setFlags["max-reassembly-bytes-per-worker"] {
+			*refs.MaxReassembly = *cfg.Engine.MaxReassemblyBytesPerWorker
+		}
+		if cfg.Engine.MaxHeldBytesPerWorker != nil && !setFlags["max-held-bytes-per-worker"] {
+			*refs.MaxHeldBytes = *cfg.Engine.MaxHeldBytesPerWorker
+		}
+		if cfg.Engine.ShutdownFailOpenTimeout != nil && !setFlags["shutdown-fail-open-timeout"] {
+			v := strings.TrimSpace(*cfg.Engine.ShutdownFailOpenTimeout)
+			if v != "" {
+				d, err := time.ParseDuration(v)
+				if err != nil {
+					return fmt.Errorf("engine.shutdown_fail_open_timeout: %w", err)
+				}
+				*refs.ShutdownFailOpenTimeout = d
+			}
+		}
+		if cfg.Engine.ShutdownFailOpenMaxPackets != nil && !setFlags["shutdown-fail-open-max-pkts"] {
+			*refs.ShutdownFailOpenMaxPackets = *cfg.Engine.ShutdownFailOpenMaxPackets
+		}
+		if cfg.Engine.AdapterFlushTimeout != nil && !setFlags["adapter-flush-timeout"] {
+			v := strings.TrimSpace(*cfg.Engine.AdapterFlushTimeout)
+			if v != "" {
+				d, err := time.ParseDuration(v)
+				if err != nil {
+					return fmt.Errorf("engine.adapter_flush_timeout: %w", err)
+				}
+				*refs.AdapterFlushTimeout = d
+			}
+		}
+	}
+
+	if cfg.FreeBSD != nil {
+		if cfg.FreeBSD.DivertPort != nil && !setFlags["divert-port"] {
+			*refs.DivertPort = *cfg.FreeBSD.DivertPort
+		}
+	}
+
+	return nil
+}
+
+type freebsdPreflightCheck struct {
+	Name   string `json:"name"`
+	OK     bool   `json:"ok"`
+	Detail string `json:"detail,omitempty"`
+}
+
+type freebsdPreflightReport struct {
+	OK     bool                  `json:"ok"`
+	Checks []freebsdPreflightCheck `json:"checks"`
+}
+
+func runFreeBSDPreflight(jsonOut bool) error {
+	checks := []freebsdPreflightCheck{
+		{
+			Name:   "root",
+			OK:     os.Geteuid() == 0,
+			Detail: "required to open pf divert socket",
+		},
+	}
+
+	report := freebsdPreflightReport{
+		OK:     true,
+		Checks: checks,
+	}
+	for i := range report.Checks {
+		if !report.Checks[i].OK {
+			report.OK = false
+			break
+		}
+	}
+
+	if jsonOut {
+		b, err := json.MarshalIndent(report, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(os.Stdout, string(b))
+	} else {
+		for _, c := range report.Checks {
+			state := "OK"
+			if !c.OK {
+				state = "FAIL"
+			}
+			fmt.Printf("[%s] %s: %s\n", state, c.Name, c.Detail)
+		}
+	}
+
+	if !report.OK {
+		return errors.New("preflight failed")
+	}
+	return nil
 }

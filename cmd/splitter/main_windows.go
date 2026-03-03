@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -65,12 +66,20 @@ func run() error {
 	asService := flag.Bool("service", false, "run as Windows service (SCM)")
 	serviceName := flag.String("service-name", defaultAppServiceName, "Windows service name (used with --service)")
 	serviceLog := flag.String("service-log", "", "log file path for --service (default: %ProgramData%\\gov-pass\\splitter.log)")
+	serviceLogMaxBytes := flag.Int64("service-log-max-bytes", defaultServiceLogMaxBytes, "max service log file size in bytes before rotation")
+	serviceLogMaxFiles := flag.Int("service-log-max-files", defaultServiceLogMaxFiles, "max number of rotated service log files to keep")
+	printReloadability := flag.Bool("print-reloadability", false, "print reloadable vs restart-required settings and exit")
 	flag.Parse()
 
 	setFlags := make(map[string]bool)
 	flag.CommandLine.Visit(func(f *flag.Flag) {
 		setFlags[f.Name] = true
 	})
+
+	if *printReloadability {
+		printWindowsReloadability(os.Stdout)
+		return nil
+	}
 
 	if !*asService && isWindowsServiceProcess() {
 		*asService = true
@@ -108,7 +117,11 @@ func run() error {
 	}
 
 	if *asService {
-		return runService(*serviceName, *serviceLog, func(ctx context.Context, reload <-chan struct{}) error {
+		return runService(*serviceName, serviceLogConfig{
+			Path:     *serviceLog,
+			MaxBytes: *serviceLogMaxBytes,
+			MaxFiles: *serviceLogMaxFiles,
+		}, func(ctx context.Context, reload <-chan struct{}) error {
 			return runWindowsService(ctx, args, setFlags, reload)
 		})
 	}
@@ -331,5 +344,21 @@ func parseSplitMode(value string) (engine.SplitMode, error) {
 		return engine.SplitModeTLSHello, nil
 	default:
 		return engine.SplitModeTLSHello, errors.New("expected tls-hello or immediate")
+	}
+}
+
+func printWindowsReloadability(w io.Writer) {
+	if w == nil {
+		return
+	}
+
+	fmt.Fprintln(w, "reloadable (in-place):")
+	for _, item := range windowsReloadableSettings {
+		fmt.Fprintln(w, "- "+item)
+	}
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "restart-required:")
+	for _, item := range windowsRestartRequiredSettings {
+		fmt.Fprintln(w, "- "+item)
 	}
 }
