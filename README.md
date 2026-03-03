@@ -37,6 +37,24 @@ All defaults are tuned for immediate use — **no flags are required**.
 sudo ./scripts/install_one_touch.sh
 ```
 
+```bash
+# Linux tray UI 함께 설치 (GUI 라이브러리 자동 설치 포함)
+sudo INSTALL_TRAY=1 ./scripts/install_one_touch.sh
+```
+
+```bash
+# Linux one-touch installer via curl (installs latest GitHub release package)
+curl -fsSL https://raw.githubusercontent.com/homelabird/gov-pass/main/scripts/install_one_touch_curl.sh | bash
+```
+
+Installer package-manager detection order (Linux):
+- `apt-get` + `dpkg`
+- `dnf`
+- `yum`
+- `zypper`
+- `rpm` (fallback)
+- tarball install (last fallback)
+
 ```powershell
 # Windows (run in Administrator PowerShell)
 .\scripts\install_one_touch.ps1
@@ -78,16 +96,17 @@ apps (e.g. Unicorn) work, but with a minimal, distraction-free interface.
 ### Build
 
 ```bash
-# Linux — auto-installs required GUI libraries (libayatana-appindicator, GTK3)
+# Linux
 make build-tray
 
 # Windows
 go build -ldflags -H=windowsgui -o dist\gov-pass-tray.exe .\cmd\gov-pass-tray
 ```
 
-On Linux, `make build-tray` automatically detects and installs the required
-system libraries (`libayatana-appindicator3-dev`, `libgtk-3-dev`) via
-`apt-get`, `dnf`, `yum`, `pacman`, `apk`, or `zypper`.
+On Linux, the tray UI now uses a DBus-based backend and does not require
+GTK/AppIndicator development packages for build.
+If you need an immediate warning suppression fallback for cgo-based builds,
+set `TRAY_CGO_CFLAGS='-Wno-deprecated-declarations'`.
 
 To install the tray binary to the system:
 
@@ -95,10 +114,28 @@ To install the tray binary to the system:
 sudo make install-tray
 ```
 
+Tag release Linux tarball (`gov-pass-<tag>-linux-amd64.tar.gz`) also includes:
+- `splitter`
+- `gov-pass-tray`
+
+Tray capability matrix:
+
+| Capability | Linux tray | Windows tray |
+|---|---|---|
+| Start/Stop/Restart | Yes | Yes |
+| Reload config | Yes | Yes |
+| Open at login | Yes (`~/.config/autostart/gov-pass-tray.desktop`) | Yes (HKCU Run) |
+
 ## CLI flag reference
 
 Run `splitter --help` to see all flags with current defaults.
 Every flag has a sensible default; override only when needed.
+
+Additional utility flags:
+- `--config <path>`: load JSON config (defaults < config file < explicit CLI flags)
+- `--check`: run preflight checks and exit
+- `--check-json`: run preflight checks and print JSON output
+- `--print-reloadability` (Windows): print reloadable vs restart-required settings and exit
 
 ### Common flags (all platforms)
 
@@ -149,6 +186,10 @@ Every flag has a sensible default; override only when needed.
 | `--auto-download-windivert` | `true` | Auto download WinDivert if missing |
 | `--service` | `false` | Run as Windows service |
 | `--config` | _(service only)_ | JSON config file path |
+| `--service-log` | `%ProgramData%\gov-pass\splitter.log` | Service log file path |
+| `--service-log-max-bytes` | `10485760` | Rotate log when current file exceeds this size |
+| `--service-log-max-files` | `5` | Number of rotated log files to keep |
+| `--print-reloadability` | `false` | Print reloadable vs restart-required settings and exit |
 
 ### FreeBSD flags
 
@@ -217,7 +258,7 @@ None. The Linux NFQUEUE path uses a pure-Go netlink client (`go-nfqueue`).
 
 ### Go module dependencies (tray UI — Windows & Linux)
 
-- github.com/getlantern/systray v1.2.2 (Apache-2.0)
-  - https://github.com/getlantern/systray/blob/v1.2.2/LICENSE
-- github.com/getlantern/golog v0.0.0-20190830074920-4ef2e798c2d7 (Apache-2.0)
-  - https://github.com/getlantern/golog/blob/4ef2e798c2d7/LICENSE
+- fyne.io/systray v1.12.0 (Apache-2.0)
+  - https://github.com/fyne-io/systray/blob/v1.12.0/LICENSE
+- github.com/godbus/dbus/v5 v5.1.0 (BSD-2-Clause)
+  - https://github.com/godbus/dbus/blob/v5.1.0/LICENSE
