@@ -1,0 +1,22 @@
+{
+  "engine": {
+    "split_mode": "tls-hello",
+    "split_chunk": 5,
+    "collect_timeout": "250ms",
+    "max_buffer_bytes": 65536,
+    "max_held_packets": 32,
+    "max_segment_payload": 1460,
+    "workers": 4,
+    "flow_idle_timeout": "30s",
+    "gc_interval": "5s",
+    "max_flows_per_worker": 4096,
+    "max_reassembly_bytes_per_worker": 67108864,
+    "max_held_bytes_per_worker": 67108864,
+    "shutdown_fail_open_timeout": "5s",
+    "shutdown_fail_open_max_packets": 200000,
+    "adapter_flush_timeout": "2s"
+  },
+  "freebsd": {
+    "divert_port": 10000
+  }
+}

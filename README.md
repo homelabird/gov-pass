@@ -38,8 +38,8 @@ sudo ./scripts/install_one_touch.sh
 ```
 
 ```bash
-# Linux tray UI together
-sudo INSTALL_TRAY=1 ./scripts/install_one_touch.sh
+# Linux TUI controller together
+sudo INSTALL_TUI=1 ./scripts/install_one_touch.sh
 ```
 
 ```bash
@@ -48,8 +48,8 @@ curl -fsSL https://raw.githubusercontent.com/homelabird/gov-pass/main/scripts/in
 ```
 
 ```bash
-# Linux one-touch installer via curl + GUI tray install
-curl -fsSL https://raw.githubusercontent.com/homelabird/gov-pass/main/scripts/install_one_touch_curl.sh | sudo INSTALL_TRAY=1 bash
+# Linux one-touch installer via curl + TUI controller install
+curl -fsSL https://raw.githubusercontent.com/homelabird/gov-pass/main/scripts/install_one_touch_curl.sh | sudo INSTALL_TUI=1 bash
 ```
 
 Installer package-manager detection order (Linux):
@@ -92,44 +92,41 @@ FreeBSD requires manual pf anchor configuration (see [docs/pf/](docs/pf/)).
 
 Stop with `Ctrl+C` or `SIGTERM`.
 
-## Tray UI (one-touch GUI)
+## TUI Controller (one-touch UI)
 
-`gov-pass-tray` provides a system-tray GUI for both Windows and Linux that lets
-you toggle protection on/off with a single click — similar to how commercial VPN
-apps (e.g. Unicorn) work, but with a minimal, distraction-free interface.
+`gov-pass-tui` provides one-touch UI control for service status and actions.
+On Linux it now runs as a terminal TUI controller (nmtui-like when `whiptail`
+is installed, with plain-text fallback). Windows and FreeBSD use the same TUI pattern.
 
 ### Build
 
 ```bash
 # Linux
-make build-tray
+make build-tui
 
 # Windows
-go build -ldflags -H=windowsgui -o dist\gov-pass-tray.exe .\cmd\gov-pass-tray
+go build -o dist\gov-pass-tui.exe .\cmd\gov-pass-tui
 ```
 
-On Linux, the tray UI now uses a DBus-based backend and does not require
-GTK/AppIndicator development packages for build.
-If you need an immediate warning suppression fallback for cgo-based builds,
-set `TRAY_CGO_CFLAGS='-Wno-deprecated-declarations'`.
+The controller is terminal-first TUI and does not rely on desktop GUI hosts.
 
-To install the tray binary to the system:
+To install the TUI controller binary to the system:
 
 ```bash
-sudo make install-tray
+sudo make install-tui
 ```
 
 Tag release Linux tarball (`gov-pass-<tag>-linux-amd64.tar.gz`) also includes:
 - `splitter`
-- `gov-pass-tray`
+- `gov-pass-tui`
 
-Tray capability matrix:
+TUI capability matrix:
 
-| Capability | Linux tray | Windows tray |
-|---|---|---|
-| Start/Stop/Restart | Yes | Yes |
-| Reload config | Yes | Yes |
-| Open at login | Yes (`~/.config/autostart/gov-pass-tray.desktop`) | Yes (HKCU Run) |
+| Capability | Linux TUI | FreeBSD TUI | Windows TUI |
+|---|---|---|---|
+| Start/Stop/Restart | Yes | Yes | Yes |
+| Boot enable/disable | Yes | Yes | Yes |
+| Interactive menu | Yes | Yes | Yes |
 
 ## CLI flag reference
 
@@ -261,9 +258,7 @@ None. The Linux NFQUEUE path uses a pure-Go netlink client (`go-nfqueue`).
 - golang.org/x/sys v0.1.0 (BSD-3-Clause)
   - https://cs.opensource.google/go/x/sys/+/refs/tags/v0.1.0:LICENSE
 
-### Go module dependencies (tray UI — Windows & Linux)
+### Go module dependencies (TUI controller)
 
-- fyne.io/systray v1.12.0 (Apache-2.0)
-  - https://github.com/fyne-io/systray/blob/v1.12.0/LICENSE
-- github.com/godbus/dbus/v5 v5.1.0 (BSD-2-Clause)
-  - https://github.com/godbus/dbus/blob/v5.1.0/LICENSE
+- golang.org/x/sys v0.15.0 (BSD-3-Clause)
+  - https://cs.opensource.google/go/x/sys/+/refs/tags/v0.15.0:LICENSE

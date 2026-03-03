@@ -13,31 +13,23 @@ import (
 	"time"
 
 	"golang.org/x/sys/windows"
-	"golang.org/x/sys/windows/registry"
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/mgr"
 )
 
 const (
-	runKeyPath  = `Software\Microsoft\Windows\CurrentVersion\Run`
-	runValueKey = "gov-pass-tray"
-
-	trayExeName      = "gov-pass-tray.exe"
+	tuiExeName       = "gov-pass-tui.exe"
 	winDivertSvcName = "WinDivert"
 )
 
 func main() {
-	action := flag.String("action", "", "action: kill-tray|clean-autorun-hkcu|clean-autorun-hklm|purge-programdata|stop-windivert|delete-windivert")
+	action := flag.String("action", "", "action: kill-tui|purge-programdata|stop-windivert|delete-windivert")
 	flag.Parse()
 
 	act := strings.ToLower(strings.TrimSpace(*action))
 	switch act {
-	case "kill-tray":
-		_ = killTrayBestEffort()
-	case "clean-autorun-hkcu":
-		_ = cleanAutorunBestEffort(registry.CURRENT_USER)
-	case "clean-autorun-hklm":
-		_ = cleanAutorunBestEffort(registry.LOCAL_MACHINE)
+	case "kill-tui":
+		_ = killTuiBestEffort()
 	case "purge-programdata":
 		_ = purgeProgramDataBestEffort()
 	case "stop-windivert":
@@ -52,35 +44,18 @@ func main() {
 	}
 }
 
-func killTrayBestEffort() error {
+func killTuiBestEffort() error {
 	sysDir, err := windows.GetSystemDirectory()
 	taskkill := "taskkill.exe"
 	if err == nil && strings.TrimSpace(sysDir) != "" {
 		taskkill = filepath.Join(sysDir, taskkill)
 	}
 
-	cmd := exec.Command(taskkill, "/IM", trayExeName, "/F")
+	cmd := exec.Command(taskkill, "/IM", tuiExeName, "/F")
 	// Suppress output: MSI logs would capture this, but we keep it quiet.
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	_ = cmd.Run()
-	return nil
-}
-
-func cleanAutorunBestEffort(root registry.Key) error {
-	k, err := registry.OpenKey(root, runKeyPath, registry.SET_VALUE)
-	if err != nil {
-		if errors.Is(err, registry.ErrNotExist) {
-			return nil
-		}
-		return nil
-	}
-	defer func() { _ = k.Close() }()
-
-	err = k.DeleteValue(runValueKey)
-	if err != nil && !errors.Is(err, registry.ErrNotExist) {
-		return nil
-	}
 	return nil
 }
 

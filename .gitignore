@@ -4,5 +4,5 @@ bin/
 /splitter
 /splitter.exe
 /check.exe
-/gov-pass-tray
+/gov-pass-tui
 /gov-pass-msi-helper

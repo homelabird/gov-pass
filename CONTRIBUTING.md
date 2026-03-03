@@ -27,11 +27,13 @@ Run (Admin):
 .\\dist\\splitter.exe
 ```
 
-### Windows (tray UI)
+### Windows (TUI controller)
 
 ```powershell
-go build -ldflags "-H=windowsgui" -o dist\\gov-pass-tray.exe .\\cmd\\gov-pass-tray
+go build -o dist\\gov-pass-tui.exe .\\cmd\\gov-pass-tui
 ```
+
+`gov-pass-tui.exe` is a terminal TUI controller on Windows.
 
 ### Windows (service)
 

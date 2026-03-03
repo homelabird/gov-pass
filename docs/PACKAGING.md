@@ -51,6 +51,9 @@ Flags:
   - if the exe directory is not writable, the downloader falls back to `C:\ProgramData\gov-pass\windivert`
   - in service mode, the ProgramData fallback is ACL-hardened (SYSTEM/Admin full, Users read-only)
 - --service: run as a Windows service (SCM)
+- --service-log: override service log file path
+- --service-log-max-bytes: rotate when the current log file exceeds this size (default: 10485760)
+- --service-log-max-files: number of rotated files to keep (default: 5)
 
 ## Windows MSI (service auto-start)
 
@@ -71,8 +74,8 @@ Service notes:
 - Config reload: `sc.exe control gov-pass paramchange`
   - applies engine config in-place (except worker topology) and non-zero WinDivert queue settings
   - requires service restart for: `windivert.filter`, `windivert_dir` / `windivert_sys`, and reverting `queue_*` to `0` (driver defaults)
-- Tray UI: the MSI also installs `gov-pass-tray.exe` and a Start Menu shortcut (`gov-pass tray`)
-  to show service status and start/stop/reload it (with UAC prompt).
+- TUI controller: the MSI also installs `gov-pass-tui.exe` and a Start Menu shortcut
+  to open terminal-based service control (start/stop/restart + boot enable/disable).
 
 Build MSI in CI:
 - GitLab release builds use `msitools` (`wixl`) with the template in `installer/windows/`.
@@ -119,12 +122,14 @@ Note:
 ## Linux packaging and operations (NFQUEUE)
 
 Default deployment layout:
-- `dist/splitter` (Linux binary)
+- `dist/splitter` (Linux CLI binary)
+- `dist/gov-pass-tui` (Linux TUI controller binary, optional)
 - `scripts/linux/*` (NFQUEUE rule helpers, test scripts)
 
 Build:
 ```bash
 go build -o dist/splitter ./cmd/splitter
+make build-tui
 ```
 
 Dependencies:
@@ -184,6 +189,10 @@ Build/install as DEB (Debian/Ubuntu family):
 ./packaging/deb/build_deb.sh
 sudo dpkg -i dist/gov-pass_*_amd64.deb
 ```
+
+Release tarball notes:
+- Git tag release Linux tarball includes both `splitter` and `gov-pass-tui`.
+- `gov-pass-tui` is terminal TUI; no desktop GUI host dependency is required.
 
 ## Android packaging (Magisk, arm64)
 

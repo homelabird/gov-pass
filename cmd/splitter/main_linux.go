@@ -5,6 +5,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -62,7 +63,52 @@ func run() error {
 	autoInstallTools := flag.Bool("auto-install-tools", true, "auto install missing system tools (nft/iptables/ip/ethtool) when auto helpers are enabled")
 	iface := flag.String("iface", "", "egress interface for offload disable (default: auto-detect)")
 	noLoopback := flag.Bool("no-loopback", false, "do not exclude loopback from NFQUEUE rules")
+	configPath := flag.String("config", "", "path to config json")
+	checkMode := flag.Bool("check", false, "run preflight checks and exit")
+	checkJSON := flag.Bool("check-json", false, "run preflight checks and print JSON")
 	flag.Parse()
+
+	setFlags := make(map[string]bool)
+	flag.CommandLine.Visit(func(f *flag.Flag) {
+		setFlags[f.Name] = true
+	})
+
+	if *checkJSON {
+		*checkMode = true
+	}
+
+	if path := strings.TrimSpace(*configPath); path != "" {
+		refs := &linuxFlagRefs{
+			SplitMode:                  splitMode,
+			SplitChunk:                 splitChunk,
+			CollectTimeout:             collectTimeout,
+			MaxBuffer:                  maxBuffer,
+			MaxHeld:                    maxHeld,
+			MaxSegPayload:              maxSegPayload,
+			Workers:                    workers,
+			FlowTimeout:                flowTimeout,
+			GCInterval:                 gcInterval,
+			MaxFlows:                   maxFlows,
+			MaxReassembly:              maxReassembly,
+			MaxHeldBytes:               maxHeldBytes,
+			ShutdownFailOpenTimeout:    shutdownFailOpenTimeout,
+			ShutdownFailOpenMaxPackets: shutdownFailOpenMaxPkts,
+			AdapterFlushTimeout:        adapterFlushTimeout,
+			QueueNum:                   queueNum,
+			QueueMaxLen:                queueMaxLen,
+			CopyRange:                  copyRange,
+			Mark:                       mark,
+			AutoRules:                  autoRules,
+			AutoOffload:                autoOffload,
+			AutoOffloadRestore:         autoOffloadRestore,
+			AutoInstallTools:           autoInstallTools,
+			Iface:                      iface,
+			NoLoopback:                 noLoopback,
+		}
+		if err := applyLinuxJSONConfig(path, setFlags, refs); err != nil {
+			return fmt.Errorf("apply config failed: %w", err)
+		}
+	}
 
 	mode, err := parseSplitMode(*splitMode)
 	if err != nil {
@@ -145,17 +191,22 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	toolNeeds := linuxToolNeeds{
+		AutoRules:   *autoRules,
+		AutoOffload: *autoOffload,
+		NeedIP:      *autoOffload && strings.TrimSpace(*iface) == "",
+	}
+	if *checkMode {
+		return runLinuxPreflight(*autoInstallTools, toolNeeds, *autoRules || *autoOffload, *checkJSON)
+	}
+
 	if *autoRules || *autoOffload {
 		if os.Geteuid() != 0 {
 			return errors.New("auto-rules/auto-offload require root; run as root or set --auto-rules=false --auto-offload=false")
 		}
 	}
 
-	if err := ensureLinuxExternalTools(*autoInstallTools, linuxToolNeeds{
-		AutoRules:   *autoRules,
-		AutoOffload: *autoOffload,
-		NeedIP:      *autoOffload && strings.TrimSpace(*iface) == "",
-	}); err != nil {
+	if err := ensureLinuxExternalTools(*autoInstallTools, toolNeeds); err != nil {
 		return err
 	}
 
@@ -243,6 +294,327 @@ func run() error {
 
 	if err := eng.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		return fmt.Errorf("engine stopped: %w", err)
+	}
+	return nil
+}
+
+type linuxJSONConfig struct {
+	Engine *linuxEngineJSONConfig  `json:"engine,omitempty"`
+	Linux  *linuxRuntimeJSONConfig `json:"linux,omitempty"`
+}
+
+type linuxEngineJSONConfig struct {
+	SplitMode                   *string `json:"split_mode,omitempty"`
+	SplitChunk                  *int    `json:"split_chunk,omitempty"`
+	CollectTimeout              *string `json:"collect_timeout,omitempty"`
+	MaxBufferBytes              *int    `json:"max_buffer_bytes,omitempty"`
+	MaxHeldPackets              *int    `json:"max_held_packets,omitempty"`
+	MaxSegmentPayload           *int    `json:"max_segment_payload,omitempty"`
+	Workers                     *int    `json:"workers,omitempty"`
+	FlowIdleTimeout             *string `json:"flow_idle_timeout,omitempty"`
+	GCInterval                  *string `json:"gc_interval,omitempty"`
+	MaxFlowsPerWorker           *int    `json:"max_flows_per_worker,omitempty"`
+	MaxReassemblyBytesPerWorker *int    `json:"max_reassembly_bytes_per_worker,omitempty"`
+	MaxHeldBytesPerWorker       *int    `json:"max_held_bytes_per_worker,omitempty"`
+	ShutdownFailOpenTimeout     *string `json:"shutdown_fail_open_timeout,omitempty"`
+	ShutdownFailOpenMaxPackets  *int    `json:"shutdown_fail_open_max_packets,omitempty"`
+	AdapterFlushTimeout         *string `json:"adapter_flush_timeout,omitempty"`
+}
+
+type linuxRuntimeJSONConfig struct {
+	QueueNum        *int    `json:"queue_num,omitempty"`
+	QueueMaxLen     *int    `json:"queue_maxlen,omitempty"`
+	CopyRange       *int    `json:"copy_range,omitempty"`
+	Mark            *int    `json:"mark,omitempty"`
+	AutoRules       *bool   `json:"auto_rules,omitempty"`
+	AutoOffload     *bool   `json:"auto_offload,omitempty"`
+	AutoOffloadRest *bool   `json:"auto_offload_restore,omitempty"`
+	AutoInstallTool *bool   `json:"auto_install_tools,omitempty"`
+	Iface           *string `json:"iface,omitempty"`
+	NoLoopback      *bool   `json:"no_loopback,omitempty"`
+}
+
+type linuxFlagRefs struct {
+	SplitMode                  *string
+	SplitChunk                 *int
+	CollectTimeout             *time.Duration
+	MaxBuffer                  *int
+	MaxHeld                    *int
+	MaxSegPayload              *int
+	Workers                    *int
+	FlowTimeout                *time.Duration
+	GCInterval                 *time.Duration
+	MaxFlows                   *int
+	MaxReassembly              *int
+	MaxHeldBytes               *int
+	ShutdownFailOpenTimeout    *time.Duration
+	ShutdownFailOpenMaxPackets *int
+	AdapterFlushTimeout        *time.Duration
+
+	QueueNum           *int
+	QueueMaxLen        *int
+	CopyRange          *int
+	Mark               *int
+	AutoRules          *bool
+	AutoOffload        *bool
+	AutoOffloadRestore *bool
+	AutoInstallTools   *bool
+	Iface              *string
+	NoLoopback         *bool
+}
+
+func applyLinuxJSONConfig(path string, setFlags map[string]bool, refs *linuxFlagRefs) error {
+	if refs == nil {
+		return errors.New("nil refs")
+	}
+
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+
+	var cfg linuxJSONConfig
+	if err := json.Unmarshal(b, &cfg); err != nil {
+		return err
+	}
+
+	if cfg.Engine != nil {
+		if cfg.Engine.SplitMode != nil && !setFlags["split-mode"] {
+			v := strings.TrimSpace(*cfg.Engine.SplitMode)
+			if v != "" {
+				*refs.SplitMode = v
+			}
+		}
+		if cfg.Engine.SplitChunk != nil && !setFlags["split-chunk"] {
+			*refs.SplitChunk = *cfg.Engine.SplitChunk
+		}
+		if cfg.Engine.CollectTimeout != nil && !setFlags["collect-timeout"] {
+			v := strings.TrimSpace(*cfg.Engine.CollectTimeout)
+			if v != "" {
+				d, err := time.ParseDuration(v)
+				if err != nil {
+					return fmt.Errorf("engine.collect_timeout: %w", err)
+				}
+				*refs.CollectTimeout = d
+			}
+		}
+		if cfg.Engine.MaxBufferBytes != nil && !setFlags["max-buffer"] {
+			*refs.MaxBuffer = *cfg.Engine.MaxBufferBytes
+		}
+		if cfg.Engine.MaxHeldPackets != nil && !setFlags["max-held-pkts"] {
+			*refs.MaxHeld = *cfg.Engine.MaxHeldPackets
+		}
+		if cfg.Engine.MaxSegmentPayload != nil && !setFlags["max-seg-payload"] {
+			*refs.MaxSegPayload = *cfg.Engine.MaxSegmentPayload
+		}
+		if cfg.Engine.Workers != nil && !setFlags["workers"] {
+			*refs.Workers = *cfg.Engine.Workers
+		}
+		if cfg.Engine.FlowIdleTimeout != nil && !setFlags["flow-timeout"] {
+			v := strings.TrimSpace(*cfg.Engine.FlowIdleTimeout)
+			if v != "" {
+				d, err := time.ParseDuration(v)
+				if err != nil {
+					return fmt.Errorf("engine.flow_idle_timeout: %w", err)
+				}
+				*refs.FlowTimeout = d
+			}
+		}
+		if cfg.Engine.GCInterval != nil && !setFlags["gc-interval"] {
+			v := strings.TrimSpace(*cfg.Engine.GCInterval)
+			if v != "" {
+				d, err := time.ParseDuration(v)
+				if err != nil {
+					return fmt.Errorf("engine.gc_interval: %w", err)
+				}
+				*refs.GCInterval = d
+			}
+		}
+		if cfg.Engine.MaxFlowsPerWorker != nil && !setFlags["max-flows-per-worker"] {
+			*refs.MaxFlows = *cfg.Engine.MaxFlowsPerWorker
+		}
+		if cfg.Engine.MaxReassemblyBytesPerWorker != nil && !setFlags["max-reassembly-bytes-per-worker"] {
+			*refs.MaxReassembly = *cfg.Engine.MaxReassemblyBytesPerWorker
+		}
+		if cfg.Engine.MaxHeldBytesPerWorker != nil && !setFlags["max-held-bytes-per-worker"] {
+			*refs.MaxHeldBytes = *cfg.Engine.MaxHeldBytesPerWorker
+		}
+		if cfg.Engine.ShutdownFailOpenTimeout != nil && !setFlags["shutdown-fail-open-timeout"] {
+			v := strings.TrimSpace(*cfg.Engine.ShutdownFailOpenTimeout)
+			if v != "" {
+				d, err := time.ParseDuration(v)
+				if err != nil {
+					return fmt.Errorf("engine.shutdown_fail_open_timeout: %w", err)
+				}
+				*refs.ShutdownFailOpenTimeout = d
+			}
+		}
+		if cfg.Engine.ShutdownFailOpenMaxPackets != nil && !setFlags["shutdown-fail-open-max-pkts"] {
+			*refs.ShutdownFailOpenMaxPackets = *cfg.Engine.ShutdownFailOpenMaxPackets
+		}
+		if cfg.Engine.AdapterFlushTimeout != nil && !setFlags["adapter-flush-timeout"] {
+			v := strings.TrimSpace(*cfg.Engine.AdapterFlushTimeout)
+			if v != "" {
+				d, err := time.ParseDuration(v)
+				if err != nil {
+					return fmt.Errorf("engine.adapter_flush_timeout: %w", err)
+				}
+				*refs.AdapterFlushTimeout = d
+			}
+		}
+	}
+
+	if cfg.Linux != nil {
+		if cfg.Linux.QueueNum != nil && !setFlags["queue-num"] {
+			*refs.QueueNum = *cfg.Linux.QueueNum
+		}
+		if cfg.Linux.QueueMaxLen != nil && !setFlags["queue-maxlen"] {
+			*refs.QueueMaxLen = *cfg.Linux.QueueMaxLen
+		}
+		if cfg.Linux.CopyRange != nil && !setFlags["copy-range"] {
+			*refs.CopyRange = *cfg.Linux.CopyRange
+		}
+		if cfg.Linux.Mark != nil && !setFlags["mark"] {
+			*refs.Mark = *cfg.Linux.Mark
+		}
+		if cfg.Linux.AutoRules != nil && !setFlags["auto-rules"] {
+			*refs.AutoRules = *cfg.Linux.AutoRules
+		}
+		if cfg.Linux.AutoOffload != nil && !setFlags["auto-offload"] {
+			*refs.AutoOffload = *cfg.Linux.AutoOffload
+		}
+		if cfg.Linux.AutoOffloadRest != nil && !setFlags["auto-offload-restore"] {
+			*refs.AutoOffloadRestore = *cfg.Linux.AutoOffloadRest
+		}
+		if cfg.Linux.AutoInstallTool != nil && !setFlags["auto-install-tools"] {
+			*refs.AutoInstallTools = *cfg.Linux.AutoInstallTool
+		}
+		if cfg.Linux.Iface != nil && !setFlags["iface"] {
+			*refs.Iface = strings.TrimSpace(*cfg.Linux.Iface)
+		}
+		if cfg.Linux.NoLoopback != nil && !setFlags["no-loopback"] {
+			*refs.NoLoopback = *cfg.Linux.NoLoopback
+		}
+	}
+
+	return nil
+}
+
+type preflightCheck struct {
+	Name   string `json:"name"`
+	OK     bool   `json:"ok"`
+	Detail string `json:"detail,omitempty"`
+}
+
+type preflightReport struct {
+	OK     bool            `json:"ok"`
+	Checks []preflightCheck `json:"checks"`
+}
+
+func runLinuxPreflight(autoInstall bool, needs linuxToolNeeds, requireRoot bool, jsonOut bool) error {
+	checks := make([]preflightCheck, 0, 6)
+	add := func(name string, ok bool, detail string) {
+		checks = append(checks, preflightCheck{Name: name, OK: ok, Detail: detail})
+	}
+
+	if requireRoot {
+		rootOK := os.Geteuid() == 0
+		detail := "required when auto-rules/auto-offload is enabled"
+		if !rootOK {
+			detail = "run as root or disable auto helpers"
+		}
+		add("root", rootOK, detail)
+	}
+
+	if needs.AutoRules {
+		_, hasNft := linuxLookPath("nft")
+		_, hasIpt := linuxLookPath("iptables")
+		ok := hasNft || hasIpt
+		detail := "nft or iptables"
+		if hasNft {
+			detail = "nft found"
+		} else if hasIpt {
+			detail = "iptables found"
+		} else if autoInstall {
+			if kind, _, found := linuxDetectPackageManager(); found {
+				ok = true
+				detail = "missing now; auto-install available via " + kind
+			} else {
+				detail = "missing now; no supported package manager found"
+			}
+		} else {
+			detail = "missing; install nftables or iptables"
+		}
+		add("nft_or_iptables", ok, detail)
+	}
+
+	if needs.AutoOffload {
+		_, hasEthtool := linuxLookPath("ethtool")
+		ok := hasEthtool
+		detail := "ethtool"
+		if hasEthtool {
+			detail = "ethtool found"
+		} else if autoInstall {
+			if kind, _, found := linuxDetectPackageManager(); found {
+				ok = true
+				detail = "missing now; auto-install available via " + kind
+			} else {
+				detail = "missing now; no supported package manager found"
+			}
+		} else {
+			detail = "missing; install ethtool"
+		}
+		add("ethtool", ok, detail)
+
+		if needs.NeedIP {
+			_, hasIP := linuxLookPath("ip")
+			okIP := hasIP
+			detailIP := "ip command"
+			if hasIP {
+				detailIP = "ip found"
+			} else if autoInstall {
+				if kind, _, found := linuxDetectPackageManager(); found {
+					okIP = true
+					detailIP = "missing now; auto-install available via " + kind
+				} else {
+					detailIP = "missing now; no supported package manager found"
+				}
+			} else {
+				detailIP = "missing; install iproute2/iproute"
+			}
+			add("ip", okIP, detailIP)
+		}
+	}
+
+	report := preflightReport{
+		OK:     true,
+		Checks: checks,
+	}
+	for i := range report.Checks {
+		if !report.Checks[i].OK {
+			report.OK = false
+			break
+		}
+	}
+
+	if jsonOut {
+		b, err := json.MarshalIndent(report, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(os.Stdout, string(b))
+	} else {
+		for _, c := range report.Checks {
+			state := "OK"
+			if !c.OK {
+				state = "FAIL"
+			}
+			fmt.Fprintf(os.Stdout, "[%s] %s: %s\n", state, c.Name, c.Detail)
+		}
+	}
+
+	if !report.OK {
+		return errors.New("preflight failed")
 	}
 	return nil
 }
@@ -661,6 +1033,9 @@ func lookPath(name string) (string, bool) {
 	}
 	return "", false
 }
+
+var linuxLookPath = lookPath
+var linuxDetectPackageManager = detectLinuxPackageManager
 
 type linuxToolNeeds struct {
 	AutoRules   bool

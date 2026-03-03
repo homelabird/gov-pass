@@ -26,23 +26,9 @@
 
     <!-- Best-effort cleanup on uninstall. Return="ignore" so uninstall doesn't fail on "not found". -->
     <CustomAction
-      Id="caKillTray"
+      Id="caKillTui"
       FileKey="fileMsiHelperExe"
-      ExeCommand="--action kill-tray"
-      Execute="deferred"
-      Impersonate="no"
-      Return="ignore" />
-    <CustomAction
-      Id="caCleanTrayAutorunHKCU"
-      FileKey="fileMsiHelperExe"
-      ExeCommand="--action clean-autorun-hkcu"
-      Execute="deferred"
-      Impersonate="yes"
-      Return="ignore" />
-    <CustomAction
-      Id="caCleanTrayAutorunHKLM"
-      FileKey="fileMsiHelperExe"
-      ExeCommand="--action clean-autorun-hklm"
+      ExeCommand="--action kill-tui"
       Execute="deferred"
       Impersonate="no"
       Return="ignore" />
@@ -69,10 +55,8 @@
       Return="ignore" />
 
     <InstallExecuteSequence>
-      <Custom Action="caKillTray" After="StopServices">REMOVE="ALL"</Custom>
-      <Custom Action="caCleanTrayAutorunHKCU" After="caKillTray">REMOVE="ALL"</Custom>
-      <Custom Action="caCleanTrayAutorunHKLM" After="caCleanTrayAutorunHKCU">REMOVE="ALL"</Custom>
-      <Custom Action="caPurgeProgramData" After="caCleanTrayAutorunHKLM">REMOVE="ALL" AND GOVPASS_PURGE_PROGRAMDATA="1"</Custom>
+      <Custom Action="caKillTui" After="StopServices">REMOVE="ALL"</Custom>
+      <Custom Action="caPurgeProgramData" After="caKillTui">REMOVE="ALL" AND GOVPASS_PURGE_PROGRAMDATA="1"</Custom>
       <Custom Action="caStopWinDivert" After="caPurgeProgramData">REMOVE="ALL" AND GOVPASS_REMOVE_WINDIVERT="1"</Custom>
       <Custom Action="caDeleteWinDivert" After="caStopWinDivert">REMOVE="ALL" AND GOVPASS_REMOVE_WINDIVERT="1"</Custom>
     </InstallExecuteSequence>
@@ -122,7 +106,7 @@
           Stop="both"
           Remove="uninstall"
           Wait="yes" />
-        <File Id="fileTrayExe" Source="{{SOURCE_DIR}}/gov-pass-tray.exe" />
+        <File Id="fileTuiExe" Source="{{SOURCE_DIR}}/gov-pass-tui.exe" />
         <File Id="fileSplitterAdminCmd" Source="{{SOURCE_DIR}}/splitter-admin.cmd" />
         <File Id="fileServiceStartAdminCmd" Source="{{SOURCE_DIR}}/service-start-admin.cmd" />
         <File Id="fileServiceStopAdminCmd" Source="{{SOURCE_DIR}}/service-stop-admin.cmd" />
@@ -151,10 +135,10 @@
     <DirectoryRef Id="ApplicationProgramsFolder">
       <Component Id="cmpStartMenu" Guid="0B7E4F39-8B5D-4DA3-9C62-35D8C29B9F6D" Win64="yes">
         <Shortcut
-          Id="StartMenuShortcutTray"
-          Name="gov-pass tray"
-          Description="Tray UI to start/stop the gov-pass service"
-          Target="[INSTALLFOLDER]gov-pass-tray.exe"
+          Id="StartMenuShortcutTui"
+          Name="gov-pass TUI"
+          Description="Terminal TUI to manage the gov-pass service"
+          Target="[INSTALLFOLDER]gov-pass-tui.exe"
           WorkingDirectory="INSTALLFOLDER" />
         <Shortcut
           Id="StartMenuShortcutAdmin"

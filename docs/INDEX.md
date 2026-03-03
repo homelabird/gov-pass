@@ -18,6 +18,7 @@
 - [DESIGN_ANDROID.md](DESIGN_ANDROID.md) (Deprecated) - Historical reference for rooted Android/Magisk work.
 - [ROADMAP.md](ROADMAP.md) (Stable) - Phased tasks, defaults, and long-term follow-up items.
 - [PACKAGING.md](PACKAGING.md) (Stable) - Build outputs, distribution layout, and install/run guidance.
+- [INSTALL_RPM_DEB.md](INSTALL_RPM_DEB.md) (Stable) - End-to-end RPM/DEB build, install, run, verify, and removal workflow.
 - [CODESIGNING.md](CODESIGNING.md) (Stable) - Windows Authenticode signing in CI (EXE/MSI) and required variables.
 - [RELEASE_NOTES.md](RELEASE_NOTES.md) (Stable) - Versioned changes and release notes history.
 - [RELEASE_CHECKLIST_LINUX.md](RELEASE_CHECKLIST_LINUX.md) (Beta) - Linux release DoD checklist and validation steps.

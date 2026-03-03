@@ -16,6 +16,17 @@ import (
 
 type serviceRunner func(ctx context.Context, reload <-chan struct{}) error
 
+const (
+	defaultServiceLogMaxBytes int64 = 10 * 1024 * 1024
+	defaultServiceLogMaxFiles       = 5
+)
+
+type serviceLogConfig struct {
+	Path     string
+	MaxBytes int64
+	MaxFiles int
+}
+
 func isWindowsServiceProcess() bool {
 	ok, err := svc.IsWindowsService()
 	if err != nil {
@@ -24,12 +35,12 @@ func isWindowsServiceProcess() bool {
 	return ok
 }
 
-func runService(name string, logPath string, run serviceRunner) error {
+func runService(name string, logCfg serviceLogConfig, run serviceRunner) error {
 	if name == "" {
 		return errors.New("service-name is empty")
 	}
 
-	logFile, err := setupServiceLogging(logPath)
+	logFile, err := setupServiceLogging(logCfg)
 	if err != nil {
 		return err
 	}
@@ -51,9 +62,20 @@ func runService(name string, logPath string, run serviceRunner) error {
 	return svc.Run(name, handler)
 }
 
-func setupServiceLogging(path string) (*os.File, error) {
+func setupServiceLogging(cfg serviceLogConfig) (*os.File, error) {
+	path := cfg.Path
 	if path == "" {
 		path = defaultServiceLogPath()
+	}
+
+	maxBytes := cfg.MaxBytes
+	if maxBytes <= 0 {
+		maxBytes = defaultServiceLogMaxBytes
+	}
+
+	maxFiles := cfg.MaxFiles
+	if maxFiles < 1 {
+		maxFiles = defaultServiceLogMaxFiles
 	}
 
 	// Service runs as LocalSystem. Lock down ProgramData state to prevent
@@ -69,6 +91,9 @@ func setupServiceLogging(path string) (*os.File, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("create log dir failed: %w", err)
 	}
+	if err := rotateServiceLog(path, maxBytes, maxFiles); err != nil {
+		return nil, fmt.Errorf("rotate service log failed: %w", err)
+	}
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		return nil, fmt.Errorf("open log file failed: %w", err)
@@ -81,8 +106,40 @@ func setupServiceLogging(path string) (*os.File, error) {
 	}
 	log.SetOutput(f)
 	log.SetFlags(log.LstdFlags | log.LUTC)
-	log.Printf("service logging to %s", path)
+	log.Printf("service logging to %s (max_bytes=%d max_files=%d)", path, maxBytes, maxFiles)
 	return f, nil
+}
+
+func rotateServiceLog(path string, maxBytes int64, maxFiles int) error {
+	if maxBytes <= 0 || maxFiles < 1 {
+		return nil
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	if info.Size() < maxBytes {
+		return nil
+	}
+
+	oldest := fmt.Sprintf("%s.%d", path, maxFiles)
+	_ = os.Remove(oldest)
+
+	for i := maxFiles - 1; i >= 1; i-- {
+		src := fmt.Sprintf("%s.%d", path, i)
+		dst := fmt.Sprintf("%s.%d", path, i+1)
+		if _, err := os.Stat(src); err == nil {
+			if err := os.Rename(src, dst); err != nil {
+				return err
+			}
+		}
+	}
+
+	return os.Rename(path, path+".1")
 }
 
 func defaultServiceLogPath() string {
