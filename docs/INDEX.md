@@ -1,26 +1,30 @@
-# Documentation Index
+# Documentation
 
-## Docs Policy
+`README.md` is the primary entry point. Everything below is for platform-specific
+details, packaging, or maintenance work.
 
-- `Stable`: actively maintained and suitable for operational use.
-- `Beta`: currently usable, but with known follow-up items.
-- `Experimental`: implemented or partially implemented with platform caveats.
-- `WIP`: incomplete and not yet complete for production use.
-- `Deprecated`: historical/reference only; no maintenance commitment.
+## Core Docs
 
-- [DESIGN_COMMON.md](DESIGN_COMMON.md) (Stable) - Shared behavior across all split engines.
-- [CONTRIBUTING.md](../CONTRIBUTING.md) (Stable) - Dev workflow, build/test commands, and CI notes.
-- [SECURITY.md](../SECURITY.md) (Stable) - Privilege model and operational hardening notes.
-- [DESIGN.md](DESIGN.md) (Stable) - Windows WinDivert architecture, state machine, and split/inject behavior.
-- [DESIGN_LINUX.md](DESIGN_LINUX.md) (Beta) - NFQUEUE pipeline, reinjection flow, and Linux-specific edge cases.
-- [DESIGN_BSD.md](DESIGN_BSD.md) (Experimental) - pf divert architecture and BSD-specific assumptions.
-- [POC_BSD.md](POC_BSD.md) (Experimental) - FreeBSD VM PoC checklist and pf anchor templates.
-- [DESIGN_ANDROID.md](DESIGN_ANDROID.md) (Deprecated) - Historical reference for rooted Android/Magisk work.
-- [ROADMAP.md](ROADMAP.md) (Stable) - Phased tasks, defaults, and long-term follow-up items.
-- [PACKAGING.md](PACKAGING.md) (Stable) - Build outputs, distribution layout, and install/run guidance.
-- [INSTALL_RPM_DEB.md](INSTALL_RPM_DEB.md) (Stable) - End-to-end RPM/DEB build, install, run, verify, and removal workflow.
-- [CODESIGNING.md](CODESIGNING.md) (Stable) - Windows Authenticode signing in CI (EXE/MSI) and required variables.
-- [RELEASE_NOTES.md](RELEASE_NOTES.md) (Stable) - Versioned changes and release notes history.
-- [RELEASE_CHECKLIST_LINUX.md](RELEASE_CHECKLIST_LINUX.md) (Beta) - Linux release DoD checklist and validation steps.
-- [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) (Stable) - Third-party components and license attributions.
-- [THIRD_PARTY_SOURCES.md](THIRD_PARTY_SOURCES.md) (Stable) - Vendored source origins and local patch list.
+- [`../README.md`](../README.md): install, run, and configuration overview
+- [`../SECURITY.md`](../SECURITY.md): privilege model and operational hardening
+- [`../CONTRIBUTING.md`](../CONTRIBUTING.md): local build, test, and CI workflow
+- [`PACKAGING.md`](PACKAGING.md): Windows MSI and Linux package/service layout
+- [`DESIGN_COMMON.md`](DESIGN_COMMON.md): shared engine contract
+- [`DESIGN.md`](DESIGN.md): Windows / WinDivert path
+- [`DESIGN_LINUX.md`](DESIGN_LINUX.md): Linux / NFQUEUE path
+- [`DESIGN_BSD.md`](DESIGN_BSD.md): FreeBSD / pf divert path
+- [`CODESIGNING.md`](CODESIGNING.md): Windows signing flow
+- [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md): shipped dependencies and licenses
+- [`THIRD_PARTY_SOURCES.md`](THIRD_PARTY_SOURCES.md): vendored source origins
+
+## Supporting Assets
+
+- [`pf/`](pf/): `pf` anchor examples for FreeBSD / pfSense
+- [`examples/`](examples/): sample config files
+- [`screenshots/`](screenshots/): TUI and icon screenshots
+
+## Archive
+
+Historical planning notes, release checklists, one-off PoC documents, and
+deprecated platform notes were moved to [`archive/`](archive/). They are kept
+for reference, but they are no longer part of the primary documentation surface.

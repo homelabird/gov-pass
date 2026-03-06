@@ -1,36 +1,37 @@
 # Common Split Engine Design
 
-This document captures behavior shared by Windows, Linux, and BSD engine paths.
+This document captures behavior shared by every platform backend.
 
-## Shared design contract
+## Scope
 
-- Target: outbound IPv4 TCP/443.
-- Strategy: split only the first TLS ClientHello record per flow.
-- Safety: fail-open on mismatch/parse error/timeout/pressure/error.
+- target: outbound IPv4 TCP/443
+- strategy: split only the first TLS ClientHello record per flow
+- fallback: fail-open on parse error, timeout, or resource pressure
 
-## Shared flow lifecycle
+## Flow Lifecycle
 
 `NEW -> COLLECTING -> SPLIT_READY -> INJECTED -> PASS_THROUGH -> CLOSED`
 
-- `NEW`: first payload observed.
-- `COLLECTING`: reassembly until split decision.
-- `SPLIT_READY`: first TLS record criteria met.
-- `INJECTED`: split segments emitted.
-- `PASS_THROUGH`: normal forwarding from this point.
-- `CLOSED`: FIN, RST, or timeout.
+- `COLLECTING`: hold packets until the split decision is known
+- `SPLIT_READY`: the first TLS record is fully available
+- `INJECTED`: split segments were emitted instead of the originals
+- `PASS_THROUGH`: later packets in the flow are forwarded unchanged
 
-## Shared split detection and fail-open rules
+## Split Decision
 
-- Detect after 6 contiguous bytes:
-  - TLS content type `0x16`
-  - TLS version `0x0301..0x0304`
-  - Handshake type `0x01`
-- Read full record `5 + recordLen` before split.
-- Fail-open if checks fail, limits are exceeded, or timeout occurs.
+The engine waits for 6 contiguous bytes and checks:
 
-## Shared queue/shutdown policy
+1. TLS content type `0x16`
+2. TLS version `0x0301..0x0304`
+3. Handshake type `0x01`
 
-- Hold packets while collecting.
-- On success: drop originals and inject split segments.
-- On fail-open: reinject held packets in original order.
-- Shutdown is bounded (timeout + packet limit), then flush adapter pending packets best-effort.
+If the first record is valid, the engine waits for the full record
+(`5 + recordLen`) and then splits only that record. Everything else stays
+pass-through.
+
+## Safety Rules
+
+- Hold packets only while the split decision is pending.
+- On success, drop held originals and inject split segments.
+- On failure, reinject or accept held packets in original order.
+- Bound shutdown with a timeout and packet limit so stop paths cannot hang.
