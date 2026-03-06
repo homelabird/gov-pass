@@ -1,99 +1,34 @@
-# Detailed Design - BSD (pf divert) Split-Only TLS ClientHello (Go)
+# BSD Design
 
-Status: Experimental (not production).
-This doc focuses on pf-divert implementation details. Shared behavior is documented in
-[DESIGN_COMMON.md](DESIGN_COMMON.md).
+Status: experimental. This path is intended for FreeBSD and pfSense-style
+deployments and is not production-ready.
 
-## Platform-specific notes
+Shared engine behavior lives in [`DESIGN_COMMON.md`](DESIGN_COMMON.md).
 
-- pf divert socket/reinject behavior and rule semantics.
-- Loop prevention approach (tagged packets, anchor behavior).
-- Open questions and platform caveats for FreeBSD/pfSense.
+## Data Path
 
-## Target platforms
+`pf divert-to -> divert socket -> decoder -> flow shard -> reassembly -> split plan -> reinject`
 
-- pfSense CE 2.7.x (FreeBSD 14.0 base)
-- OPNsense 24.x (FreeBSD 13.2/14.1 base)
+`pf` rules send outbound TCP/443 traffic to a local divert port. The runtime
+decides whether to split the first TLS record or reinject the original packets.
 
-## Architecture overview
+## Rule Model
 
-pf (divert-to) -> Divert adapter -> Decoder -> Flow Manager -> Reassembler
--> TLS Inspector -> Split Plan -> Injector (divert send)
+- Manage rules through a dedicated `pf` anchor.
+- Tag reinjected packets so they bypass the divert rule on the way back out.
+- Keep anchor scope narrow so enable, disable, and cleanup remain predictable.
 
-Non-target and completed flows are reinjected as-is.
+Use [`pf/`](pf/) for example anchor fragments.
 
-## pf divert adapter
+## Runtime Behavior
 
-- Use pf `divert-to 127.0.0.1 port <divert_port>` for outbound TCP 443.
-- Open a divert socket (IPPROTO_DIVERT) bound to the divert port.
-- Receive packet bytes + metadata via `recvfrom`.
-- Reinject via `sendto` with the original sockaddr.
-- Drop by not reinjecting (used when replacing originals with split segments).
+- Hold packets only while the first TLS record is being evaluated.
+- On split-ready, drop originals and reinject split segments.
+- On failure, reinject held packets in original order.
+- After the first decision, leave the rest of the flow in pass-through mode.
 
-## Rule installation (pf)
+## Caveats
 
-Anchor example (schematic):
-
-```pf
-anchor "gov-pass"
-load anchor "gov-pass" from "/etc/pf.anchors/gov-pass"
-```
-
-```pf
-# /etc/pf.anchors/gov-pass
-lan_net = "192.168.1.0/24"
-wan_if = "em0"
-divert_port = "10000"
-
-# Bypass reinjected packets (tagged)
-match out on $wan_if inet proto tcp tagged GOVPASS -> $wan_if
-
-# Divert LAN -> WAN HTTPS
-pass out on $wan_if inet proto tcp from $lan_net to any port 443 \
-  divert-to 127.0.0.1 port $divert_port tag GOVPASS
-```
-
-## Reinjection loop prevention
-
-Loop prevention is implemented with packet tags:
-- Tag reinjected packets as `GOVPASS`.
-- Add a bypass rule for tagged packets before divert rules are evaluated.
-
-## Packet handling
-
-- COLLECTING: hold packets until split-ready.
-- SPLIT_READY: drop originals and inject split segments.
-- FAIL-OPEN: reinject held packets in original order.
-- PASS-THROUGH: reinject packets as-is for the rest of the flow.
-
-## Shutdown behavior
-
-On shutdown or worker exit:
-- Workers fail-open held packets and drain queued-but-unprocessed packets (pass-through).
-- Shutdown draining is bounded by a timeout and max packet count to prevent Stop from hanging forever under load.
-- After workers stop, the adapter performs a best-effort flush of adapter-level pending packets before the handle is closed.
-
-## Split plan
-
-- Split window: first TLS record only
-- First segment size = split-chunk (default 5)
-- Remaining bytes in one or more segments
-- Cap segment payload size to max-seg-payload (default 1460) and IPv4 total length
-
-## Offload considerations
-
-- TSO/LRO/CSUM offload may hide true packet boundaries from pf/divert.
-- Document required `ifconfig` toggles per interface for testing.
-
-## PoC plan (FreeBSD VM)
-
-- 2-NIC router VM (LAN + WAN).
-- Add pf anchor with `divert-to` for LAN -> WAN TCP 443.
-- PoC binary: recv + reinject unchanged (no split) to validate loop-free pass-through.
-- Verify with `tcpdump` and `curl` that TLS connections succeed.
-
-## Open questions
-
-- Is pf divert available/enabled in pfSense/OPNsense kernels (IPDIVERT)?
-- Best pf rule placement relative to NAT for LAN -> WAN?
-- Reliable loop-prevention mechanism across pfSense/OPNsense versions?
+- Validate offload settings on each target NIC and OS combination.
+- Confirm rule placement carefully around NAT and LAN-to-WAN forwarding.
+- Treat this path as a lab or pilot feature, not a production deployment target.

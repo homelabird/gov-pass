@@ -1,199 +1,79 @@
-# Packaging and Driver Setup
+# Packaging
 
-This project requires WinDivert user-mode DLL and kernel driver files.
-Bundle these files with the executable for a self-contained distribution.
+This document describes the packaging surface that matters for shipping and
+operating `gov-pass`. For normal install and run instructions, start with
+[`../README.md`](../README.md).
 
-Default deployment layout:
-- `dist\splitter.exe`
-- `dist\WinDivert.dll`
-- `dist\WinDivert64.sys` (or `WinDivert.sys`)
-- `dist\WinDivert.cat`
+## Windows
 
-The runtime auto-install uses the executable directory by default, so placing
-the WinDivert files next to the exe is the standard setup. The service name
-is fixed as `WinDivert`.
+Required runtime files:
 
-## Build
+- `splitter.exe`
+- `WinDivert.dll`
+- `WinDivert64.sys` or `WinDivert.sys`
+- `WinDivert.cat` when available
 
-```powershell
-go build -o dist\splitter.exe .\cmd\splitter
-```
+Optional packaged files:
 
-## Package (copy DLL/SYS/CAT)
+- `gov-pass-tui.exe`
+- `gov-pass-msi-helper.exe`
+- admin helper `.cmd` launchers
 
-```powershell
-.\scripts\package.ps1 -ExePath dist\splitter.exe -WinDivertDir C:\path\to\WinDivert
-```
+Runtime behavior:
 
-This copies:
-- WinDivert.dll
-- WinDivert64.sys (or WinDivert.sys if present)
-- WinDivert.cat (if present)
+- The executable auto-installs or auto-downloads WinDivert by default.
+- Service mode stores config and logs under `C:\ProgramData\gov-pass\`.
+- Config reload uses `sc.exe control gov-pass paramchange`.
 
-## Install/Uninstall (optional)
+MSI expectations:
 
-```powershell
-.\scripts\install_windivert.ps1 -WinDivertDir dist
-.\scripts\uninstall_windivert.ps1
-```
+- Install path: `C:\Program Files\gov-pass\`
+- Service name: `gov-pass`
+- Start mode: automatic
+- TUI controller can be bundled alongside the service install
 
-## Runtime auto-install
+Build notes:
 
-By default the app will auto-install/start the driver if needed and
-uninstall it on exit if it created the service.
+- CI packages Windows artifacts from [`installer/windows/`](../installer/windows/).
+- Local MSI builds render [`installer/windows/gov-pass.wxs.in`](../installer/windows/gov-pass.wxs.in)
+  and then build it with WiX.
+- Signing details live in [`CODESIGNING.md`](CODESIGNING.md).
 
-Flags:
-- --windivert-dir: directory containing WinDivert.dll/.sys/.cat
-- --windivert-sys: override driver sys filename
-- --auto-install: enable auto install/start (default true)
-- --auto-uninstall: uninstall if installed by this run (default true)
-- --auto-download-windivert: download pinned WinDivert zip if files are missing (default true)
-  - if the exe directory is not writable, the downloader falls back to `C:\ProgramData\gov-pass\windivert`
-  - in service mode, the ProgramData fallback is ACL-hardened (SYSTEM/Admin full, Users read-only)
-- --service: run as a Windows service (SCM)
-- --service-log: override service log file path
-- --service-log-max-bytes: rotate when the current log file exceeds this size (default: 10485760)
-- --service-log-max-files: number of rotated files to keep (default: 5)
+## Linux
 
-## Windows MSI (service auto-start)
+Typical package contents:
 
-The MSI installer installs gov-pass under Program Files and registers a Windows
-service named `gov-pass` that starts automatically.
+- `/usr/libexec/gov-pass/splitter` or `/opt/gov-pass/dist/splitter`
+- optional `gov-pass-tui`
+- systemd unit: `gov-pass.service`
+- env/config file: `/etc/default/gov-pass` or `/etc/sysconfig/gov-pass`
+- NFQUEUE helper scripts for rule install and cleanup
 
-Service notes:
-- The service runs `splitter.exe --service --service-name gov-pass`.
-- The service reads config from `C:\ProgramData\gov-pass\config.json` (created on first run if missing).
-- Logs are written to `C:\ProgramData\gov-pass\splitter.log`.
-- In service mode, `C:\ProgramData\gov-pass\` is ACL-hardened (SYSTEM/Admin full, Users read-only).
-  Editing `config.json` requires Admin.
-- Uninstall behavior:
-  - By default, the MSI keeps `C:\ProgramData\gov-pass\` (config/log) and does not remove the global `WinDivert` driver service.
-  - To purge ProgramData state on uninstall: `msiexec.exe /x <gov-pass.msi> /qn /norestart GOVPASS_PURGE_PROGRAMDATA=1`
-  - To remove the global WinDivert service on uninstall: `msiexec.exe /x <gov-pass.msi> /qn /norestart GOVPASS_REMOVE_WINDIVERT=1`
-    - This may affect other WinDivert-based apps on the machine.
-- Config reload: `sc.exe control gov-pass paramchange`
-  - applies engine config in-place (except worker topology) and non-zero WinDivert queue settings
-  - requires service restart for: `windivert.filter`, `windivert_dir` / `windivert_sys`, and reverting `queue_*` to `0` (driver defaults)
-- TUI controller: the MSI also installs `gov-pass-tui.exe` and a Start Menu shortcut
-  to open terminal-based service control (start/stop/restart + boot enable/disable).
+Preferred install paths:
 
-Build MSI in CI:
-- GitLab release builds use `msitools` (`wixl`) with the template in `installer/windows/`.
-- Optional: a Windows-runner E2E job (`verify_windows_msi_e2e`) can install/uninstall the MSI and
-  smoke-test service start/stop/reload. Enable it by setting `WINDOWS_E2E=1` and providing a
-  Windows runner tagged `windows`.
+- one-touch script: [`../scripts/install_one_touch.sh`](../scripts/install_one_touch.sh)
+- release installer: [`../scripts/install_one_touch_curl.sh`](../scripts/install_one_touch_curl.sh)
+- native packages: [`../packaging/deb/`](../packaging/deb/) and [`../packaging/rpm/`](../packaging/rpm/)
 
-Build MSI locally on Windows (WiX Toolset v6):
-- Install WiX Toolset v6 so `wix.exe` is available (e.g. `C:\Program Files\WiX Toolset v6.0\bin\wix.exe`).
-- The MSI template in `installer/windows/gov-pass.wxs.in` uses the WiX v3 schema for `wixl` compatibility.
-  WiX v6 builds WiX v4 sources, so you must convert the rendered `.wxs` before building.
+Service knobs exposed through env files:
 
-Example (PowerShell, repo root):
+- `GOV_PASS_QUEUE_NUM`
+- `GOV_PASS_MARK`
+- `GOV_PASS_ARGS`
 
-```powershell
-$version = "v0.1.3"
-$msiVersion = "0.1.3" # MSI wants X.Y.Z
+Operational defaults:
 
-$outDir = (Resolve-Path .\\dist\\release).Path
-$msiRootName = "gov-pass-msi-root-$version"
-$msiRoot = Join-Path $outDir $msiRootName
+- auto-manage NFQUEUE rules with `nft` or `iptables`
+- auto-disable GRO/GSO/TSO when needed
+- restore offload state on exit when the original state is known
 
-# 1) Stage MSI root (copy files that the MSI installs).
-New-Item -ItemType Directory -Force -Path $msiRoot | Out-Null
-# Copy your built EXEs + WinDivert files + .cmd shortcuts + LICENSE/docs/licenses into $msiRoot.
+## FreeBSD
 
-# 2) Render the WiX template.
-$tpl = Get-Content installer\\windows\\gov-pass.wxs.in -Raw
-$wxs = Join-Path $outDir "gov-pass-$version.wxs"
-$wxsV4 = Join-Path $outDir "gov-pass-$version.v4.wxs"
-$tpl = $tpl.Replace("{{VERSION}}", $msiVersion).Replace("{{SOURCE_DIR}}", $msiRootName)
-Set-Content -Encoding UTF8 -Path $wxs -Value $tpl
-Copy-Item -Force $wxs $wxsV4
+Packaging is intentionally minimal:
 
-# 3) Convert WiX v3 -> v4 and build.
-$wix = "C:\\Program Files\\WiX Toolset v6.0\\bin\\wix.exe"
-& $wix convert $wxsV4
-& $wix build $wxsV4 -arch x64 -b $outDir -out (Join-Path $outDir "gov-pass-$version-windows-amd64.msi")
-```
+- install `splitter`
+- optionally install `gov-pass-tui`
+- manage `pf` anchors outside the binary
 
-Note:
-- Local MSIs/EXEs are unsigned by default; see `docs/CODESIGNING.md` for signing in CI.
-
-## Linux packaging and operations (NFQUEUE)
-
-Default deployment layout:
-- `dist/splitter` (Linux CLI binary)
-- `dist/gov-pass-tui` (Linux TUI controller binary, optional)
-- `scripts/linux/*` (NFQUEUE rule helpers, test scripts)
-
-Build:
-```bash
-go build -o dist/splitter ./cmd/splitter
-make build-tui
-```
-
-Dependencies:
-- root or capabilities: `CAP_NET_ADMIN`, `CAP_NET_RAW`
-
-Install/Run (default, root):
-```bash
-sudo ./dist/splitter
-```
-
-By default the Linux binary will:
-- install NFQUEUE rules using nft or iptables
-- disable GRO/GSO/TSO on the egress interface (auto-detected)
-- by default, restore offload settings on exit when possible (`--auto-offload-restore=true`)
-
-Override defaults:
-- `--auto-rules=false` to manage rules manually
-- `--auto-offload=false` to skip offload changes
-- `--auto-offload-restore=false` to keep offload changes persistent after exit
-- `--iface <iface>` to override the auto-detected interface
-- `--auto-install-tools=false` to disable package-manager auto install of missing tools
-
-Note: auto rules/offload require root because they invoke `nft/iptables/ethtool`.
-If using `setcap`, disable the auto helpers and manage rules/offload manually.
-
-Manual rule install (optional):
-```bash
-sudo ./scripts/linux/install_nfqueue.sh --queue-num 100 --mark 1
-```
-
-Systemd template:
-- `scripts/linux/gov-pass.service` (edit paths as needed)
-  - defaults are set in the unit file
-  - optional override file: `/etc/default/gov-pass`
-    - `GOV_PASS_QUEUE_NUM=100`
-    - `GOV_PASS_MARK=1`
-    - `GOV_PASS_ARGS=` (optional extra flags, e.g. `--auto-offload=false`)
-
-Suggested installation:
-```bash
-sudo install -m 755 dist/splitter /opt/gov-pass/dist/splitter
-sudo install -m 755 scripts/linux/install_nfqueue.sh /opt/gov-pass/scripts/linux/install_nfqueue.sh
-sudo install -m 755 scripts/linux/uninstall_nfqueue.sh /opt/gov-pass/scripts/linux/uninstall_nfqueue.sh
-sudo install -m 644 scripts/linux/gov-pass.service /etc/systemd/system/gov-pass.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now gov-pass
-```
-
-Build/install as RPM (Fedora/RHEL family):
-```bash
-rpmbuild -ba packaging/rpm/gov-pass.spec
-sudo rpm -Uvh ~/rpmbuild/RPMS/x86_64/gov-pass-*.x86_64.rpm
-```
-
-Build/install as DEB (Debian/Ubuntu family):
-```bash
-./packaging/deb/build_deb.sh
-sudo dpkg -i dist/gov-pass_*_amd64.deb
-```
-
-Release tarball notes:
-- Git tag release Linux tarball includes both `splitter` and `gov-pass-tui`.
-- `gov-pass-tui` is terminal TUI; no desktop GUI host dependency is required.
-
-## Android packaging (Magisk, arm64)
-
-See `docs/DESIGN_ANDROID.md` for build and packaging details.
+Use [`pf/`](pf/) for anchor templates and [`DESIGN_BSD.md`](DESIGN_BSD.md) for
+the divert flow model.
