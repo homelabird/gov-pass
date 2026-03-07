@@ -128,6 +128,7 @@ Run `splitter --help` for the full flag list on the current platform.
 - [`docs/DESIGN.md`](docs/DESIGN.md): Windows design
 - [`docs/DESIGN_LINUX.md`](docs/DESIGN_LINUX.md): Linux design
 - [`docs/DESIGN_BSD.md`](docs/DESIGN_BSD.md): FreeBSD / pf design
+- [`docs/QUALITY_ASSESSMENT.md`](docs/QUALITY_ASSESSMENT.md): current project quality assessment
 
 ## Development
 

@@ -13,6 +13,7 @@ details, packaging, or maintenance work.
 - [`DESIGN.md`](DESIGN.md): Windows / WinDivert path
 - [`DESIGN_LINUX.md`](DESIGN_LINUX.md): Linux / NFQUEUE path
 - [`DESIGN_BSD.md`](DESIGN_BSD.md): FreeBSD / pf divert path
+- [`QUALITY_ASSESSMENT.md`](QUALITY_ASSESSMENT.md): overall project quality assessment
 - [`CODESIGNING.md`](CODESIGNING.md): Windows signing flow
 - [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md): shipped dependencies and licenses
 - [`THIRD_PARTY_SOURCES.md`](THIRD_PARTY_SOURCES.md): vendored source origins
