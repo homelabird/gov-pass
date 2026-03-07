@@ -85,6 +85,8 @@ go build -o dist\splitter.exe .\cmd\splitter
 
 `gov-pass-tui` is a terminal TUI for service control. It supports
 start/stop/restart and boot enable/disable on Linux, Windows, and FreeBSD.
+On Linux, the TUI also exposes detailed service status and recent journal logs
+for faster troubleshooting.
 
 Build:
 

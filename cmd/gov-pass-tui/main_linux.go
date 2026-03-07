@@ -14,6 +14,23 @@ import (
 
 const defaultServiceName = "gov-pass"
 
+var (
+	linuxIsServiceActive   = isServiceActive
+	linuxIsServiceEnabled  = isServiceEnabled
+	linuxServiceStatusText = serviceStatusText
+	linuxServiceStatusView = serviceStatusDetail
+	linuxServiceRecentLogs = serviceRecentLogs
+)
+
+type tuiSnapshot struct {
+	active     bool
+	activeErr  error
+	enabled    bool
+	enabledErr error
+	stateText  string
+	stateErr   error
+}
+
 func main() {
 	serviceName := flag.String("service-name", defaultServiceName, "systemd service name to control")
 	action := flag.String("action", "", "action mode: start|stop|restart|reload|enable|disable|toggle|status (runs and exits)")
@@ -53,7 +70,8 @@ func runTUI(serviceName string) error {
 
 func runWhiptailTUI(serviceName string) error {
 	for {
-		choice, canceled, err := whiptailMenu(serviceName, buildStatusSummary(serviceName))
+		snapshot := collectTUISnapshot(serviceName)
+		choice, canceled, err := whiptailMenu(serviceName, snapshot)
 		if err != nil {
 			return err
 		}
@@ -67,19 +85,26 @@ func runWhiptailTUI(serviceName string) error {
 			continue
 		}
 		if strings.TrimSpace(msg) != "" {
+			if isTextViewChoice(choice) {
+				_ = whiptailShowText("gov-pass", msg)
+				continue
+			}
 			_ = whiptailMessage("gov-pass", msg)
 		}
 	}
 }
 
-func whiptailMenu(serviceName, summary string) (choice string, canceled bool, err error) {
+func whiptailMenu(serviceName string, snapshot tuiSnapshot) (choice string, canceled bool, err error) {
 	args := []string{
 		"--title", "gov-pass control",
-		"--menu", summary,
-		"18", "88", "9",
-		"1", fmt.Sprintf("Start/Stop service (%s)", serviceName),
+		"--menu", buildStatusSummaryWithSnapshot(serviceName, snapshot),
+		"22", "100", "11",
+		"1", menuActionLabel(serviceName, snapshot),
 		"2", "Restart service",
-		"3", fmt.Sprintf("Enable/Disable boot start (%s)", serviceName),
+		"3", menuBootLabel(serviceName, snapshot),
+		"4", "Show detailed status",
+		"5", "Show recent logs",
+		"r", "Refresh",
 		"q", "Quit",
 		"--output-fd", "1",
 	}
@@ -151,13 +176,18 @@ func runPlainTUI(serviceName string) error {
 }
 
 func renderPlainTUI(serviceName, note string) {
+	snapshot := collectTUISnapshot(serviceName)
+
 	clearTerminalScreen()
 	fmt.Println("=== gov-pass TUI ===")
-	fmt.Println(buildStatusSummary(serviceName))
+	fmt.Println(buildStatusSummaryWithSnapshot(serviceName, snapshot))
 	fmt.Println()
-	fmt.Printf("1. Start/Stop service (%s)\n", serviceName)
+	fmt.Printf("1. %s\n", menuActionLabel(serviceName, snapshot))
 	fmt.Println("2. Restart service")
-	fmt.Printf("3. Enable/Disable boot start (%s)\n", serviceName)
+	fmt.Printf("3. %s\n", menuBootLabel(serviceName, snapshot))
+	fmt.Println("4. Show detailed status")
+	fmt.Println("5. Show recent logs")
+	fmt.Println("r. Refresh")
 	fmt.Println("q. Quit")
 	if strings.TrimSpace(note) != "" {
 		fmt.Println()
@@ -206,6 +236,24 @@ func executeMenuChoice(serviceName, choice string) (string, error) {
 			return "", err
 		}
 		return fmt.Sprintf("Boot start enabled: %s", serviceName), nil
+	case "4", "detail", "status-detail":
+		text, err := linuxServiceStatusView(serviceName)
+		if err != nil {
+			return "", err
+		}
+		if strings.TrimSpace(text) == "" {
+			return "No detailed status available.", nil
+		}
+		return text, nil
+	case "5", "logs", "recent-logs":
+		text, err := linuxServiceRecentLogs(serviceName, 40)
+		if err != nil {
+			return "", err
+		}
+		if strings.TrimSpace(text) == "" {
+			return "No recent logs available.", nil
+		}
+		return text, nil
 	case "r", "refresh":
 		return "", nil
 	default:
@@ -214,20 +262,20 @@ func executeMenuChoice(serviceName, choice string) (string, error) {
 }
 
 func buildStatusSummary(serviceName string) string {
-	active, activeErr := isServiceActive(serviceName)
-	stateText, stateErr := serviceStatusText(serviceName)
-	enabled, enabledErr := isServiceEnabled(serviceName)
+	return buildStatusSummaryWithSnapshot(serviceName, collectTUISnapshot(serviceName))
+}
 
+func buildStatusSummaryWithSnapshot(serviceName string, snapshot tuiSnapshot) string {
 	state := "unknown"
-	if stateText != "" {
-		state = stateText
+	if snapshot.stateText != "" {
+		state = snapshot.stateText
 	}
 	activeStr := "no"
-	if active {
+	if snapshot.active {
 		activeStr = "yes"
 	}
 	enabledStr := "no"
-	if enabled {
+	if snapshot.enabled {
 		enabledStr = "yes"
 	}
 
@@ -237,11 +285,55 @@ func buildStatusSummary(serviceName string) string {
 		fmt.Sprintf("Enabled at boot: %s", enabledStr),
 	}
 
-	if activeErr != nil || stateErr != nil || enabledErr != nil {
+	if snapshot.activeErr != nil || snapshot.stateErr != nil || snapshot.enabledErr != nil {
 		lines = append(lines, "Warning: some status checks failed.")
 	}
 
 	return strings.Join(lines, "\n")
+}
+
+func collectTUISnapshot(serviceName string) tuiSnapshot {
+	active, activeErr := linuxIsServiceActive(serviceName)
+	stateText, stateErr := linuxServiceStatusText(serviceName)
+	enabled, enabledErr := linuxIsServiceEnabled(serviceName)
+
+	return tuiSnapshot{
+		active:     active,
+		activeErr:  activeErr,
+		enabled:    enabled,
+		enabledErr: enabledErr,
+		stateText:  stateText,
+		stateErr:   stateErr,
+	}
+}
+
+func menuActionLabel(serviceName string, snapshot tuiSnapshot) string {
+	if snapshot.activeErr == nil {
+		if snapshot.active {
+			return fmt.Sprintf("Stop service (%s)", serviceName)
+		}
+		return fmt.Sprintf("Start service (%s)", serviceName)
+	}
+	return fmt.Sprintf("Start/Stop service (%s)", serviceName)
+}
+
+func menuBootLabel(serviceName string, snapshot tuiSnapshot) string {
+	if snapshot.enabledErr == nil {
+		if snapshot.enabled {
+			return fmt.Sprintf("Disable boot start (%s)", serviceName)
+		}
+		return fmt.Sprintf("Enable boot start (%s)", serviceName)
+	}
+	return fmt.Sprintf("Enable/Disable boot start (%s)", serviceName)
+}
+
+func isTextViewChoice(choice string) bool {
+	switch strings.ToLower(strings.TrimSpace(choice)) {
+	case "4", "detail", "status-detail", "5", "logs", "recent-logs":
+		return true
+	default:
+		return false
+	}
 }
 
 func runAction(serviceName string, action string) error {
