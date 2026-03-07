@@ -116,20 +116,24 @@ func (d *DivertAdapter) Drop(ctx context.Context, pkt *packet.Packet) error {
 }
 
 func (d *DivertAdapter) CalcChecksums(pkt *packet.Packet) error {
-	if pkt == nil || len(pkt.Data) < 20 {
+	if pkt == nil || len(pkt.Data) == 0 {
 		return nil
 	}
-	ipHeaderLen := int(pkt.Data[0]&0x0f) * 4
-	if ipHeaderLen < 20 || len(pkt.Data) < ipHeaderLen+20 {
+	if err := packet.DecodeTCP(pkt); err != nil {
 		return nil
 	}
-	packet.SetIPv4ChecksumZero(pkt.Data)
-	packet.SetTCPChecksumZero(pkt.Data, ipHeaderLen)
-
-	ipSum := packet.IPv4Checksum(pkt.Data, ipHeaderLen)
-	tcpSum := packet.TCPChecksumIPv4(pkt.Data, ipHeaderLen)
-	packet.SetIPv4Checksum(pkt.Data, ipSum)
-	packet.SetTCPChecksum(pkt.Data, ipHeaderLen, tcpSum)
+	packet.SetTCPChecksumZero(pkt.Data, pkt.Meta.IPHeaderLen)
+	switch pkt.Meta.IPVersion {
+	case packet.IPVersion4:
+		packet.SetIPv4ChecksumZero(pkt.Data)
+		ipSum := packet.IPv4Checksum(pkt.Data, pkt.Meta.IPHeaderLen)
+		tcpSum := packet.TCPChecksumIPv4(pkt.Data, pkt.Meta.IPHeaderLen)
+		packet.SetIPv4Checksum(pkt.Data, ipSum)
+		packet.SetTCPChecksum(pkt.Data, pkt.Meta.IPHeaderLen, tcpSum)
+	case packet.IPVersion6:
+		tcpSum := packet.TCPChecksumIPv6(pkt.Data, pkt.Meta.IPHeaderLen)
+		packet.SetTCPChecksum(pkt.Data, pkt.Meta.IPHeaderLen, tcpSum)
+	}
 	return nil
 }
 

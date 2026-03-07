@@ -3,6 +3,8 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -12,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"fk-gov/internal/driver"
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/mgr"
@@ -23,19 +26,31 @@ const (
 )
 
 func main() {
-	action := flag.String("action", "", "action: kill-tui|purge-programdata|stop-windivert|delete-windivert")
+	action := flag.String("action", "", "action: kill-tui|purge-programdata|stop-windivert|delete-windivert|verify-windivert")
+	driverDir := flag.String("windivert-dir", "", "directory containing WinDivert.dll/.sys (default: helper exe dir)")
+	driverSys := flag.String("windivert-sys", "", "driver sys filename (default: WinDivert64.sys or WinDivert.sys)")
+	serviceName := flag.String("service-name", winDivertSvcName, "WinDivert service name")
 	flag.Parse()
 
 	act := strings.ToLower(strings.TrimSpace(*action))
+	svcName := strings.TrimSpace(*serviceName)
+	if svcName == "" {
+		svcName = winDivertSvcName
+	}
 	switch act {
 	case "kill-tui":
 		_ = killTuiBestEffort()
 	case "purge-programdata":
 		_ = purgeProgramDataBestEffort()
 	case "stop-windivert":
-		_ = stopServiceBestEffort(winDivertSvcName, 10*time.Second)
+		_ = stopServiceBestEffort(svcName, 10*time.Second)
 	case "delete-windivert":
-		_ = deleteServiceBestEffort(winDivertSvcName)
+		_ = deleteServiceBestEffort(svcName)
+	case "verify-windivert":
+		if err := verifyWinDivert(strings.TrimSpace(*driverDir), strings.TrimSpace(*driverSys), svcName); err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "%v\n", err)
+			os.Exit(1)
+		}
 	default:
 		// MSI custom actions use Return="ignore", but keep a non-zero exit code
 		// for manual invocation/debugging.
@@ -126,5 +141,39 @@ func deleteServiceBestEffort(name string) error {
 	defer func() { _ = s.Close() }()
 
 	_ = s.Delete()
+	return nil
+}
+
+func verifyWinDivert(dir, sysName, serviceName string) error {
+	if dir == "" {
+		exe, err := os.Executable()
+		if err != nil {
+			return fmt.Errorf("resolve helper path failed: %w", err)
+		}
+		dir = filepath.Dir(exe)
+	}
+	report, err := driver.Inspect(context.Background(), driver.Config{
+		Dir:         dir,
+		SysName:     sysName,
+		ServiceName: serviceName,
+	})
+	if err != nil {
+		return fmt.Errorf("inspect WinDivert failed: %w", err)
+	}
+	if err := printReport(report); err != nil {
+		return err
+	}
+	if report.Healthy() {
+		return nil
+	}
+	return fmt.Errorf("WinDivert verification failed: %s", strings.Join(report.Issues(), "; "))
+}
+
+func printReport(report driver.Report) error {
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(report); err != nil {
+		return fmt.Errorf("encode report failed: %w", err)
+	}
 	return nil
 }

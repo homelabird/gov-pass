@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestNormalizeAction_Valid(t *testing.T) {
 	tests := []struct {
@@ -47,5 +50,27 @@ func TestActionGate(t *testing.T) {
 	g.end()
 	if !g.tryBegin() {
 		t.Fatal("tryBegin should succeed after end")
+	}
+}
+
+func TestNormalizeServiceName_Valid(t *testing.T) {
+	tests := []string{"gov-pass", "gov_pass", "gov.pass", "gov-pass@prod", "GovPass1"}
+	for _, in := range tests {
+		got, err := normalizeServiceName(in)
+		if err != nil {
+			t.Fatalf("normalizeServiceName(%q) unexpected error: %v", in, err)
+		}
+		if got != strings.TrimSpace(in) {
+			t.Fatalf("normalizeServiceName(%q) = %q", in, got)
+		}
+	}
+}
+
+func TestNormalizeServiceName_Invalid(t *testing.T) {
+	tests := []string{"", "  ", "-gov-pass", "gov pass", "gov/pass", "gov\npass"}
+	for _, in := range tests {
+		if _, err := normalizeServiceName(in); err == nil {
+			t.Fatalf("normalizeServiceName(%q) expected error", in)
+		}
 	}
 }

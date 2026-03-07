@@ -23,6 +23,11 @@ func main() {
 	if name == "" {
 		name = defaultServiceName
 	}
+	name, err := normalizeServiceName(name)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		os.Exit(1)
+	}
 
 	act := strings.ToLower(strings.TrimSpace(*action))
 	if act != "" {
@@ -154,6 +159,10 @@ func buildStatusSummary(serviceName string) string {
 }
 
 func runAction(serviceName string, action string) error {
+	serviceName, err := normalizeServiceName(serviceName)
+	if err != nil {
+		return err
+	}
 	normalized, err := normalizeAction(action)
 	if err != nil {
 		return err

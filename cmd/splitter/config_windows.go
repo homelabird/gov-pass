@@ -21,21 +21,22 @@ type windowsJSONConfig struct {
 }
 
 type engineJSONConfig struct {
-	SplitMode                   *string `json:"split_mode,omitempty"`
-	SplitChunk                  *int    `json:"split_chunk,omitempty"`
-	CollectTimeout              *string `json:"collect_timeout,omitempty"`
-	MaxBufferBytes              *int    `json:"max_buffer_bytes,omitempty"`
-	MaxHeldPackets              *int    `json:"max_held_packets,omitempty"`
-	MaxSegmentPayload           *int    `json:"max_segment_payload,omitempty"`
-	Workers                     *int    `json:"workers,omitempty"`
-	FlowIdleTimeout             *string `json:"flow_idle_timeout,omitempty"`
-	GCInterval                  *string `json:"gc_interval,omitempty"`
-	MaxFlowsPerWorker           *int    `json:"max_flows_per_worker,omitempty"`
-	MaxReassemblyBytesPerWorker *int    `json:"max_reassembly_bytes_per_worker,omitempty"`
-	MaxHeldBytesPerWorker       *int    `json:"max_held_bytes_per_worker,omitempty"`
-	ShutdownFailOpenTimeout     *string `json:"shutdown_fail_open_timeout,omitempty"`
-	ShutdownFailOpenMaxPackets  *int    `json:"shutdown_fail_open_max_packets,omitempty"`
-	AdapterFlushTimeout         *string `json:"adapter_flush_timeout,omitempty"`
+	SplitMode                   *string                  `json:"split_mode,omitempty"`
+	SplitChunk                  *int                     `json:"split_chunk,omitempty"`
+	CollectTimeout              *string                  `json:"collect_timeout,omitempty"`
+	MaxBufferBytes              *int                     `json:"max_buffer_bytes,omitempty"`
+	MaxHeldPackets              *int                     `json:"max_held_packets,omitempty"`
+	MaxSegmentPayload           *int                     `json:"max_segment_payload,omitempty"`
+	Workers                     *int                     `json:"workers,omitempty"`
+	FlowIdleTimeout             *string                  `json:"flow_idle_timeout,omitempty"`
+	GCInterval                  *string                  `json:"gc_interval,omitempty"`
+	MaxFlowsPerWorker           *int                     `json:"max_flows_per_worker,omitempty"`
+	MaxReassemblyBytesPerWorker *int                     `json:"max_reassembly_bytes_per_worker,omitempty"`
+	MaxHeldBytesPerWorker       *int                     `json:"max_held_bytes_per_worker,omitempty"`
+	ShutdownFailOpenTimeout     *string                  `json:"shutdown_fail_open_timeout,omitempty"`
+	ShutdownFailOpenMaxPackets  *int                     `json:"shutdown_fail_open_max_packets,omitempty"`
+	AdapterFlushTimeout         *string                  `json:"adapter_flush_timeout,omitempty"`
+	Policies                    []enginePolicyJSONConfig `json:"policies,omitempty"`
 }
 
 type winDivertJSONConfig struct {
@@ -50,18 +51,18 @@ type winDivertJSONConfig struct {
 }
 
 type windowsCLIArgs struct {
-	SplitMode      string
-	SplitChunk     int
-	CollectTimeout time.Duration
-	MaxBufferBytes int
-	MaxHeldPackets int
-	MaxSegPayload  int
-	Workers        int
-	FlowTimeout    time.Duration
-	GCInterval     time.Duration
-	MaxFlows       int
-	MaxReassembly  int
-	MaxHeldBytes   int
+	SplitMode                  string
+	SplitChunk                 int
+	CollectTimeout             time.Duration
+	MaxBufferBytes             int
+	MaxHeldPackets             int
+	MaxSegPayload              int
+	Workers                    int
+	FlowTimeout                time.Duration
+	GCInterval                 time.Duration
+	MaxFlows                   int
+	MaxReassembly              int
+	MaxHeldBytes               int
 	ShutdownFailOpenTimeout    time.Duration
 	ShutdownFailOpenMaxPackets int
 	AdapterFlushTimeout        time.Duration
@@ -209,11 +210,18 @@ func applyWindowsJSONConfig(dstEngine *engine.Config, dstWin *windowsRunConfig, 
 			}
 			dstEngine.AdapterFlushTimeout = d
 		}
+		if cfg.Engine.Policies != nil {
+			policies, err := parseEnginePolicies(cfg.Engine.Policies)
+			if err != nil {
+				return err
+			}
+			dstEngine.Policies = policies
+		}
 	}
 
 	if cfg.WinDivert != nil {
 		if cfg.WinDivert.Filter != nil && strings.TrimSpace(*cfg.WinDivert.Filter) != "" {
-			dstWin.Filter = *cfg.WinDivert.Filter
+			dstWin.Filter = upgradeLegacyWinDivertFilter(*cfg.WinDivert.Filter)
 		}
 		if cfg.WinDivert.QueueLen != nil {
 			dstWin.AdapterOpts.QueueLen = *cfg.WinDivert.QueueLen
@@ -336,6 +344,9 @@ func validateEngineConfig(cfg engine.Config) error {
 	}
 	if cfg.AdapterFlushTimeout < 0 {
 		return errors.New("adapter-flush-timeout must be >= 0")
+	}
+	if err := engine.ValidateConfig(cfg); err != nil {
+		return err
 	}
 	return nil
 }

@@ -27,3 +27,9 @@ func TestRunAction_ValidActions(t *testing.T) {
 		}
 	}
 }
+
+func TestRunAction_InvalidServiceName(t *testing.T) {
+	if err := runAction("gov pass", "status"); err == nil {
+		t.Fatal("expected invalid service name error")
+	}
+}

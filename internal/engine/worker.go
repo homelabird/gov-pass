@@ -10,6 +10,7 @@ import (
 	"fk-gov/internal/flow"
 	"fk-gov/internal/packet"
 	"fk-gov/internal/reassembly"
+	"fk-gov/internal/safecast"
 	"fk-gov/internal/tls"
 )
 
@@ -55,7 +56,7 @@ func newWorker(id int, cfg Config, ad adapter.Adapter) *worker {
 		touch:   make(chan flow.Key, cfg.WorkerQueueSize),
 		flows:   flow.NewTable(),
 	}
-	cfgCopy := cfg
+	cfgCopy := cloneConfig(cfg)
 	w.cfg.Store(&cfgCopy)
 	return w
 }
@@ -82,7 +83,7 @@ func (w *worker) touchFlow(key flow.Key) {
 }
 
 func (w *worker) setConfig(cfg Config) {
-	cfgCopy := cfg
+	cfgCopy := cloneConfig(cfg)
 	w.cfg.Store(&cfgCopy)
 }
 
@@ -144,6 +145,7 @@ func (w *worker) handlePacket(ctx context.Context, pkt *packet.Packet) error {
 	payload := pkt.Payload()
 	if st, ok := w.flows.Get(key); ok {
 		st.LastActive = now
+		plan, resolved := w.resolveFlowPlan(st, pkt.Meta, nil, *cfg)
 
 		// FIN/RST often have no payload; ensure they still clean up flow state
 		// promptly even when payloadless packets are fast-pathed.
@@ -166,10 +168,23 @@ func (w *worker) handlePacket(ctx context.Context, pkt *packet.Packet) error {
 		if len(payload) == 0 {
 			return w.adapter.Send(ctx, pkt)
 		}
+		if resolved && plan.Skip {
+			if st.State == flow.StateCollecting && len(st.HeldPackets) > 0 {
+				if err := w.failOpen(ctx, key, st); err != nil {
+					return err
+				}
+			}
+			st.State = flow.StatePassThrough
+			return w.adapter.Send(ctx, pkt)
+		}
 
 		if st.State == flow.StateNew {
+			maxBufferBytes, ok := safecast.IntToUint32(cfg.MaxBufferBytes)
+			if !ok {
+				return errors.New("max-buffer exceeds uint32")
+			}
 			st.BaseSeq = pkt.Meta.Seq
-			st.Reassembler = reassembly.New(st.BaseSeq, uint32(cfg.MaxBufferBytes))
+			st.Reassembler = reassembly.New(st.BaseSeq, maxBufferBytes)
 			st.State = flow.StateCollecting
 			st.CollectStart = now
 			st.FirstPayloadLen = len(payload)
@@ -233,11 +248,15 @@ func (w *worker) handlePacket(ctx context.Context, pkt *packet.Packet) error {
 			return nil
 		}
 
-		if cfg.SplitMode == SplitModeImmediate {
+		if !resolved {
+			return w.trySplitTLSHello(ctx, key, st)
+		}
+
+		if plan.SplitMode == SplitModeImmediate {
 			return w.trySplitImmediate(ctx, key, st)
 		}
 
-		if cfg.SplitMode == SplitModeTLSHello {
+		if plan.SplitMode == SplitModeTLSHello {
 			return w.trySplitTLSHello(ctx, key, st)
 		}
 
@@ -251,6 +270,15 @@ func (w *worker) handlePacket(ctx context.Context, pkt *packet.Packet) error {
 
 	// DoS guard: bound the number of tracked flows per worker.
 	if cfg.MaxFlowsPerWorker > 0 && w.flows.Len() >= cfg.MaxFlowsPerWorker {
+		return w.adapter.Send(ctx, pkt)
+	}
+
+	plan, resolved := cfg.resolvePlan(pkt.Meta, nil)
+	if resolved && plan.Skip {
+		st := w.flows.GetOrCreate(key, now)
+		st.LastActive = now
+		w.storeFlowPlan(st, plan)
+		st.State = flow.StatePassThrough
 		return w.adapter.Send(ctx, pkt)
 	}
 
@@ -272,10 +300,17 @@ func (w *worker) handlePacket(ctx context.Context, pkt *packet.Packet) error {
 
 	st := w.flows.GetOrCreate(key, now)
 	st.LastActive = now
+	if resolved {
+		w.storeFlowPlan(st, plan)
+	}
 
 	if st.State == flow.StateNew {
+		maxBufferBytes, ok := safecast.IntToUint32(cfg.MaxBufferBytes)
+		if !ok {
+			return errors.New("max-buffer exceeds uint32")
+		}
 		st.BaseSeq = pkt.Meta.Seq
-		st.Reassembler = reassembly.New(st.BaseSeq, uint32(cfg.MaxBufferBytes))
+		st.Reassembler = reassembly.New(st.BaseSeq, maxBufferBytes)
 		st.State = flow.StateCollecting
 		st.CollectStart = now
 		st.FirstPayloadLen = len(payload)
@@ -334,11 +369,15 @@ func (w *worker) handlePacket(ctx context.Context, pkt *packet.Packet) error {
 		return nil
 	}
 
-	if cfg.SplitMode == SplitModeImmediate {
+	if !resolved {
+		return w.trySplitTLSHello(ctx, key, st)
+	}
+
+	if plan.SplitMode == SplitModeImmediate {
 		return w.trySplitImmediate(ctx, key, st)
 	}
 
-	if cfg.SplitMode == SplitModeTLSHello {
+	if plan.SplitMode == SplitModeTLSHello {
 		return w.trySplitTLSHello(ctx, key, st)
 	}
 
@@ -385,6 +424,23 @@ func (w *worker) trySplitTLSHello(ctx context.Context, key flow.Key, st *flow.Fl
 		return nil
 	}
 
+	info, result := tls.ParseClientHello(contig[:need])
+	if result == tls.ResultNeedMore {
+		return nil
+	}
+	if result == tls.ResultMismatch {
+		return w.failOpen(ctx, key, st)
+	}
+	plan, resolved := w.resolveFlowPlan(st, tplMeta(st), &info, *cfg)
+	if !resolved {
+		return nil
+	}
+	if plan.Skip {
+		return w.failOpen(ctx, key, st)
+	}
+	if plan.SplitMode == SplitModeImmediate {
+		return w.trySplitImmediate(ctx, key, st)
+	}
 	return w.injectWindow(ctx, key, st, need)
 }
 
@@ -392,6 +448,10 @@ func (w *worker) injectWindow(ctx context.Context, key flow.Key, st *flow.FlowSt
 	cfg := w.cfg.Load()
 	if cfg == nil {
 		return errors.New("worker config is nil")
+	}
+	plan, resolved := w.resolveFlowPlan(st, tplMeta(st), nil, *cfg)
+	if !resolved {
+		return w.failOpen(ctx, key, st)
 	}
 
 	if windowLen < 1 {
@@ -405,9 +465,15 @@ func (w *worker) injectWindow(ctx context.Context, key flow.Key, st *flow.FlowSt
 	if tpl == nil {
 		return w.failOpen(ctx, key, st)
 	}
+	// Short-term safety guard: Linux IPv6 raw reinjection cannot preserve
+	// extension headers yet, so bypass splitting rather than emitting a
+	// semantically different packet.
+	if shouldFailOpenIPv6ExtensionHeaders(tpl) {
+		return w.failOpen(ctx, key, st)
+	}
 	maxPayload := len(tpl.Payload())
 	headerLen := tpl.Meta.IPHeaderLen + tpl.Meta.TCPHeaderLen
-	maxPayload = clampSegmentPayload(maxPayload, headerLen, cfg.MaxSegmentPayload)
+	maxPayload = clampSegmentPayload(maxPayload, headerLen, plan.MaxSegmentPayload)
 	if maxPayload < 1 {
 		return w.failOpen(ctx, key, st)
 	}
@@ -415,7 +481,7 @@ func (w *worker) injectWindow(ctx context.Context, key flow.Key, st *flow.FlowSt
 	window := contig[:windowLen]
 	remainder := contig[windowLen:]
 
-	splitSegs := splitFirst(window, cfg.SplitChunk, maxPayload)
+	splitSegs := splitFirst(window, plan.SplitChunk, maxPayload)
 	if len(splitSegs) < 2 {
 		return w.failOpen(ctx, key, st)
 	}
@@ -427,19 +493,27 @@ func (w *worker) injectWindow(ctx context.Context, key flow.Key, st *flow.FlowSt
 		splitLastFlags = flagsNoPshFin
 	}
 
-	ipid := packet.IPv4ID(tpl.Data)
-	if err := w.sendSegments(ctx, tpl, st.BaseSeq, splitSegs, flagsNoPshFin, splitLastFlags, &ipid); err != nil {
+	var ipid *uint16
+	if tpl.Meta.IPVersion == packet.IPVersion4 {
+		nextID := packet.IPv4ID(tpl.Data)
+		ipid = &nextID
+	}
+	if err := w.sendSegments(ctx, tpl, st.BaseSeq, splitSegs, flagsNoPshFin, splitLastFlags, ipid); err != nil {
 		return w.failOpen(ctx, key, st)
 	}
 
 	if len(remainder) > 0 {
+		windowLen32, ok := safecast.IntToUint32(windowLen)
+		if !ok {
+			return w.failOpen(ctx, key, st)
+		}
 		if w.canTrimRemainder(st) {
-			if err := w.reinjectTrimmed(ctx, st, uint32(windowLen), &ipid); err != nil {
+			if err := w.reinjectTrimmed(ctx, st, windowLen32, ipid); err != nil {
 				return w.failOpen(ctx, key, st)
 			}
 		} else {
 			remSegs := chunkPayload(remainder, maxPayload)
-			if err := w.sendSegments(ctx, tpl, st.BaseSeq+uint32(windowLen), remSegs, flagsNoPshFin, flags, &ipid); err != nil {
+			if err := w.sendSegments(ctx, tpl, st.BaseSeq+windowLen32, remSegs, flagsNoPshFin, flags, ipid); err != nil {
 				return w.failOpen(ctx, key, st)
 			}
 		}
@@ -455,6 +529,40 @@ func (w *worker) injectWindow(ctx context.Context, key flow.Key, st *flow.FlowSt
 	return nil
 }
 
+func (w *worker) resolveFlowPlan(st *flow.FlowState, meta packet.Meta, hello *tls.ClientHelloInfo, cfg Config) (flowPlan, bool) {
+	if st != nil && st.PolicyResolved {
+		return flowPlan{
+			Skip:              st.PolicySkip,
+			SplitMode:         SplitMode(st.SplitModeValue),
+			SplitChunk:        st.SplitChunk,
+			MaxSegmentPayload: st.MaxSegmentPayload,
+		}, true
+	}
+	plan, resolved := cfg.resolvePlan(meta, hello)
+	if resolved {
+		w.storeFlowPlan(st, plan)
+	}
+	return plan, resolved
+}
+
+func (w *worker) storeFlowPlan(st *flow.FlowState, plan flowPlan) {
+	if st == nil {
+		return
+	}
+	st.PolicyResolved = true
+	st.PolicySkip = plan.Skip
+	st.SplitModeValue = uint8(plan.SplitMode)
+	st.SplitChunk = plan.SplitChunk
+	st.MaxSegmentPayload = plan.MaxSegmentPayload
+}
+
+func tplMeta(st *flow.FlowState) packet.Meta {
+	if st == nil || st.Template == nil {
+		return packet.Meta{}
+	}
+	return st.Template.Meta
+}
+
 func (w *worker) sendSegments(ctx context.Context, tpl *packet.Packet, baseSeq uint32, segments [][]byte, flags uint8, lastFlags uint8, ipid *uint16) error {
 	offset := 0
 	for i, segPayload := range segments {
@@ -465,7 +573,11 @@ func (w *worker) sendSegments(ctx context.Context, tpl *packet.Packet, baseSeq u
 		if i == len(segments)-1 {
 			segFlags = lastFlags
 		}
-		newPkt, err := buildPacket(tpl, baseSeq+uint32(offset), segPayload, segFlags, ipid)
+		offset32, ok := safecast.IntToUint32(offset)
+		if !ok {
+			return errors.New("segment offset exceeds uint32")
+		}
+		newPkt, err := buildPacket(tpl, baseSeq+offset32, segPayload, segFlags, ipid)
 		if err != nil {
 			return err
 		}
@@ -494,23 +606,48 @@ func buildPacket(tpl *packet.Packet, seq uint32, payload []byte, flags uint8, ip
 	buf := make([]byte, headerLen+len(payload))
 	copy(buf, tpl.Data[:headerLen])
 
-	packet.SetIPv4TotalLength(buf, uint16(len(buf)))
-	if ipid != nil {
-		packet.SetIPv4ID(buf, *ipid)
-		*ipid++
+	switch tpl.Meta.IPVersion {
+	case packet.IPVersion4:
+		totalLen, ok := safecast.IntToUint16(len(buf))
+		if !ok {
+			return nil, errors.New("ipv4 packet exceeds 65535 bytes")
+		}
+		packet.SetIPv4TotalLength(buf, totalLen)
+		if ipid != nil {
+			packet.SetIPv4ID(buf, *ipid)
+			*ipid = *ipid + 1
+		}
+	case packet.IPVersion6:
+		payloadLen, ok := safecast.IntToUint16(len(buf) - 40)
+		if !ok {
+			return nil, errors.New("ipv6 payload exceeds 65535 bytes")
+		}
+		packet.SetIPv6PayloadLength(buf, payloadLen)
+	default:
+		return nil, errors.New("unsupported ip version")
 	}
 	packet.SetTCPSeq(buf, ipHeaderLen, seq)
 	packet.SetTCPFlags(buf, ipHeaderLen, flags)
 
 	copy(buf[headerLen:], payload)
-	packet.SetIPv4ChecksumZero(buf)
 	packet.SetTCPChecksumZero(buf, ipHeaderLen)
+	if tpl.Meta.IPVersion == packet.IPVersion4 {
+		packet.SetIPv4ChecksumZero(buf)
+	}
 
 	return &packet.Packet{
-		Data:   buf,
-		Addr:   tpl.Addr,
-		Source: packet.SourceInjected,
+		Data:    buf,
+		Addr:    tpl.Addr,
+		Source:  packet.SourceInjected,
+		IfIndex: tpl.IfIndex,
 	}, nil
+}
+
+func shouldFailOpenIPv6ExtensionHeaders(pkt *packet.Packet) bool {
+	if pkt == nil {
+		return false
+	}
+	return pkt.Meta.IPVersion == packet.IPVersion6 && pkt.Meta.IPHeaderLen > 40
 }
 
 func (w *worker) canTrimRemainder(st *flow.FlowState) bool {
@@ -527,7 +664,11 @@ func (w *worker) reinjectTrimmed(ctx context.Context, st *flow.FlowState, window
 			continue
 		}
 		offset := pkt.Meta.Seq - st.BaseSeq
-		end := offset + uint32(len(payload))
+		payloadLen, ok := safecast.IntToUint32(len(payload))
+		if !ok {
+			return errors.New("payload exceeds uint32")
+		}
+		end := offset + payloadLen
 		if end <= windowLen {
 			continue
 		}
@@ -536,7 +677,7 @@ func (w *worker) reinjectTrimmed(ctx context.Context, st *flow.FlowState, window
 		if offset < windowLen {
 			trim = windowLen - offset
 		}
-		if trim >= uint32(len(payload)) {
+		if trim >= payloadLen {
 			continue
 		}
 

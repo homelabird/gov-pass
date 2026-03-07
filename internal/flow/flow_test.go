@@ -9,14 +9,15 @@ import (
 
 func TestKeyFromMeta(t *testing.T) {
 	meta := packet.Meta{
-		SrcIP:   [4]byte{10, 0, 0, 2},
-		DstIP:   [4]byte{1, 1, 1, 1},
-		SrcPort: 54321,
-		DstPort: 443,
-		Proto:   6,
+		IPVersion: packet.IPVersion4,
+		SrcIP:     v4Bytes(10, 0, 0, 2),
+		DstIP:     v4Bytes(1, 1, 1, 1),
+		SrcPort:   54321,
+		DstPort:   443,
+		Proto:     6,
 	}
 	key := KeyFromMeta(meta)
-	if key.SrcIP != meta.SrcIP || key.DstIP != meta.DstIP {
+	if key.IPVersion != meta.IPVersion || key.SrcIP != meta.SrcIP || key.DstIP != meta.DstIP {
 		t.Fatalf("ip mismatch: got %+v", key)
 	}
 	if key.SrcPort != meta.SrcPort || key.DstPort != meta.DstPort || key.Proto != meta.Proto {
@@ -27,7 +28,7 @@ func TestKeyFromMeta(t *testing.T) {
 func TestTableGetOrCreateAndDelete(t *testing.T) {
 	tbl := NewTable()
 	now := time.Now()
-	key := Key{SrcIP: [4]byte{1, 2, 3, 4}, DstIP: [4]byte{8, 8, 8, 8}, SrcPort: 1234, DstPort: 443, Proto: 6}
+	key := Key{IPVersion: packet.IPVersion4, SrcIP: v4Bytes(1, 2, 3, 4), DstIP: v4Bytes(8, 8, 8, 8), SrcPort: 1234, DstPort: 443, Proto: 6}
 
 	st := tbl.GetOrCreate(key, now)
 	if st.State != StateNew {
@@ -65,8 +66,8 @@ func TestTableGetOrCreateAndDelete(t *testing.T) {
 func TestTableRange(t *testing.T) {
 	tbl := NewTable()
 	now := time.Now()
-	k1 := Key{SrcIP: [4]byte{10, 0, 0, 1}, DstIP: [4]byte{1, 1, 1, 1}, SrcPort: 1000, DstPort: 443, Proto: 6}
-	k2 := Key{SrcIP: [4]byte{10, 0, 0, 2}, DstIP: [4]byte{1, 1, 1, 1}, SrcPort: 1001, DstPort: 443, Proto: 6}
+	k1 := Key{IPVersion: packet.IPVersion4, SrcIP: v4Bytes(10, 0, 0, 1), DstIP: v4Bytes(1, 1, 1, 1), SrcPort: 1000, DstPort: 443, Proto: 6}
+	k2 := Key{IPVersion: packet.IPVersion4, SrcIP: v4Bytes(10, 0, 0, 2), DstIP: v4Bytes(1, 1, 1, 1), SrcPort: 1001, DstPort: 443, Proto: 6}
 	tbl.GetOrCreate(k1, now)
 	tbl.GetOrCreate(k2, now)
 
@@ -85,7 +86,7 @@ func TestTableRange(t *testing.T) {
 
 func TestSharderIndex(t *testing.T) {
 	s := NewSharder(8)
-	key := Key{SrcIP: [4]byte{10, 1, 1, 1}, DstIP: [4]byte{8, 8, 8, 8}, SrcPort: 2345, DstPort: 443, Proto: 6}
+	key := Key{IPVersion: packet.IPVersion4, SrcIP: v4Bytes(10, 1, 1, 1), DstIP: v4Bytes(8, 8, 8, 8), SrcPort: 2345, DstPort: 443, Proto: 6}
 
 	i1 := s.Index(key)
 	i2 := s.Index(key)
@@ -102,4 +103,8 @@ func TestNewSharderMinimumWorkers(t *testing.T) {
 	if s.Workers() != 1 {
 		t.Fatalf("workers must clamp to 1, got %d", s.Workers())
 	}
+}
+
+func v4Bytes(a, b, c, d byte) [16]byte {
+	return [16]byte{a, b, c, d}
 }

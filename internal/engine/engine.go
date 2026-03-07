@@ -20,6 +20,7 @@ type Engine struct {
 }
 
 func New(cfg Config, ad adapter.Adapter) *Engine {
+	cfg = cloneConfig(cfg)
 	sharder := flow.NewSharder(cfg.WorkerCount)
 	workers := make([]*worker, sharder.Workers())
 	for i := range workers {
@@ -37,6 +38,9 @@ func New(cfg Config, ad adapter.Adapter) *Engine {
 // processing. Only settings that do not change the sharding/queue topology are
 // supported; otherwise a full restart is required.
 func (e *Engine) Reload(cfg Config) error {
+	if err := ValidateConfig(cfg); err != nil {
+		return err
+	}
 	if cfg.WorkerCount != len(e.workers) {
 		return fmt.Errorf("reload requires restart: workers %d -> %d", len(e.workers), cfg.WorkerCount)
 	}
@@ -47,9 +51,9 @@ func (e *Engine) Reload(cfg Config) error {
 			}
 		}
 	}
-	e.cfg = cfg
+	e.cfg = cloneConfig(cfg)
 	for _, w := range e.workers {
-		w.setConfig(cfg)
+		w.setConfig(e.cfg)
 	}
 	return nil
 }
@@ -177,7 +181,7 @@ func (e *Engine) recvLoop(ctx context.Context) error {
 			continue
 		}
 
-		if err := packet.DecodeIPv4TCP(pkt); err != nil {
+		if err := packet.DecodeTCP(pkt); err != nil {
 			if sendErr := e.adapter.Send(ctx, pkt); sendErr != nil {
 				return sendErr
 			}

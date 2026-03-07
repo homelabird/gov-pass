@@ -21,6 +21,14 @@ func TestTCPChecksumIPv4(t *testing.T) {
 	}
 }
 
+func TestTCPChecksumIPv6(t *testing.T) {
+	pkt := testIPv6TCPPacket()
+	sum := TCPChecksumIPv6(pkt, 40)
+	if sum != 0x2383 {
+		t.Fatalf("unexpected tcp checksum: got 0x%04x", sum)
+	}
+}
+
 func testIPv4TCPPacket() []byte {
 	buf := make([]byte, 40)
 	buf[0] = 0x45

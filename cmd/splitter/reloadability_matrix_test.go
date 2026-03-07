@@ -11,6 +11,7 @@ func TestWindowsReloadabilityMatrix_HasExpectedEntries(t *testing.T) {
 	}
 
 	mustContain(t, windowsReloadableSettings, "engine.split_mode")
+	mustContain(t, windowsReloadableSettings, "engine.policies")
 	mustContain(t, windowsReloadableSettings, "windivert.queue_len (non-zero values)")
 	mustContain(t, windowsRestartRequiredSettings, "windivert.filter")
 	mustContain(t, windowsRestartRequiredSettings, "windivert.queue_len=0 (revert to driver default)")
@@ -37,4 +38,3 @@ func mustContain(t *testing.T, items []string, want string) {
 	}
 	t.Fatalf("missing %q in %v", want, items)
 }
-
