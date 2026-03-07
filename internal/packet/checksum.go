@@ -1,11 +1,13 @@
 package packet
 
-import "encoding/binary"
+import (
+	"encoding/binary"
+
+	"fk-gov/internal/safecast"
+)
 
 func Checksum(data []byte) uint16 {
-	sum := checksumSum(data)
-	sum = foldChecksum(sum)
-	return ^uint16(sum)
+	return finalizeChecksum(checksumSum(data))
 }
 
 func IPv4Checksum(data []byte, headerLen int) uint16 {
@@ -34,11 +36,47 @@ func TCPChecksumIPv4(data []byte, headerLen int) uint16 {
 	sum += uint32(binary.BigEndian.Uint16(data[16:18]))
 	sum += uint32(binary.BigEndian.Uint16(data[18:20]))
 	sum += uint32(data[9])
-	sum += uint32(tcpLen)
+	tcpLen32, ok := safecast.IntToUint32(tcpLen)
+	if !ok {
+		return 0
+	}
+	sum += tcpLen32
 
 	sum += checksumSum(data[headerLen : headerLen+tcpLen])
-	sum = foldChecksum(sum)
-	return ^uint16(sum)
+	return finalizeChecksum(sum)
+}
+
+func TCPChecksumIPv6(data []byte, headerLen int) uint16 {
+	if headerLen < 40 || len(data) < headerLen+20 {
+		return 0
+	}
+	payloadLen := int(binary.BigEndian.Uint16(data[4:6]))
+	totalLen := 40 + payloadLen
+	if payloadLen <= 0 || totalLen > len(data) {
+		totalLen = len(data)
+	}
+	tcpLen := totalLen - headerLen
+	if tcpLen < 0 || headerLen+tcpLen > len(data) {
+		return 0
+	}
+
+	sum := uint32(0)
+	for i := 8; i < 24; i += 2 {
+		sum += uint32(binary.BigEndian.Uint16(data[i : i+2]))
+	}
+	for i := 24; i < 40; i += 2 {
+		sum += uint32(binary.BigEndian.Uint16(data[i : i+2]))
+	}
+	tcpLen32, ok := safecast.IntToUint32(tcpLen)
+	if !ok {
+		return 0
+	}
+	sum += tcpLen32 >> 16
+	sum += tcpLen32 & 0xffff
+	sum += uint32(protoTCP)
+
+	sum += checksumSum(data[headerLen : headerLen+tcpLen])
+	return finalizeChecksum(sum)
 }
 
 func checksumSum(data []byte) uint32 {
@@ -58,4 +96,13 @@ func foldChecksum(sum uint32) uint32 {
 		sum = (sum & 0xffff) + (sum >> 16)
 	}
 	return sum
+}
+
+func finalizeChecksum(sum uint32) uint16 {
+	sum = foldChecksum(sum)
+	folded, ok := safecast.Uint32ToUint16(sum)
+	if !ok {
+		return 0
+	}
+	return ^folded
 }

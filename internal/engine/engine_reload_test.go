@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"net/netip"
 	"testing"
 
 	"fk-gov/internal/adapter"
@@ -44,6 +45,10 @@ func TestEngineReload_UpdatesWorkerConfig(t *testing.T) {
 	next.SplitChunk = cfg.SplitChunk + 1
 	next.MaxFlowsPerWorker = cfg.MaxFlowsPerWorker + 1
 	next.MaxHeldPackets = cfg.MaxHeldPackets + 1
+	next.Policies = []Policy{{
+		DstPrefixes: []netip.Prefix{netip.MustParsePrefix("1.1.1.0/24")},
+		Skip:        true,
+	}}
 
 	if err := eng.Reload(next); err != nil {
 		t.Fatalf("reload failed: %v", err)
@@ -65,6 +70,27 @@ func TestEngineReload_UpdatesWorkerConfig(t *testing.T) {
 		if wcfg.MaxHeldPackets != next.MaxHeldPackets {
 			t.Fatalf("worker %d MaxHeldPackets: got %d want %d", i, wcfg.MaxHeldPackets, next.MaxHeldPackets)
 		}
+		if len(wcfg.Policies) != 1 || !wcfg.Policies[0].Skip {
+			t.Fatalf("worker %d Policies not updated: %+v", i, wcfg.Policies)
+		}
 	}
 }
 
+func TestEngineReload_RejectsSNIPolicyWithEffectiveImmediateMode(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.WorkerCount = 2
+
+	eng := New(cfg, adapter.NewStub())
+
+	next := cfg
+	next.SplitMode = SplitModeImmediate
+	next.Policies = []Policy{{
+		SNISuffixes:   []string{"example.com"},
+		HasSplitChunk: true,
+		SplitChunk:    9,
+	}}
+
+	if err := eng.Reload(next); err == nil {
+		t.Fatal("expected reload to fail")
+	}
+}

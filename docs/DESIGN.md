@@ -13,7 +13,7 @@ cleaned up promptly.
 
 ## Platform Defaults
 
-- filter: `outbound and ip and tcp.DstPort == 443`
+- filter: `outbound and (ip or ipv6) and tcp.DstPort == 443`
 - split mode: `tls-hello`
 - split chunk: `5`
 - queue length, time, and size are tuned for low-latency interception

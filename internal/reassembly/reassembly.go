@@ -3,6 +3,8 @@ package reassembly
 import (
 	"errors"
 	"sort"
+
+	"fk-gov/internal/safecast"
 )
 
 var ErrBufferFull = errors.New("reassembly buffer full")
@@ -14,7 +16,11 @@ type segment struct {
 }
 
 func (s segment) end() uint32 {
-	return s.offset + uint32(len(s.data))
+	segLen, ok := safecast.IntToUint32(len(s.data))
+	if !ok {
+		return s.offset
+	}
+	return s.offset + segLen
 }
 
 // Buffer reassembles TCP payload into a contiguous prefix from baseSeq.
@@ -53,7 +59,10 @@ func (b *Buffer) Push(seq uint32, payload []byte) error {
 	}
 
 	contigLen := b.contigLen
-	plen := uint32(len(payload))
+	plen, ok := safecast.IntToUint32(len(payload))
+	if !ok {
+		return ErrBufferFull
+	}
 	end := offset + plen
 	if end < offset {
 		// uint32 overflow: fragment extends beyond address space.
@@ -67,7 +76,10 @@ func (b *Buffer) Push(seq uint32, payload []byte) error {
 		payload = payload[trim:]
 		offset = contigLen
 		b.hadOverlap = true
-		plen = uint32(len(payload))
+		plen, ok = safecast.IntToUint32(len(payload))
+		if !ok {
+			return ErrBufferFull
+		}
 		end = offset + plen
 		if end < offset {
 			return ErrBufferFull
@@ -85,12 +97,12 @@ func (b *Buffer) Push(seq uint32, payload []byte) error {
 	}
 
 	if offset == contigLen && len(b.segments) == 0 {
-		if b.totalBytes+uint32(len(payload)) > b.maxBytes {
+		if b.totalBytes+plen > b.maxBytes {
 			return ErrBufferFull
 		}
 		b.contig = append(b.contig, payload...)
-		b.contigLen += uint32(len(payload))
-		b.totalBytes += uint32(len(payload))
+		b.contigLen += plen
+		b.totalBytes += plen
 		return nil
 	}
 
@@ -132,7 +144,11 @@ func (b *Buffer) Push(seq uint32, payload []byte) error {
 
 	var overlapBytes uint32
 	for j := left; j < right; j++ {
-		overlapBytes += uint32(len(segs[j].data))
+		segLen, ok := safecast.IntToUint32(len(segs[j].data))
+		if !ok {
+			return ErrBufferFull
+		}
+		overlapBytes += segLen
 	}
 
 	mergedLen := newEnd - newStart
@@ -160,7 +176,12 @@ func (b *Buffer) compact() {
 	for len(b.segments) > 0 && b.segments[0].offset == b.contigLen {
 		seg := b.segments[0]
 		b.contig = append(b.contig, seg.data...)
-		b.contigLen += uint32(len(seg.data))
+		segLen, ok := safecast.IntToUint32(len(seg.data))
+		if !ok {
+			b.contigLen = b.maxBytes
+		} else {
+			b.contigLen += segLen
+		}
 		b.segments = b.segments[1:]
 	}
 }

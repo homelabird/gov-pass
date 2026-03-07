@@ -26,7 +26,6 @@ const (
 	defaultQueueSize            uint64 = 32 * 1024 * 1024
 	defaultWinDivertServiceName        = "WinDivert"
 	defaultAppServiceName              = "gov-pass"
-	defaultWinDivertFilter             = "outbound and ip and tcp.DstPort == 443"
 )
 
 func main() {
@@ -86,18 +85,18 @@ func run() error {
 	}
 
 	args := windowsCLIArgs{
-		SplitMode:      *splitMode,
-		SplitChunk:     *splitChunk,
-		CollectTimeout: *collectTimeout,
-		MaxBufferBytes: *maxBuffer,
-		MaxHeldPackets: *maxHeld,
-		MaxSegPayload:  *maxSegPayload,
-		Workers:        *workers,
-		FlowTimeout:    *flowTimeout,
-		GCInterval:     *gcInterval,
-		MaxFlows:       *maxFlows,
-		MaxReassembly:  *maxReassembly,
-		MaxHeldBytes:   *maxHeldBytes,
+		SplitMode:                  *splitMode,
+		SplitChunk:                 *splitChunk,
+		CollectTimeout:             *collectTimeout,
+		MaxBufferBytes:             *maxBuffer,
+		MaxHeldPackets:             *maxHeld,
+		MaxSegPayload:              *maxSegPayload,
+		Workers:                    *workers,
+		FlowTimeout:                *flowTimeout,
+		GCInterval:                 *gcInterval,
+		MaxFlows:                   *maxFlows,
+		MaxReassembly:              *maxReassembly,
+		MaxHeldBytes:               *maxHeldBytes,
 		ShutdownFailOpenTimeout:    *shutdownFailOpenTimeout,
 		ShutdownFailOpenMaxPackets: *shutdownFailOpenMaxPkts,
 		AdapterFlushTimeout:        *adapterFlushTimeout,
@@ -168,7 +167,7 @@ func runWindows(ctx context.Context, cfg engine.Config, wc windowsRunConfig) err
 		}
 	}
 
-	cleanup, err := driver.Ensure(ctx, driver.Config{
+	report, cleanup, err := driver.EnsureWithReport(ctx, driver.Config{
 		Dir:           driverDir,
 		SysName:       wc.WinDivertSys,
 		ServiceName:   wc.WinDivertSvcName,
@@ -177,8 +176,10 @@ func runWindows(ctx context.Context, cfg engine.Config, wc windowsRunConfig) err
 		AutoStop:      true,
 	})
 	if err != nil {
+		logWinDivertReport(report)
 		return fmt.Errorf("driver ensure failed: %w", err)
 	}
+	logWinDivertReport(report)
 	if cleanup != nil {
 		defer func() {
 			if err := cleanup(); err != nil {
@@ -223,7 +224,7 @@ func runWindowsService(ctx context.Context, args windowsCLIArgs, setFlags map[st
 	}
 
 	// Service mode: do not stop/uninstall the global WinDivert driver on shutdown.
-	cleanup, err := driver.Ensure(ctx, driver.Config{
+	report, cleanup, err := driver.EnsureWithReport(ctx, driver.Config{
 		Dir:           driverDir,
 		SysName:       wc.WinDivertSys,
 		ServiceName:   wc.WinDivertSvcName,
@@ -232,8 +233,10 @@ func runWindowsService(ctx context.Context, args windowsCLIArgs, setFlags map[st
 		AutoStop:      false,
 	})
 	if err != nil {
+		logWinDivertReport(report)
 		return fmt.Errorf("driver ensure failed: %w", err)
 	}
+	logWinDivertReport(report)
 	if cleanup != nil {
 		defer func() {
 			if err := cleanup(); err != nil {
@@ -334,6 +337,29 @@ func runWindowsService(ctx context.Context, args windowsCLIArgs, setFlags map[st
 			return nil
 		}
 	}
+}
+
+func logWinDivertReport(report driver.Report) {
+	if report.ResolvedDir == "" && report.ServiceName == "" {
+		return
+	}
+	log.Printf(
+		"windivert state: dir=%q sys=%q files_present=%t service=%q exists=%t running=%t created=%t reconfigured=%t started=%t bin_path=%q bin_path_exists=%t bin_path_matches=%t cleanup_stop=%t cleanup_delete=%t",
+		report.ResolvedDir,
+		report.ResolvedSysPath,
+		report.FilesPresent,
+		report.ServiceName,
+		report.ServiceExists,
+		report.ServiceRunning,
+		report.ServiceCreated,
+		report.ServiceReconfigured,
+		report.ServiceStarted,
+		report.ServiceBinPath,
+		report.ServiceBinPathExists,
+		report.ServiceBinPathMatchesDesired,
+		report.CleanupWillStop,
+		report.CleanupWillDelete,
+	)
 }
 
 func parseSplitMode(value string) (engine.SplitMode, error) {

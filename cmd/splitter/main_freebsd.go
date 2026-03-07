@@ -21,6 +21,7 @@ import (
 
 func main() {
 	cfg := engine.DefaultConfig()
+	policies := cfg.Policies
 	const defaultDivertPort = 10000
 
 	splitMode := flag.String("split-mode", "tls-hello", "split trigger: tls-hello or immediate")
@@ -70,6 +71,7 @@ func main() {
 			ShutdownFailOpenTimeout:    shutdownFailOpenTimeout,
 			ShutdownFailOpenMaxPackets: shutdownFailOpenMaxPkts,
 			AdapterFlushTimeout:        adapterFlushTimeout,
+			Policies:                   &policies,
 			DivertPort:                 divertPort,
 		}
 		if err := applyFreeBSDJSONConfig(path, setFlags, refs); err != nil {
@@ -142,6 +144,10 @@ func main() {
 	cfg.WorkerCount = *workers
 	cfg.FlowIdleTimeout = *flowTimeout
 	cfg.GCInterval = *gcInterval
+	cfg.Policies = policies
+	if err := engine.ValidateConfig(cfg); err != nil {
+		log.Fatal(err)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -184,21 +190,22 @@ type freebsdJSONConfig struct {
 }
 
 type freebsdEngineJSONConfig struct {
-	SplitMode                   *string `json:"split_mode,omitempty"`
-	SplitChunk                  *int    `json:"split_chunk,omitempty"`
-	CollectTimeout              *string `json:"collect_timeout,omitempty"`
-	MaxBufferBytes              *int    `json:"max_buffer_bytes,omitempty"`
-	MaxHeldPackets              *int    `json:"max_held_packets,omitempty"`
-	MaxSegmentPayload           *int    `json:"max_segment_payload,omitempty"`
-	Workers                     *int    `json:"workers,omitempty"`
-	FlowIdleTimeout             *string `json:"flow_idle_timeout,omitempty"`
-	GCInterval                  *string `json:"gc_interval,omitempty"`
-	MaxFlowsPerWorker           *int    `json:"max_flows_per_worker,omitempty"`
-	MaxReassemblyBytesPerWorker *int    `json:"max_reassembly_bytes_per_worker,omitempty"`
-	MaxHeldBytesPerWorker       *int    `json:"max_held_bytes_per_worker,omitempty"`
-	ShutdownFailOpenTimeout     *string `json:"shutdown_fail_open_timeout,omitempty"`
-	ShutdownFailOpenMaxPackets  *int    `json:"shutdown_fail_open_max_packets,omitempty"`
-	AdapterFlushTimeout         *string `json:"adapter_flush_timeout,omitempty"`
+	SplitMode                   *string                  `json:"split_mode,omitempty"`
+	SplitChunk                  *int                     `json:"split_chunk,omitempty"`
+	CollectTimeout              *string                  `json:"collect_timeout,omitempty"`
+	MaxBufferBytes              *int                     `json:"max_buffer_bytes,omitempty"`
+	MaxHeldPackets              *int                     `json:"max_held_packets,omitempty"`
+	MaxSegmentPayload           *int                     `json:"max_segment_payload,omitempty"`
+	Workers                     *int                     `json:"workers,omitempty"`
+	FlowIdleTimeout             *string                  `json:"flow_idle_timeout,omitempty"`
+	GCInterval                  *string                  `json:"gc_interval,omitempty"`
+	MaxFlowsPerWorker           *int                     `json:"max_flows_per_worker,omitempty"`
+	MaxReassemblyBytesPerWorker *int                     `json:"max_reassembly_bytes_per_worker,omitempty"`
+	MaxHeldBytesPerWorker       *int                     `json:"max_held_bytes_per_worker,omitempty"`
+	ShutdownFailOpenTimeout     *string                  `json:"shutdown_fail_open_timeout,omitempty"`
+	ShutdownFailOpenMaxPackets  *int                     `json:"shutdown_fail_open_max_packets,omitempty"`
+	AdapterFlushTimeout         *string                  `json:"adapter_flush_timeout,omitempty"`
+	Policies                    []enginePolicyJSONConfig `json:"policies,omitempty"`
 }
 
 type freebsdRuntimeJSONConfig struct {
@@ -221,6 +228,7 @@ type freebsdFlagRefs struct {
 	ShutdownFailOpenTimeout    *time.Duration
 	ShutdownFailOpenMaxPackets *int
 	AdapterFlushTimeout        *time.Duration
+	Policies                   *[]engine.Policy
 	DivertPort                 *int
 }
 
@@ -322,6 +330,13 @@ func applyFreeBSDJSONConfig(path string, setFlags map[string]bool, refs *freebsd
 				*refs.AdapterFlushTimeout = d
 			}
 		}
+		if cfg.Engine.Policies != nil && refs.Policies != nil {
+			policies, err := parseEnginePolicies(cfg.Engine.Policies)
+			if err != nil {
+				return err
+			}
+			*refs.Policies = policies
+		}
 	}
 
 	if cfg.FreeBSD != nil {
@@ -340,7 +355,7 @@ type freebsdPreflightCheck struct {
 }
 
 type freebsdPreflightReport struct {
-	OK     bool                  `json:"ok"`
+	OK     bool                    `json:"ok"`
 	Checks []freebsdPreflightCheck `json:"checks"`
 }
 

@@ -8,20 +8,22 @@ import (
 )
 
 type Key struct {
-	SrcIP   [4]byte
-	DstIP   [4]byte
-	SrcPort uint16
-	DstPort uint16
-	Proto   uint8
+	IPVersion uint8
+	SrcIP     [16]byte
+	DstIP     [16]byte
+	SrcPort   uint16
+	DstPort   uint16
+	Proto     uint8
 }
 
 func KeyFromMeta(m packet.Meta) Key {
 	return Key{
-		SrcIP:   m.SrcIP,
-		DstIP:   m.DstIP,
-		SrcPort: m.SrcPort,
-		DstPort: m.DstPort,
-		Proto:   m.Proto,
+		IPVersion: m.IPVersion,
+		SrcIP:     m.SrcIP,
+		DstIP:     m.DstIP,
+		SrcPort:   m.SrcPort,
+		DstPort:   m.DstPort,
+		Proto:     m.Proto,
 	}
 }
 
@@ -37,15 +39,20 @@ const (
 )
 
 type FlowState struct {
-	State           State
-	BaseSeq         uint32
-	LastActive      time.Time
-	CollectStart    time.Time
-	FirstPayloadLen int
-	Template        *packet.Packet
-	HeldPackets     []*packet.Packet
-	Reassembler     *reassembly.Buffer
-	Processed       bool
+	State             State
+	BaseSeq           uint32
+	LastActive        time.Time
+	CollectStart      time.Time
+	FirstPayloadLen   int
+	Template          *packet.Packet
+	HeldPackets       []*packet.Packet
+	Reassembler       *reassembly.Buffer
+	Processed         bool
+	PolicyResolved    bool
+	PolicySkip        bool
+	SplitModeValue    uint8
+	SplitChunk        int
+	MaxSegmentPayload int
 }
 
 type Table struct {

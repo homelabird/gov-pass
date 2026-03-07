@@ -23,6 +23,11 @@ func main() {
 	if name == "" {
 		name = defaultServiceName
 	}
+	name, err := normalizeServiceName(name)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		os.Exit(1)
+	}
 
 	act := strings.ToLower(strings.TrimSpace(*action))
 	if act != "" {
@@ -78,7 +83,7 @@ func whiptailMenu(serviceName, summary string) (choice string, canceled bool, er
 		"q", "Quit",
 		"--output-fd", "1",
 	}
-	cmd := exec.Command("whiptail", args...)
+	cmd := whiptailCommand(args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stderr = os.Stderr
 	out, cmdErr := cmd.Output()
@@ -96,14 +101,14 @@ func whiptailMenu(serviceName, summary string) (choice string, canceled bool, er
 }
 
 func whiptailMessage(title, text string) error {
-	cmd := exec.Command("whiptail", "--title", title, "--msgbox", text, "16", "90")
+	cmd := whiptailCommand("--title", title, "--msgbox", text, "16", "90")
 	cmd.Stdin = os.Stdin
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
 }
 
 func whiptailShowText(title, text string) error {
-	cmd := exec.Command("whiptail", "--title", title, "--scrolltext", "--msgbox", text, "28", "110")
+	cmd := whiptailCommand("--title", title, "--scrolltext", "--msgbox", text, "28", "110")
 	cmd.Stdin = os.Stdin
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
@@ -240,6 +245,10 @@ func buildStatusSummary(serviceName string) string {
 }
 
 func runAction(serviceName string, action string) error {
+	serviceName, err := normalizeServiceName(serviceName)
+	if err != nil {
+		return err
+	}
 	normalized, err := normalizeAction(action)
 	if err != nil {
 		return err
@@ -274,7 +283,7 @@ func runAction(serviceName string, action string) error {
 }
 
 func isServiceActive(serviceName string) (bool, error) {
-	cmd := exec.Command("systemctl", "is-active", "--quiet", serviceName)
+	cmd := systemctlCommand("is-active", "--quiet", serviceName)
 	err := cmd.Run()
 	if err == nil {
 		return true, nil
@@ -287,7 +296,7 @@ func isServiceActive(serviceName string) (bool, error) {
 }
 
 func isServiceEnabled(serviceName string) (bool, error) {
-	cmd := exec.Command("systemctl", "is-enabled", "--quiet", serviceName)
+	cmd := systemctlCommand("is-enabled", "--quiet", serviceName)
 	err := cmd.Run()
 	if err == nil {
 		return true, nil
@@ -300,7 +309,7 @@ func isServiceEnabled(serviceName string) (bool, error) {
 }
 
 func serviceStatusText(serviceName string) (string, error) {
-	cmd := exec.Command("systemctl", "is-active", serviceName)
+	cmd := systemctlCommand("is-active", serviceName)
 	out, err := cmd.CombinedOutput()
 	text := strings.TrimSpace(string(out))
 	if text == "" {
@@ -313,7 +322,7 @@ func serviceStatusText(serviceName string) (string, error) {
 }
 
 func serviceStatusDetail(serviceName string) (string, error) {
-	cmd := exec.Command("systemctl", "status", "--no-pager", serviceName)
+	cmd := systemctlCommand("status", "--no-pager", serviceName)
 	out, err := cmd.CombinedOutput()
 	text := strings.TrimSpace(string(out))
 	if text == "" && err != nil {
@@ -324,7 +333,7 @@ func serviceStatusDetail(serviceName string) (string, error) {
 
 func serviceRecentLogs(serviceName string, lines int) (string, error) {
 	lineArg := fmt.Sprintf("%d", lines)
-	cmd := exec.Command("journalctl", "-u", serviceName, "-n", lineArg, "--no-pager")
+	cmd := journalctlCommand("-u", serviceName, "-n", lineArg, "--no-pager")
 	out, err := cmd.CombinedOutput()
 	text := strings.TrimSpace(string(out))
 	if text == "" && err != nil {
@@ -334,7 +343,7 @@ func serviceRecentLogs(serviceName string, lines int) (string, error) {
 }
 
 func elevatedSystemctl(action, serviceName string) error {
-	cmd := exec.Command("systemctl", action, serviceName)
+	cmd := systemctlCommand(action, serviceName)
 	out, err := cmd.CombinedOutput()
 	if err == nil {
 		return nil
@@ -349,13 +358,13 @@ func elevatedSystemctl(action, serviceName string) error {
 		return fmt.Errorf("systemctl %s %s failed: %s", action, serviceName, nonEmpty(outText, err.Error()))
 	}
 
-	sudo := exec.Command("sudo", "-n", "systemctl", action, serviceName)
+	sudo := sudoSystemctlCommand(action, serviceName)
 	sudoOut, sudoErr := sudo.CombinedOutput()
 	if sudoErr == nil {
 		return nil
 	}
 
-	pkexec := exec.Command("pkexec", "systemctl", action, serviceName)
+	pkexec := pkexecSystemctlCommand(action, serviceName)
 	pkOut, pkErr := pkexec.CombinedOutput()
 	if pkErr == nil {
 		return nil
@@ -402,4 +411,29 @@ func nonEmpty(primary, fallback string) string {
 func hasCommand(name string) bool {
 	_, err := exec.LookPath(name)
 	return err == nil
+}
+
+func whiptailCommand(args ...string) *exec.Cmd {
+	// #nosec G204 -- runs a fixed binary without a shell; title/text arguments stay positional.
+	return exec.Command("whiptail", args...)
+}
+
+func systemctlCommand(args ...string) *exec.Cmd {
+	// #nosec G204 -- action and service name are normalized through allowlists before invocation.
+	return exec.Command("systemctl", args...)
+}
+
+func journalctlCommand(args ...string) *exec.Cmd {
+	// #nosec G204 -- service name and line count are normalized before invocation.
+	return exec.Command("journalctl", args...)
+}
+
+func sudoSystemctlCommand(action, serviceName string) *exec.Cmd {
+	// #nosec G204 -- action and service name are normalized through allowlists before invocation.
+	return exec.Command("sudo", "-n", "systemctl", action, serviceName)
+}
+
+func pkexecSystemctlCommand(action, serviceName string) *exec.Cmd {
+	// #nosec G204 -- action and service name are normalized through allowlists before invocation.
+	return exec.Command("pkexec", "systemctl", action, serviceName)
 }

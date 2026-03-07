@@ -43,6 +43,19 @@ func assertLineContains(t *testing.T, lines []string, want string) {
 	t.Fatalf("expected line containing %q, got: %v", want, lines)
 }
 
+func assertLineCountContains(t *testing.T, lines []string, want string, wantCount int) {
+	t.Helper()
+	count := 0
+	for _, line := range lines {
+		if strings.Contains(line, want) {
+			count++
+		}
+	}
+	if count != wantCount {
+		t.Fatalf("expected %d lines containing %q, got %d: %v", wantCount, want, count, lines)
+	}
+}
+
 func TestRunCommandAndEnv(t *testing.T) {
 	cmd := writeExecScript(t, `
 if [ "${1:-}" = "fail" ]; then
@@ -78,6 +91,20 @@ echo "ok:$*"
 
 	if _, err := runCommandEnv(nil, cmd, "fail"); err == nil || !strings.Contains(err.Error(), "boom") {
 		t.Fatalf("runCommandEnv failure error mismatch: %v", err)
+	}
+}
+
+func TestLookPath_RejectsPoisonedPATHEntry(t *testing.T) {
+	dir := t.TempDir()
+	cmd := filepath.Join(dir, "nft")
+	if err := os.WriteFile(cmd, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write fake command: %v", err)
+	}
+	t.Setenv("PATH", dir)
+	if got, ok := lookPath("nft"); ok {
+		if filepath.Clean(got) == filepath.Clean(cmd) {
+			t.Fatalf("expected poisoned PATH entry to be rejected, got %q", got)
+		}
 	}
 }
 
@@ -195,19 +222,17 @@ exit 0
 
 func TestInstallAndUninstallIptablesRules(t *testing.T) {
 	logFile := filepath.Join(t.TempDir(), "iptables.log")
-	stateFile := filepath.Join(t.TempDir(), "state.txt")
+	stateDir := filepath.Join(t.TempDir(), "state")
 	t.Setenv("FAKE_LOG_FILE", logFile)
-	t.Setenv("STATE_FILE", stateFile)
+	t.Setenv("STATE_DIR", stateDir)
 
 	cmd := writeExecScript(t, `
 echo "$*" >> "$FAKE_LOG_FILE"
 if [ "${3:-}" = "-D" ] && [ "${4:-}" = "OUTPUT" ]; then
-  c=0
-  if [ -f "$STATE_FILE" ]; then
-    c=$(cat "$STATE_FILE")
-  fi
-  if [ "$c" -eq 0 ]; then
-    echo 1 > "$STATE_FILE"
+  mkdir -p "$STATE_DIR"
+  state="$STATE_DIR/${6:-unknown}"
+  if [ ! -f "$state" ]; then
+    echo 1 > "$state"
     exit 0
   fi
   echo "not found" >&2
@@ -221,21 +246,27 @@ exit 0
 `)
 
 	opts := ruleOptions{QueueNum: 100, Mark: 1, ExcludeLoopback: true}
-	if err := installIptablesRules(cmd, opts); err != nil {
+	if err := installIptablesRules(cmd, cmd, opts); err != nil {
 		t.Fatalf("installIptablesRules error: %v", err)
 	}
-	if err := uninstallIptablesRules(cmd, opts); err != nil {
+	if err := uninstallIptablesRules(cmd, cmd, opts); err != nil {
 		t.Fatalf("uninstallIptablesRules error: %v", err)
 	}
 
 	lines := readLines(t, logFile)
 	assertLineContains(t, lines, "-t mangle -N GOVPASS_OUTPUT")
+	assertLineContains(t, lines, "-t mangle -N GOVPASS_OUTPUT6")
 	assertLineContains(t, lines, "-t mangle -F GOVPASS_OUTPUT")
+	assertLineContains(t, lines, "-t mangle -F GOVPASS_OUTPUT6")
 	assertLineContains(t, lines, "-t mangle -I OUTPUT 1 -j GOVPASS_OUTPUT")
+	assertLineContains(t, lines, "-t mangle -I OUTPUT 1 -j GOVPASS_OUTPUT6")
 	assertLineContains(t, lines, "-t mangle -A GOVPASS_OUTPUT -m mark --mark 1/1 -j RETURN")
+	assertLineContains(t, lines, "-t mangle -A GOVPASS_OUTPUT6 -m mark --mark 1/1 -j RETURN")
 	assertLineContains(t, lines, "-t mangle -A GOVPASS_OUTPUT -o lo -j RETURN")
-	assertLineContains(t, lines, "--queue-num 100 --queue-bypass")
+	assertLineContains(t, lines, "-t mangle -A GOVPASS_OUTPUT6 -o lo -j RETURN")
+	assertLineCountContains(t, lines, "--queue-num 100 --queue-bypass", 2)
 	assertLineContains(t, lines, "-t mangle -X GOVPASS_OUTPUT")
+	assertLineContains(t, lines, "-t mangle -X GOVPASS_OUTPUT6")
 }
 
 func TestInstallAndDeleteNftRules(t *testing.T) {
@@ -243,7 +274,7 @@ func TestInstallAndDeleteNftRules(t *testing.T) {
 	t.Setenv("FAKE_LOG_FILE", logFile)
 	t.Setenv("NFT_FAIL_LIST_TABLE", "1")
 	t.Setenv("NFT_FAIL_LIST_CHAIN", "1")
-	t.Setenv("NFT_LIST_CHAIN_OUTPUT", "tcp dport 443 queue num 100 bypass comment \"gov-pass\" # handle 11\nmeta mark & 1 == 1 return comment \"gov-pass\" # handle 15\n")
+	t.Setenv("NFT_LIST_CHAIN_OUTPUT", "meta nfproto ipv4 tcp dport 443 queue num 100 bypass comment \"gov-pass\" # handle 11\nmeta nfproto ipv6 tcp dport 443 queue num 100 bypass comment \"gov-pass\" # handle 13\nmeta mark & 1 == 1 return comment \"gov-pass\" # handle 15\noifname \"lo\" return comment \"gov-pass\" # handle 17\n")
 
 	cmd := writeExecScript(t, `
 echo "$*" >> "$FAKE_LOG_FILE"
@@ -291,6 +322,9 @@ exit 0
 	assertLineContains(t, lines, "meta mark & 1 == 1 return comment gov-pass")
 	assertLineContains(t, lines, "oifname lo return comment gov-pass")
 	assertLineContains(t, lines, "meta nfproto ipv4 tcp dport 443 queue num 100 bypass comment gov-pass")
+	assertLineContains(t, lines, "meta nfproto ipv6 tcp dport 443 queue num 100 bypass comment gov-pass")
 	assertLineContains(t, lines, "delete rule inet gov_pass output handle 11")
+	assertLineContains(t, lines, "delete rule inet gov_pass output handle 13")
 	assertLineContains(t, lines, "delete rule inet gov_pass output handle 15")
+	assertLineContains(t, lines, "delete rule inet gov_pass output handle 17")
 }

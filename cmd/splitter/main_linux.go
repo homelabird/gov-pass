@@ -23,6 +23,19 @@ import (
 	"fk-gov/internal/engine"
 )
 
+const maxUint32Value = int64(^uint32(0))
+
+var trustedLinuxCommandDirs = []string{
+	"/usr/local/sbin",
+	"/usr/local/bin",
+	"/usr/sbin",
+	"/usr/bin",
+	"/sbin",
+	"/bin",
+	"/run/current-system/sw/bin",
+	"/nix/var/nix/profiles/default/bin",
+}
+
 func main() {
 	if err := run(); err != nil {
 		log.Fatal(err)
@@ -31,6 +44,7 @@ func main() {
 
 func run() error {
 	cfg := engine.DefaultConfig()
+	policies := cfg.Policies
 	const (
 		defaultQueueNum    = 100
 		defaultQueueMaxLen = 4096
@@ -94,6 +108,7 @@ func run() error {
 			ShutdownFailOpenTimeout:    shutdownFailOpenTimeout,
 			ShutdownFailOpenMaxPackets: shutdownFailOpenMaxPkts,
 			AdapterFlushTimeout:        adapterFlushTimeout,
+			Policies:                   &policies,
 			QueueNum:                   queueNum,
 			QueueMaxLen:                queueMaxLen,
 			CopyRange:                  copyRange,
@@ -162,11 +177,20 @@ func run() error {
 	if *queueMaxLen < 0 {
 		return errors.New("queue-maxlen must be >= 0")
 	}
+	if int64(*queueMaxLen) > maxUint32Value {
+		return errors.New("queue-maxlen must be <= 4294967295")
+	}
 	if *copyRange < 0 {
 		return errors.New("copy-range must be >= 0")
 	}
+	if int64(*copyRange) > maxUint32Value {
+		return errors.New("copy-range must be <= 4294967295")
+	}
 	if *mark < 0 {
 		return errors.New("mark must be >= 0")
+	}
+	if int64(*mark) > maxUint32Value {
+		return errors.New("mark must be <= 4294967295")
 	}
 	if *autoRules && *mark == 0 {
 		return errors.New("auto-rules requires mark > 0 for reinjection bypass; set --mark or disable --auto-rules")
@@ -187,6 +211,10 @@ func run() error {
 	cfg.WorkerCount = *workers
 	cfg.FlowIdleTimeout = *flowTimeout
 	cfg.GCInterval = *gcInterval
+	cfg.Policies = policies
+	if err := engine.ValidateConfig(cfg); err != nil {
+		return err
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -304,21 +332,22 @@ type linuxJSONConfig struct {
 }
 
 type linuxEngineJSONConfig struct {
-	SplitMode                   *string `json:"split_mode,omitempty"`
-	SplitChunk                  *int    `json:"split_chunk,omitempty"`
-	CollectTimeout              *string `json:"collect_timeout,omitempty"`
-	MaxBufferBytes              *int    `json:"max_buffer_bytes,omitempty"`
-	MaxHeldPackets              *int    `json:"max_held_packets,omitempty"`
-	MaxSegmentPayload           *int    `json:"max_segment_payload,omitempty"`
-	Workers                     *int    `json:"workers,omitempty"`
-	FlowIdleTimeout             *string `json:"flow_idle_timeout,omitempty"`
-	GCInterval                  *string `json:"gc_interval,omitempty"`
-	MaxFlowsPerWorker           *int    `json:"max_flows_per_worker,omitempty"`
-	MaxReassemblyBytesPerWorker *int    `json:"max_reassembly_bytes_per_worker,omitempty"`
-	MaxHeldBytesPerWorker       *int    `json:"max_held_bytes_per_worker,omitempty"`
-	ShutdownFailOpenTimeout     *string `json:"shutdown_fail_open_timeout,omitempty"`
-	ShutdownFailOpenMaxPackets  *int    `json:"shutdown_fail_open_max_packets,omitempty"`
-	AdapterFlushTimeout         *string `json:"adapter_flush_timeout,omitempty"`
+	SplitMode                   *string                  `json:"split_mode,omitempty"`
+	SplitChunk                  *int                     `json:"split_chunk,omitempty"`
+	CollectTimeout              *string                  `json:"collect_timeout,omitempty"`
+	MaxBufferBytes              *int                     `json:"max_buffer_bytes,omitempty"`
+	MaxHeldPackets              *int                     `json:"max_held_packets,omitempty"`
+	MaxSegmentPayload           *int                     `json:"max_segment_payload,omitempty"`
+	Workers                     *int                     `json:"workers,omitempty"`
+	FlowIdleTimeout             *string                  `json:"flow_idle_timeout,omitempty"`
+	GCInterval                  *string                  `json:"gc_interval,omitempty"`
+	MaxFlowsPerWorker           *int                     `json:"max_flows_per_worker,omitempty"`
+	MaxReassemblyBytesPerWorker *int                     `json:"max_reassembly_bytes_per_worker,omitempty"`
+	MaxHeldBytesPerWorker       *int                     `json:"max_held_bytes_per_worker,omitempty"`
+	ShutdownFailOpenTimeout     *string                  `json:"shutdown_fail_open_timeout,omitempty"`
+	ShutdownFailOpenMaxPackets  *int                     `json:"shutdown_fail_open_max_packets,omitempty"`
+	AdapterFlushTimeout         *string                  `json:"adapter_flush_timeout,omitempty"`
+	Policies                    []enginePolicyJSONConfig `json:"policies,omitempty"`
 }
 
 type linuxRuntimeJSONConfig struct {
@@ -350,6 +379,7 @@ type linuxFlagRefs struct {
 	ShutdownFailOpenTimeout    *time.Duration
 	ShutdownFailOpenMaxPackets *int
 	AdapterFlushTimeout        *time.Duration
+	Policies                   *[]engine.Policy
 
 	QueueNum           *int
 	QueueMaxLen        *int
@@ -368,7 +398,7 @@ func applyLinuxJSONConfig(path string, setFlags map[string]bool, refs *linuxFlag
 		return errors.New("nil refs")
 	}
 
-	b, err := os.ReadFile(path)
+	b, err := readLinuxConfigFile(path)
 	if err != nil {
 		return err
 	}
@@ -462,6 +492,13 @@ func applyLinuxJSONConfig(path string, setFlags map[string]bool, refs *linuxFlag
 				*refs.AdapterFlushTimeout = d
 			}
 		}
+		if cfg.Engine.Policies != nil && refs.Policies != nil {
+			policies, err := parseEnginePolicies(cfg.Engine.Policies)
+			if err != nil {
+				return err
+			}
+			*refs.Policies = policies
+		}
 	}
 
 	if cfg.Linux != nil {
@@ -507,7 +544,7 @@ type preflightCheck struct {
 }
 
 type preflightReport struct {
-	OK     bool            `json:"ok"`
+	OK     bool             `json:"ok"`
 	Checks []preflightCheck `json:"checks"`
 }
 
@@ -529,12 +566,13 @@ func runLinuxPreflight(autoInstall bool, needs linuxToolNeeds, requireRoot bool,
 	if needs.AutoRules {
 		_, hasNft := linuxLookPath("nft")
 		_, hasIpt := linuxLookPath("iptables")
-		ok := hasNft || hasIpt
-		detail := "nft or iptables"
+		_, hasIpt6 := linuxLookPath("ip6tables")
+		ok := hasNft || (hasIpt && hasIpt6)
+		detail := "nft or iptables+ip6tables"
 		if hasNft {
 			detail = "nft found"
-		} else if hasIpt {
-			detail = "iptables found"
+		} else if hasIpt && hasIpt6 {
+			detail = "iptables and ip6tables found"
 		} else if autoInstall {
 			if kind, _, found := linuxDetectPackageManager(); found {
 				ok = true
@@ -543,7 +581,7 @@ func runLinuxPreflight(autoInstall bool, needs linuxToolNeeds, requireRoot bool,
 				detail = "missing now; no supported package manager found"
 			}
 		} else {
-			detail = "missing; install nftables or iptables"
+			detail = "missing; install nftables or both iptables and ip6tables"
 		}
 		add("nft_or_iptables", ok, detail)
 	}
@@ -637,19 +675,21 @@ type ruleOptions struct {
 }
 
 func installRules(opts ruleOptions) (func() error, string, error) {
-	if path, ok := lookPath("nft"); ok {
+	if path, ok := linuxLookPath("nft"); ok {
 		if err := installNftRules(path, opts); err != nil {
 			return nil, "", err
 		}
 		return func() error { return uninstallNftRules(path) }, "nft", nil
 	}
-	if path, ok := lookPath("iptables"); ok {
-		if err := installIptablesRules(path, opts); err != nil {
+	iptablesPath, hasIptables := linuxLookPath("iptables")
+	ip6tablesPath, hasIP6Tables := linuxLookPath("ip6tables")
+	if hasIptables && hasIP6Tables {
+		if err := installIptablesRules(iptablesPath, ip6tablesPath, opts); err != nil {
 			return nil, "", err
 		}
-		return func() error { return uninstallIptablesRules(path, opts) }, "iptables", nil
+		return func() error { return uninstallIptablesRules(iptablesPath, ip6tablesPath, opts) }, "iptables/ip6tables", nil
 	}
-	return nil, "", errors.New("nft or iptables not found in PATH")
+	return nil, "", errors.New("nft or both iptables and ip6tables not found in PATH")
 }
 
 func installNftRules(path string, opts ruleOptions) error {
@@ -695,11 +735,11 @@ func installNftRules(path string, opts ruleOptions) error {
 	}
 
 	queue := fmt.Sprintf("%d", opts.QueueNum)
-	// Restrict the queue rule to IPv4 only. The splitter currently only supports
-	// AF_INET and will fail-open non-IPv4 packets.
-	args := []string{"add", "rule", "inet", table, chain, "meta", "nfproto", "ipv4", "tcp", "dport", "443", "queue", "num", queue, "bypass", "comment", tag}
-	if _, err := runCommand(path, args...); err != nil {
-		return fmt.Errorf("nft add queue rule failed: %w", err)
+	for _, family := range []string{"ipv4", "ipv6"} {
+		args := []string{"add", "rule", "inet", table, chain, "meta", "nfproto", family, "tcp", "dport", "443", "queue", "num", queue, "bypass", "comment", tag}
+		if _, err := runCommand(path, args...); err != nil {
+			return fmt.Errorf("nft add %s queue rule failed: %w", family, err)
+		}
 	}
 
 	return nil
@@ -767,11 +807,21 @@ func parseNftHandle(line string) (int, bool) {
 	return 0, false
 }
 
-func installIptablesRules(path string, opts ruleOptions) error {
+func installIptablesRules(iptablesPath string, ip6tablesPath string, opts ruleOptions) error {
+	if err := installOneIptablesFamily(iptablesPath, "GOVPASS_OUTPUT", opts); err != nil {
+		return err
+	}
+	if err := installOneIptablesFamily(ip6tablesPath, "GOVPASS_OUTPUT6", opts); err != nil {
+		_ = uninstallOneIptablesFamily(iptablesPath, "GOVPASS_OUTPUT", opts)
+		return err
+	}
+	return nil
+}
+
+func installOneIptablesFamily(path string, chain string, opts ruleOptions) error {
 	const (
 		table  = "mangle"
 		parent = "OUTPUT"
-		chain  = "GOVPASS_OUTPUT"
 	)
 
 	if err := ensureIptablesChain(path, table, chain); err != nil {
@@ -810,11 +860,24 @@ func installIptablesRules(path string, opts ruleOptions) error {
 	return nil
 }
 
-func uninstallIptablesRules(path string, opts ruleOptions) error {
+func uninstallIptablesRules(iptablesPath string, ip6tablesPath string, opts ruleOptions) error {
+	var errs []error
+	if err := uninstallOneIptablesFamily(iptablesPath, "GOVPASS_OUTPUT", opts); err != nil {
+		errs = append(errs, err)
+	}
+	if err := uninstallOneIptablesFamily(ip6tablesPath, "GOVPASS_OUTPUT6", opts); err != nil {
+		errs = append(errs, err)
+	}
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
+	return nil
+}
+
+func uninstallOneIptablesFamily(path string, chain string, opts ruleOptions) error {
 	const (
 		table  = "mangle"
 		parent = "OUTPUT"
-		chain  = "GOVPASS_OUTPUT"
 	)
 	_ = opts
 
@@ -866,7 +929,7 @@ func readOffloadState(iface string) (offloadState, error) {
 	if iface == "" {
 		return offloadState{}, errors.New("iface is empty")
 	}
-	path, ok := lookPath("ethtool")
+	path, ok := linuxLookPath("ethtool")
 	if !ok {
 		return offloadState{}, errors.New("ethtool not found in PATH")
 	}
@@ -935,7 +998,7 @@ func applyOffloadState(iface string, st offloadState) error {
 	if iface == "" {
 		return errors.New("iface is empty")
 	}
-	path, ok := lookPath("ethtool")
+	path, ok := linuxLookPath("ethtool")
 	if !ok {
 		return errors.New("ethtool not found in PATH")
 	}
@@ -964,7 +1027,7 @@ func disableOffload(iface string) error {
 	if iface == "" {
 		return errors.New("iface is empty")
 	}
-	path, ok := lookPath("ethtool")
+	path, ok := linuxLookPath("ethtool")
 	if !ok {
 		return errors.New("ethtool not found in PATH")
 	}
@@ -975,7 +1038,7 @@ func disableOffload(iface string) error {
 }
 
 func detectEgressInterface() (string, error) {
-	path, ok := lookPath("ip")
+	path, ok := linuxLookPath("ip")
 	if !ok {
 		return "", errors.New("ip command not found in PATH; use --iface")
 	}
@@ -1008,6 +1071,10 @@ func parseRouteDev(output string) string {
 }
 
 func runCommand(name string, args ...string) (string, error) {
+	if !filepath.IsAbs(name) {
+		return "", fmt.Errorf("command path must be absolute: %s", name)
+	}
+	// #nosec G204,G702 -- name is restricted to trusted absolute system paths and exec does not invoke a shell.
 	cmd := exec.Command(name, args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -1021,21 +1088,52 @@ func runCommand(name string, args ...string) (string, error) {
 }
 
 func lookPath(name string) (string, bool) {
-	path, err := exec.LookPath(name)
-	if err == nil {
-		return path, true
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", false
 	}
-	for _, dir := range []string{"/usr/sbin", "/sbin"} {
+	if filepath.IsAbs(name) {
+		if isTrustedLinuxCommandPath(name) {
+			return filepath.Clean(name), true
+		}
+		return "", false
+	}
+	for _, dir := range trustedLinuxCommandDirs {
 		candidate := filepath.Join(dir, name)
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+		if isExecutableFile(candidate) {
 			return candidate, true
 		}
+	}
+	path, err := exec.LookPath(name)
+	if err == nil && isTrustedLinuxCommandPath(path) {
+		return filepath.Clean(path), true
 	}
 	return "", false
 }
 
 var linuxLookPath = lookPath
 var linuxDetectPackageManager = detectLinuxPackageManager
+
+func isTrustedLinuxCommandPath(path string) bool {
+	clean := filepath.Clean(strings.TrimSpace(path))
+	if !filepath.IsAbs(clean) {
+		return false
+	}
+	for _, dir := range trustedLinuxCommandDirs {
+		if filepath.Dir(clean) == filepath.Clean(dir) && isExecutableFile(clean) {
+			return true
+		}
+	}
+	return false
+}
+
+func isExecutableFile(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return false
+	}
+	return info.Mode()&0o111 != 0
+}
 
 type linuxToolNeeds struct {
 	AutoRules   bool
@@ -1052,9 +1150,11 @@ func ensureLinuxExternalTools(autoInstall bool, needs linuxToolNeeds) error {
 	wantPkgs := make(map[string]struct{})
 
 	if needs.AutoRules {
-		if _, ok := lookPath("nft"); !ok {
-			if _, ok2 := lookPath("iptables"); !ok2 {
-				missing = append(missing, "nft or iptables")
+		if _, ok := linuxLookPath("nft"); !ok {
+			_, hasIpt := linuxLookPath("iptables")
+			_, hasIpt6 := linuxLookPath("ip6tables")
+			if !hasIpt || !hasIpt6 {
+				missing = append(missing, "nft or iptables+ip6tables")
 				// Install both to maximize compatibility across distros/setups.
 				wantPkgs["nftables"] = struct{}{}
 				wantPkgs["iptables"] = struct{}{}
@@ -1063,12 +1163,12 @@ func ensureLinuxExternalTools(autoInstall bool, needs linuxToolNeeds) error {
 	}
 
 	if needs.AutoOffload {
-		if _, ok := lookPath("ethtool"); !ok {
+		if _, ok := linuxLookPath("ethtool"); !ok {
 			missing = append(missing, "ethtool")
 			wantPkgs["ethtool"] = struct{}{}
 		}
 		if needs.NeedIP {
-			if _, ok := lookPath("ip"); !ok {
+			if _, ok := linuxLookPath("ip"); !ok {
 				missing = append(missing, "ip")
 				// Package name differs by distro; map per package manager.
 				wantPkgs["__iproute__"] = struct{}{}
@@ -1108,18 +1208,20 @@ func ensureLinuxExternalTools(autoInstall bool, needs linuxToolNeeds) error {
 
 	// Re-check after install.
 	if needs.AutoRules {
-		if _, ok := lookPath("nft"); !ok {
-			if _, ok2 := lookPath("iptables"); !ok2 {
-				return errors.New("auto-install-tools completed, but nft/iptables still missing")
+		if _, ok := linuxLookPath("nft"); !ok {
+			_, hasIpt := linuxLookPath("iptables")
+			_, hasIpt6 := linuxLookPath("ip6tables")
+			if !hasIpt || !hasIpt6 {
+				return errors.New("auto-install-tools completed, but nft or iptables+ip6tables is still missing")
 			}
 		}
 	}
 	if needs.AutoOffload {
-		if _, ok := lookPath("ethtool"); !ok {
+		if _, ok := linuxLookPath("ethtool"); !ok {
 			return errors.New("auto-install-tools completed, but ethtool still missing")
 		}
 		if needs.NeedIP {
-			if _, ok := lookPath("ip"); !ok {
+			if _, ok := linuxLookPath("ip"); !ok {
 				return errors.New("auto-install-tools completed, but ip still missing")
 			}
 		}
@@ -1130,7 +1232,7 @@ func ensureLinuxExternalTools(autoInstall bool, needs linuxToolNeeds) error {
 
 func detectLinuxPackageManager() (kind string, path string, ok bool) {
 	for _, name := range []string{"apt-get", "dnf", "yum", "pacman", "apk", "zypper"} {
-		if p, ok := lookPath(name); ok {
+		if p, ok := linuxLookPath(name); ok {
 			return name, p, true
 		}
 	}
@@ -1182,6 +1284,10 @@ func installLinuxPackages(mgrKind string, mgrPath string, pkgs []string) error {
 }
 
 func runCommandEnv(env []string, name string, args ...string) (string, error) {
+	if !filepath.IsAbs(name) {
+		return "", fmt.Errorf("command path must be absolute: %s", name)
+	}
+	// #nosec G204 -- name is restricted to trusted absolute system paths and exec does not invoke a shell.
 	cmd := exec.Command(name, args...)
 	if len(env) > 0 {
 		cmd.Env = append(os.Environ(), env...)
@@ -1195,4 +1301,13 @@ func runCommandEnv(env []string, name string, args ...string) (string, error) {
 		return string(out), fmt.Errorf("%s %s failed: %w", name, strings.Join(args, " "), err)
 	}
 	return string(out), nil
+}
+
+func readLinuxConfigFile(path string) ([]byte, error) {
+	clean := filepath.Clean(strings.TrimSpace(path))
+	if clean == "" || clean == "." {
+		return nil, errors.New("config path must not be empty")
+	}
+	// #nosec G304 -- config path is explicitly provided by the operator and is not used across a privilege boundary.
+	return os.ReadFile(clean)
 }

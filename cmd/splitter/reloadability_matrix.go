@@ -15,6 +15,7 @@ var windowsReloadableSettings = []string{
 	"engine.shutdown_fail_open_timeout",
 	"engine.shutdown_fail_open_max_packets",
 	"engine.adapter_flush_timeout",
+	"engine.policies",
 	"windivert.queue_len (non-zero values)",
 	"windivert.queue_time_ms (non-zero values)",
 	"windivert.queue_size_bytes (non-zero values)",
@@ -30,4 +31,3 @@ var windowsRestartRequiredSettings = []string{
 	"windivert.queue_time_ms=0 (revert to driver default)",
 	"windivert.queue_size_bytes=0 (revert to driver default)",
 }
-

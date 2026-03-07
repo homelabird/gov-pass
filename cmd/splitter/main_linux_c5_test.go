@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"fk-gov/internal/engine"
 )
 
 func writeTempJSON(t *testing.T, content string) string {
@@ -162,6 +164,42 @@ func TestApplyLinuxJSONConfig_InvalidDuration(t *testing.T) {
 	err := applyLinuxJSONConfig(cfgPath, map[string]bool{}, refs)
 	if err == nil || !strings.Contains(err.Error(), "engine.collect_timeout") {
 		t.Fatalf("expected collect_timeout error, got %v", err)
+	}
+}
+
+func TestApplyLinuxJSONConfig_Policies(t *testing.T) {
+	var policies []engine.Policy
+	refs := &linuxFlagRefs{
+		Policies: &policies,
+	}
+	cfgPath := writeTempJSON(t, `{
+  "engine": {
+    "policies": [
+      {
+        "name": "cloudflare-skip",
+        "dst_cidrs": ["1.1.1.0/24"],
+        "skip": true
+      },
+      {
+        "name": "example-sni",
+        "sni_suffixes": ["example.com"],
+        "split_chunk": 9
+      }
+    ]
+  }
+}`)
+
+	if err := applyLinuxJSONConfig(cfgPath, map[string]bool{}, refs); err != nil {
+		t.Fatalf("apply config: %v", err)
+	}
+	if len(policies) != 2 {
+		t.Fatalf("expected 2 policies, got %d", len(policies))
+	}
+	if !policies[0].Skip {
+		t.Fatal("expected skip policy")
+	}
+	if len(policies[1].SNISuffixes) != 1 || policies[1].SNISuffixes[0] != "example.com" {
+		t.Fatalf("unexpected SNI policy: %+v", policies[1])
 	}
 }
 

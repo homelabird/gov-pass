@@ -24,79 +24,137 @@ var (
 // Ensure installs and starts the WinDivert driver if needed.
 // It returns a cleanup function that will stop/delete the driver based on config.
 func Ensure(ctx context.Context, cfg Config) (func() error, error) {
-	if !cfg.AutoInstall {
-		return nil, nil
+	_, cleanup, err := EnsureWithReport(ctx, cfg)
+	return cleanup, err
+}
+
+func EnsureWithReport(ctx context.Context, cfg Config) (Report, func() error, error) {
+	report, err := Inspect(ctx, cfg)
+	if err != nil {
+		return report, nil, err
 	}
+	if _, err := os.Stat(report.ResolvedSysPath); err != nil {
+		return report, nil, ErrDriverNotFound
+	}
+	if !cfg.AutoInstall {
+		return report, nil, nil
+	}
+
+	created := false
+	started := false
+
+	if !report.ServiceExists {
+		if !isAdmin() {
+			return report, nil, ErrAdminRequired
+		}
+		if err := createService(ctx, report.ServiceName, report.ResolvedSysPath); err != nil {
+			return report, nil, err
+		}
+		created = true
+		report.ServiceExists = true
+		report.ServiceCreated = true
+		report.ServiceBinPath = report.ResolvedSysPath
+		report.ServiceBinPathExists = true
+		report.ServiceBinPathMatchesDesired = true
+		report.ServiceNeedsConfigRepair = false
+	} else {
+		if report.ServiceNeedsConfigRepair {
+			if !isAdmin() {
+				return report, nil, ErrAdminRequired
+			}
+			if err := configService(ctx, report.ServiceName, report.ResolvedSysPath); err != nil {
+				return report, nil, err
+			}
+			report.ServiceReconfigured = true
+			report.ServiceBinPath = report.ResolvedSysPath
+			report.ServiceBinPathExists = true
+			report.ServiceBinPathMatchesDesired = true
+			report.ServiceNeedsConfigRepair = false
+		}
+	}
+
+	if !report.ServiceRunning {
+		if !isAdmin() {
+			return report, nil, ErrAdminRequired
+		}
+		if err := startService(ctx, report.ServiceName); err != nil {
+			return report, nil, err
+		}
+		started = true
+		report.ServiceRunning = true
+		report.ServiceStarted = true
+	}
+
+	cleanup := func() error {
+		if created && cfg.AutoUninstall {
+			if err := stopService(ctx, report.ServiceName); err != nil {
+				return err
+			}
+			if err := deleteService(ctx, report.ServiceName); err != nil {
+				return err
+			}
+			return nil
+		}
+		if started && cfg.AutoStop {
+			if err := stopService(ctx, report.ServiceName); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	report.CleanupWillDelete = created && cfg.AutoUninstall
+	report.CleanupWillStop = started && cfg.AutoStop && !report.CleanupWillDelete
+	return report, cleanup, nil
+}
+
+func Inspect(ctx context.Context, cfg Config) (Report, error) {
 	if cfg.ServiceName == "" {
 		cfg.ServiceName = "WinDivert"
 	}
 
 	dir, err := resolveDir(cfg.Dir)
 	if err != nil {
-		return nil, err
+		return Report{}, err
 	}
-	sysPath, err := resolveSysPath(dir, cfg.SysName)
-	if err != nil {
-		return nil, err
+
+	sysPath, sysExists := probeSysPath(dir, cfg.SysName)
+	if sysPath == "" {
+		sysPath = filepath.Join(dir, effectiveSysName(cfg.SysName))
 	}
 
 	exists, running, err := queryService(ctx, cfg.ServiceName)
 	if err != nil {
-		return nil, err
+		return Report{}, err
 	}
 
-	created := false
-	started := false
-
+	report := Report{
+		ResolvedDir:     dir,
+		ResolvedSysPath: sysPath,
+		ServiceName:     cfg.ServiceName,
+		FilesPresent:    HasWinDivertFiles(dir, cfg.SysName),
+		ServiceExists:   exists,
+		ServiceRunning:  running,
+	}
+	if !sysExists {
+		return report, nil
+	}
 	if !exists {
-		if !isAdmin() {
-			return nil, ErrAdminRequired
-		}
-		if err := createService(ctx, cfg.ServiceName, sysPath); err != nil {
-			return nil, err
-		}
-		created = true
-	} else {
-		if path, err := queryServiceBinPath(ctx, cfg.ServiceName); err == nil && path != "" {
-			if _, statErr := os.Stat(path); statErr != nil {
-				if !isAdmin() {
-					return nil, ErrAdminRequired
-				}
-				if err := configService(ctx, cfg.ServiceName, sysPath); err != nil {
-					return nil, err
-				}
-			}
-		}
+		return report, nil
 	}
 
-	if !running {
-		if !isAdmin() {
-			return nil, ErrAdminRequired
-		}
-		if err := startService(ctx, cfg.ServiceName); err != nil {
-			return nil, err
-		}
-		started = true
+	path, err := queryServiceBinPath(ctx, cfg.ServiceName)
+	if err != nil {
+		return report, err
 	}
-
-	cleanup := func() error {
-		if created && cfg.AutoUninstall {
-			if err := stopService(ctx, cfg.ServiceName); err != nil {
-				return err
-			}
-			if err := deleteService(ctx, cfg.ServiceName); err != nil {
-				return err
-			}
-			return nil
+	report.ServiceBinPath = path
+	if path != "" {
+		if _, err := os.Stat(path); err == nil {
+			report.ServiceBinPathExists = true
 		}
-		if started && cfg.AutoStop {
-			if err := stopService(ctx, cfg.ServiceName); err != nil {
-				return err
-			}
-		}
-		return nil
+		report.ServiceBinPathMatchesDesired = sameServicePath(path, sysPath)
 	}
-	return cleanup, nil
+	report.ServiceNeedsConfigRepair = path == "" || !report.ServiceBinPathExists || !report.ServiceBinPathMatchesDesired
+	return report, nil
 }
 
 func isAdmin() bool {
@@ -119,22 +177,37 @@ func resolveDir(dir string) (string, error) {
 }
 
 func resolveSysPath(dir, name string) (string, error) {
+	if path, ok := probeSysPath(dir, name); ok {
+		return path, nil
+	}
+	return "", ErrDriverNotFound
+}
+
+func probeSysPath(dir, name string) (string, bool) {
 	if name != "" {
 		path := filepath.Join(dir, name)
 		if _, err := os.Stat(path); err == nil {
-			return path, nil
+			return path, true
 		}
-		return "", ErrDriverNotFound
+		return path, false
 	}
 
 	candidates := []string{"WinDivert64.sys", "WinDivert.sys"}
 	for _, candidate := range candidates {
 		path := filepath.Join(dir, candidate)
 		if _, err := os.Stat(path); err == nil {
-			return path, nil
+			return path, true
 		}
 	}
-	return "", ErrDriverNotFound
+	return "", false
+}
+
+func effectiveSysName(name string) string {
+	name = strings.TrimSpace(name)
+	if name != "" {
+		return name
+	}
+	return "WinDivert64.sys"
 }
 
 func queryService(ctx context.Context, name string) (bool, bool, error) {
@@ -218,6 +291,12 @@ func normalizeServicePath(raw string) string {
 		return path[:idx]
 	}
 	return path
+}
+
+func sameServicePath(a, b string) bool {
+	a = filepath.Clean(strings.TrimSpace(a))
+	b = filepath.Clean(strings.TrimSpace(b))
+	return strings.EqualFold(a, b)
 }
 
 func isServiceMissing(out string) bool {
