@@ -17,6 +17,10 @@ func ensureWinDivertFiles(ctx context.Context, wc windowsRunConfig, exeDir strin
 	exeDir = strings.TrimSpace(exeDir)
 	requested := strings.TrimSpace(wc.WinDivertDir)
 
+	if err := driver.ValidateDriverFileName(wc.WinDivertSys); err != nil {
+		return wc, "", err
+	}
+
 	driverDir := requested
 	if driverDir == "" {
 		driverDir = exeDir

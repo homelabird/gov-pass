@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"fk-gov/internal/adapter"
+	"fk-gov/internal/driver"
 	"fk-gov/internal/engine"
 )
 
@@ -354,6 +355,12 @@ func validateEngineConfig(cfg engine.Config) error {
 func validateWindowsRunConfig(wc windowsRunConfig) error {
 	if strings.TrimSpace(wc.Filter) == "" {
 		return errors.New("filter is empty")
+	}
+	if err := driver.ValidateServiceName(wc.WinDivertSvcName); err != nil {
+		return fmt.Errorf("windivert service name invalid: %w", err)
+	}
+	if err := driver.ValidateDriverFileName(wc.WinDivertSys); err != nil {
+		return fmt.Errorf("windivert sys filename invalid: %w", err)
 	}
 	return nil
 }
