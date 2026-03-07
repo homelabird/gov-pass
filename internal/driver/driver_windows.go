@@ -111,6 +111,12 @@ func Inspect(ctx context.Context, cfg Config) (Report, error) {
 	if cfg.ServiceName == "" {
 		cfg.ServiceName = "WinDivert"
 	}
+	if err := ValidateServiceName(cfg.ServiceName); err != nil {
+		return Report{}, err
+	}
+	if err := ValidateDriverFileName(cfg.SysName); err != nil {
+		return Report{}, err
+	}
 
 	dir, err := resolveDir(cfg.Dir)
 	if err != nil {

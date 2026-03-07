@@ -80,6 +80,10 @@ func run() error {
 		return nil
 	}
 
+	if err := driver.ValidateServiceName(*serviceName); err != nil {
+		return fmt.Errorf("--service-name is invalid: %w", err)
+	}
+
 	if !*asService && isWindowsServiceProcess() {
 		*asService = true
 	}

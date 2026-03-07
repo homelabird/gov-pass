@@ -37,6 +37,17 @@ func main() {
 	if svcName == "" {
 		svcName = winDivertSvcName
 	}
+	sysName := strings.TrimSpace(*driverSys)
+
+	if err := driver.ValidateServiceName(svcName); err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "invalid service name: %v\n", err)
+		os.Exit(2)
+	}
+	if err := driver.ValidateDriverFileName(sysName); err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "invalid driver sys name: %v\n", err)
+		os.Exit(2)
+	}
+
 	switch act {
 	case "kill-tui":
 		_ = killTuiBestEffort()
@@ -47,7 +58,7 @@ func main() {
 	case "delete-windivert":
 		_ = deleteServiceBestEffort(svcName)
 	case "verify-windivert":
-		if err := verifyWinDivert(strings.TrimSpace(*driverDir), strings.TrimSpace(*driverSys), svcName); err != nil {
+		if err := verifyWinDivert(strings.TrimSpace(*driverDir), sysName, svcName); err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "%v\n", err)
 			os.Exit(1)
 		}
