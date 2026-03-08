@@ -7,7 +7,7 @@ Wants=network-online.target
 Type=simple
 Environment=GOV_PASS_QUEUE_NUM=100
 Environment=GOV_PASS_MARK=1
-Environment=GOV_PASS_ARGS=
+Environment=GOV_PASS_ARGS=--auto-install-tools=false
 EnvironmentFile=-/etc/default/gov-pass
 ExecStart=/opt/gov-pass/dist/splitter --queue-num $GOV_PASS_QUEUE_NUM --mark $GOV_PASS_MARK $GOV_PASS_ARGS
 Restart=on-failure

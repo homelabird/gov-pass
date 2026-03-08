@@ -67,6 +67,9 @@ func setupServiceLogging(cfg serviceLogConfig) (*os.File, error) {
 	if path == "" {
 		path = defaultServiceLogPath()
 	}
+	if err := validateWindowsServiceLogPath(path); err != nil {
+		return nil, err
+	}
 
 	maxBytes := cfg.MaxBytes
 	if maxBytes <= 0 {

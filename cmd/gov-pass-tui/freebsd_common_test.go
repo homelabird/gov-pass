@@ -1,0 +1,69 @@
+package main
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestFreeBSDRcVarName(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "default", in: "gov-pass", want: "gov_pass_enable"},
+		{name: "already safe", in: "gov_pass", want: "gov_pass_enable"},
+		{name: "mixed punctuation", in: "gov.pass@lab", want: "gov_pass_lab_enable"},
+		{name: "trimmed", in: "  gov-pass  ", want: "gov_pass_enable"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := freeBSDRcVarName(tt.in); got != tt.want {
+				t.Fatalf("freeBSDRcVarName(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLookTrustedFreeBSDCommand_RejectsPoisonedPATHEntry(t *testing.T) {
+	dir := t.TempDir()
+	cmd := filepath.Join(dir, "service")
+	if err := os.WriteFile(cmd, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write fake command: %v", err)
+	}
+	t.Setenv("PATH", dir)
+
+	origDirs := trustedFreeBSDCommandDirs
+	trustedFreeBSDCommandDirs = []string{filepath.Join(dir, "missing")}
+	defer func() {
+		trustedFreeBSDCommandDirs = origDirs
+	}()
+
+	if got, ok := lookTrustedFreeBSDCommand("service"); ok {
+		t.Fatalf("expected poisoned PATH entry to be rejected, got %q", got)
+	}
+}
+
+func TestLookTrustedFreeBSDCommand_UsesTrustedAbsoluteDir(t *testing.T) {
+	dir := t.TempDir()
+	cmd := filepath.Join(dir, "service")
+	if err := os.WriteFile(cmd, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write fake command: %v", err)
+	}
+
+	origDirs := trustedFreeBSDCommandDirs
+	trustedFreeBSDCommandDirs = []string{dir}
+	defer func() {
+		trustedFreeBSDCommandDirs = origDirs
+	}()
+
+	got, ok := lookTrustedFreeBSDCommand("service")
+	if !ok {
+		t.Fatal("expected trusted command lookup to succeed")
+	}
+	if filepath.Clean(got) != filepath.Clean(cmd) {
+		t.Fatalf("lookTrustedFreeBSDCommand returned %q, want %q", got, cmd)
+	}
+}

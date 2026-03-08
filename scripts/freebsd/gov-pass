@@ -1,0 +1,79 @@
+#!/bin/sh
+
+# PROVIDE: gov-pass
+# REQUIRE: NETWORKING pf
+# KEYWORD: shutdown
+
+. /etc/rc.subr
+
+service_label="gov-pass"
+name="gov_pass"
+rcvar="${name}_enable"
+
+gov_pass_bin="/usr/local/sbin/splitter"
+gov_pass_config="/usr/local/etc/gov-pass/config.json"
+gov_pass_log="/var/log/gov-pass.log"
+pidfile="/var/run/gov-pass.pid"
+procname="${gov_pass_bin}"
+
+start_cmd="${name}_start"
+stop_cmd="${name}_stop"
+status_cmd="${name}_status"
+reload_cmd="${name}_reload"
+extra_commands="reload"
+
+load_rc_config "$name"
+
+: "${gov_pass_enable:=NO}"
+: "${gov_pass_flags:=--config ${gov_pass_config}}"
+
+gov_pass_start() {
+	if [ ! -x "${gov_pass_bin}" ]; then
+		echo "${service_label}: binary not found: ${gov_pass_bin}"
+		return 1
+	fi
+	if [ ! -f "${gov_pass_config}" ]; then
+		echo "${service_label}: config not found: ${gov_pass_config}"
+		return 1
+	fi
+	if check_pidfile "${pidfile}" "${procname}" >/dev/null 2>&1; then
+		echo "${service_label} is already running"
+		return 0
+	fi
+
+	touch "${gov_pass_log}"
+	chmod 0600 "${gov_pass_log}" 2>/dev/null || true
+
+	echo "Starting ${service_label}."
+	/usr/sbin/daemon -f -p "${pidfile}" -o "${gov_pass_log}" \
+		"${gov_pass_bin}" ${gov_pass_flags}
+}
+
+gov_pass_stop() {
+	if ! check_pidfile "${pidfile}" "${procname}" >/dev/null 2>&1; then
+		echo "${service_label} is not running"
+		return 0
+	fi
+
+	pid="$(cat "${pidfile}")"
+	echo "Stopping ${service_label}."
+	kill "${pid}"
+	wait_for_pids "${pid}"
+	rm -f "${pidfile}"
+}
+
+gov_pass_status() {
+	if check_pidfile "${pidfile}" "${procname}" >/dev/null 2>&1; then
+		echo "${service_label} is running as pid $(cat "${pidfile}")"
+		return 0
+	fi
+	echo "${service_label} is not running"
+	return 1
+}
+
+gov_pass_reload() {
+	echo "${service_label}: reload is not supported on FreeBSD; use service ${service_label} onerestart"
+	return 1
+}
+
+run_rc_command "$1"

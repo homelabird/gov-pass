@@ -8,18 +8,19 @@ variables:
 
 build_release:
   stage: build
-  image: golang:1.21
+  image: golang:1.25.8-bookworm
   rules:
     - if: $CI_COMMIT_TAG
   before_script:
     - apt-get update
-    - apt-get install -y --no-install-recommends zip msitools osslsigncode pkg-config gcc
+    - apt-get install -y --no-install-recommends zip msitools osslsigncode openssl pkg-config gcc
   script:
     - set -eu
     - mkdir -p "$DIST_DIR"
     - PKG_VERSION="$CI_COMMIT_TAG"
     - MSI_VERSION="$(echo "$PKG_VERSION" | sed -E 's/^v?([0-9]+)(\\.([0-9]+))?(\\.([0-9]+))?.*$/\\1.\\3.\\5/' | awk -F. '{ printf \"%d.%d.%d\", $1, ($2==\"\"?0:$2), ($3==\"\"?0:$3) }')"
     - BASE_DIR="$DIST_DIR"
+    - cp scripts/install_one_touch_curl.sh "$BASE_DIR/install_one_touch_curl.sh"
     - stage_common() {
         dest="$1";
         mkdir -p "$dest/docs" "$dest/licenses";
@@ -33,6 +34,8 @@ build_release:
     - mkdir -p "$LINUX_DIR"
     - CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o "$LINUX_DIR/splitter" ./cmd/splitter
     - CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o "$LINUX_DIR/gov-pass-tui" ./cmd/gov-pass-tui
+    - cp scripts/linux/gov-pass.service "$LINUX_DIR/"
+    - cp scripts/linux/gov-pass.default "$LINUX_DIR/"
     - stage_common "$LINUX_DIR"
     - tar -C "$BASE_DIR" -czf "$BASE_DIR/gov-pass-${PKG_VERSION}-linux-amd64.tar.gz" "gov-pass-${PKG_VERSION}-linux-amd64"
     - FREEBSD_DIR="$BASE_DIR/gov-pass-${PKG_VERSION}-freebsd-amd64"
@@ -68,13 +71,16 @@ build_release:
     - (cd "$BASE_DIR" && msiinfo export "gov-pass-${PKG_VERSION}-windows-amd64.msi" ServiceControl | grep -q "gov-pass")
     - (cd "$BASE_DIR" && msiinfo export "gov-pass-${PKG_VERSION}-windows-amd64.msi" Shortcut | grep -q "Reload gov-pass config")
     - (cd "$BASE_DIR" && msiinfo export "gov-pass-${PKG_VERSION}-windows-amd64.msi" Shortcut | grep -q "gov-pass TUI")
-    - (cd "$BASE_DIR" && sha256sum "gov-pass-${PKG_VERSION}-linux-amd64.tar.gz" "gov-pass-${PKG_VERSION}-freebsd-amd64.tar.gz" "gov-pass-${PKG_VERSION}-windows-amd64.zip" "gov-pass-${PKG_VERSION}-windows-amd64.msi" > SHA256SUMS)
+    - (cd "$BASE_DIR" && sha256sum "install_one_touch_curl.sh" "gov-pass-${PKG_VERSION}-linux-amd64.tar.gz" "gov-pass-${PKG_VERSION}-freebsd-amd64.tar.gz" "gov-pass-${PKG_VERSION}-windows-amd64.zip" "gov-pass-${PKG_VERSION}-windows-amd64.msi" > SHA256SUMS)
+    - bash scripts/ci/sign_release_manifests.sh "$BASE_DIR/SHA256SUMS"
   artifacts:
     paths:
       - dist/release/*.tar.gz
       - dist/release/*.zip
       - dist/release/*.msi
+      - dist/release/install_one_touch_curl.sh
       - dist/release/SHA256SUMS
+      - dist/release/SHA256SUMS.sig
     expire_in: never
 
 build_rpm_release:
@@ -84,7 +90,7 @@ build_rpm_release:
     - if: $CI_COMMIT_TAG
   script:
     - set -eu
-    - dnf -y install --setopt=install_weak_deps=False rpm-build golang gcc git systemd-rpm-macros rpmlint
+    - dnf -y install --setopt=install_weak_deps=False rpm-build golang gcc git openssl systemd-rpm-macros rpmlint
     - mkdir -p "$DIST_DIR"
     - RAW_TAG="${CI_COMMIT_TAG#v}"
     - |
@@ -116,22 +122,24 @@ build_rpm_release:
     - cp "$BIN_RPM" "$DIST_DIR/gov-pass-${CI_COMMIT_TAG}-linux-amd64.rpm"
     - cp "$SRC_RPM" "$DIST_DIR/gov-pass-${CI_COMMIT_TAG}-linux.src.rpm"
     - (cd "$DIST_DIR" && sha256sum "gov-pass-${CI_COMMIT_TAG}-linux-amd64.rpm" "gov-pass-${CI_COMMIT_TAG}-linux.src.rpm" > SHA256SUMS.rpm)
+    - bash scripts/ci/sign_release_manifests.sh "$DIST_DIR/SHA256SUMS.rpm"
   artifacts:
     paths:
       - dist/release/*.rpm
       - dist/release/*.src.rpm
       - dist/release/SHA256SUMS.rpm
+      - dist/release/SHA256SUMS.rpm.sig
     expire_in: never
 
 build_deb_release:
   stage: build
-  image: debian:12
+  image: golang:1.25.8-bookworm
   rules:
     - if: $CI_COMMIT_TAG
   script:
     - set -eu
     - apt-get update
-    - apt-get install -y --no-install-recommends golang-go dpkg-dev git
+    - apt-get install -y --no-install-recommends dpkg-dev git openssl
     - mkdir -p "$DIST_DIR"
     - RAW_TAG="${CI_COMMIT_TAG#v}"
     - bash packaging/deb/build_deb.sh "$RAW_TAG"
@@ -139,21 +147,80 @@ build_deb_release:
     - test -f "$BIN_DEB"
     - cp "$BIN_DEB" "$DIST_DIR/gov-pass-${CI_COMMIT_TAG}-linux-amd64.deb"
     - (cd "$DIST_DIR" && sha256sum "gov-pass-${CI_COMMIT_TAG}-linux-amd64.deb" > SHA256SUMS.deb)
+    - bash scripts/ci/sign_release_manifests.sh "$DIST_DIR/SHA256SUMS.deb"
   artifacts:
     paths:
       - dist/release/*.deb
       - dist/release/SHA256SUMS.deb
+      - dist/release/SHA256SUMS.deb.sig
     expire_in: never
+
+verify_go_tests:
+  stage: verify
+  image: golang:1.25.8-bookworm
+  before_script:
+    - apt-get update
+    - apt-get install -y --no-install-recommends pkg-config gcc
+  script:
+    - bash -n scripts/install_one_touch_curl.sh
+    - bash -n scripts/ci/sign_release_manifests.sh
+    - bash -n scripts/ci/verify_release_manifest_signature.sh
+    - go test ./... -count=1
+    - go vet ./...
+
+verify_cross_builds:
+  stage: verify
+  image: golang:1.25.8-bookworm
+  script:
+    - set -eu
+    - mkdir -p dist/verify
+    - CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o dist/verify/splitter-linux-amd64 ./cmd/splitter
+    - CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o dist/verify/gov-pass-tui-linux-amd64 ./cmd/gov-pass-tui
+    - CGO_ENABLED=0 GOOS=freebsd GOARCH=amd64 go build -o dist/verify/splitter-freebsd-amd64 ./cmd/splitter
+    - CGO_ENABLED=0 GOOS=freebsd GOARCH=amd64 go build -o dist/verify/gov-pass-tui-freebsd-amd64 ./cmd/gov-pass-tui
+    - CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o dist/verify/splitter-windows-amd64.exe ./cmd/splitter
+    - CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o dist/verify/gov-pass-tui-windows-amd64.exe ./cmd/gov-pass-tui
+    - CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o dist/verify/gov-pass-msi-helper-windows-amd64.exe ./cmd/gov-pass-msi-helper
+
+verify_release_signing_helpers:
+  stage: verify
+  image: golang:1.25.8-bookworm
+  before_script:
+    - apt-get update
+    - apt-get install -y --no-install-recommends openssl
+  script:
+    - set -eu
+    - TMP="$(mktemp -d)"
+    - trap 'rm -rf "$TMP"' EXIT
+    - openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$TMP/release-key.pem"
+    - openssl pkey -in "$TMP/release-key.pem" -pubout -out "$TMP/release-pub.pem"
+    - printf 'deadbeef  gov-pass-test.tar.gz\n' > "$TMP/SHA256SUMS"
+    - RELEASE_CHECKSUM_SIGNING_KEY_PATH="$TMP/release-key.pem" bash scripts/ci/sign_release_manifests.sh "$TMP/SHA256SUMS"
+    - RELEASE_CHECKSUM_VERIFY_PUBKEY_PATH="$TMP/release-pub.pem" bash scripts/ci/verify_release_manifest_signature.sh "$TMP/SHA256SUMS"
 
 verify_tui_tests:
   stage: verify
-  image: golang:1.21
+  image: golang:1.25.8-bookworm
   before_script:
     - apt-get update
     - apt-get install -y --no-install-recommends pkg-config gcc
   script:
     - go test ./cmd/gov-pass-tui/...
     - GOOS=windows GOARCH=amd64 go test -c ./cmd/gov-pass-tui
+
+verify_linux_netns_e2e:
+  stage: verify
+  image: golang:1.25.8-bookworm
+  rules:
+    - if: ($CI_COMMIT_BRANCH || $CI_MERGE_REQUEST_IID) && $LINUX_NETNS_E2E == "1"
+  tags:
+    - linux-root
+  before_script:
+    - apt-get update
+    - apt-get install -y --no-install-recommends iproute2 curl openssl
+  script:
+    - go build -o dist/splitter ./cmd/splitter
+    - ./scripts/linux/netns_integration_test.sh
 
 verify_windows_msi_e2e:
   stage: verify
@@ -166,6 +233,16 @@ verify_windows_msi_e2e:
     - windows
   script:
     - powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\\windows\\ci_msi_e2e.ps1
+
+verify_freebsd_tui_smoke:
+  stage: verify
+  rules:
+    - if: ($CI_COMMIT_BRANCH || $CI_MERGE_REQUEST_IID) && $FREEBSD_E2E == "1"
+  tags:
+    - freebsd-root
+  script:
+    - env INSTALL_TUI=1 bash ./scripts/install_one_touch.sh
+    - ./scripts/freebsd/ci_tui_smoke.sh
 
 release:
   stage: release
@@ -190,13 +267,21 @@ release:
           url: "$CI_PROJECT_URL/-/jobs/artifacts/$CI_COMMIT_TAG/raw/dist/release/gov-pass-${CI_COMMIT_TAG}-windows-amd64.msi?job=build_release"
         - name: "SHA256SUMS"
           url: "$CI_PROJECT_URL/-/jobs/artifacts/$CI_COMMIT_TAG/raw/dist/release/SHA256SUMS?job=build_release"
+        - name: "SHA256SUMS.sig"
+          url: "$CI_PROJECT_URL/-/jobs/artifacts/$CI_COMMIT_TAG/raw/dist/release/SHA256SUMS.sig?job=build_release"
+        - name: "install_one_touch_curl.sh"
+          url: "$CI_PROJECT_URL/-/jobs/artifacts/$CI_COMMIT_TAG/raw/dist/release/install_one_touch_curl.sh?job=build_release"
         - name: "gov-pass-linux-amd64.rpm"
           url: "$CI_PROJECT_URL/-/jobs/artifacts/$CI_COMMIT_TAG/raw/dist/release/gov-pass-${CI_COMMIT_TAG}-linux-amd64.rpm?job=build_rpm_release"
         - name: "gov-pass-linux.src.rpm"
           url: "$CI_PROJECT_URL/-/jobs/artifacts/$CI_COMMIT_TAG/raw/dist/release/gov-pass-${CI_COMMIT_TAG}-linux.src.rpm?job=build_rpm_release"
         - name: "SHA256SUMS.rpm"
           url: "$CI_PROJECT_URL/-/jobs/artifacts/$CI_COMMIT_TAG/raw/dist/release/SHA256SUMS.rpm?job=build_rpm_release"
+        - name: "SHA256SUMS.rpm.sig"
+          url: "$CI_PROJECT_URL/-/jobs/artifacts/$CI_COMMIT_TAG/raw/dist/release/SHA256SUMS.rpm.sig?job=build_rpm_release"
         - name: "gov-pass-linux-amd64.deb"
           url: "$CI_PROJECT_URL/-/jobs/artifacts/$CI_COMMIT_TAG/raw/dist/release/gov-pass-${CI_COMMIT_TAG}-linux-amd64.deb?job=build_deb_release"
         - name: "SHA256SUMS.deb"
           url: "$CI_PROJECT_URL/-/jobs/artifacts/$CI_COMMIT_TAG/raw/dist/release/SHA256SUMS.deb?job=build_deb_release"
+        - name: "SHA256SUMS.deb.sig"
+          url: "$CI_PROJECT_URL/-/jobs/artifacts/$CI_COMMIT_TAG/raw/dist/release/SHA256SUMS.deb.sig?job=build_deb_release"

@@ -1,14 +1,51 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+TRUSTED_PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin"
+PATH="${TRUSTED_PATH}"
+export PATH
 
-if ! command -v go >/dev/null 2>&1; then
+lookup_trusted_command() {
+  local name="$1"
+  local old_ifs="$IFS"
+  IFS=:
+  for dir in $TRUSTED_PATH; do
+    local candidate="${dir}/${name}"
+    if [ -f "$candidate" ] && [ -x "$candidate" ]; then
+      printf '%s\n' "$candidate"
+      IFS="$old_ifs"
+      return 0
+    fi
+  done
+  IFS="$old_ifs"
+  return 1
+}
+
+script_path="${BASH_SOURCE[0]}"
+case "$script_path" in
+  */*) script_dir="${script_path%/*}" ;;
+  *) script_dir="." ;;
+esac
+ROOT_DIR="$(cd -- "${script_dir}/.." && pwd)"
+
+GO_BIN="$(lookup_trusted_command go)" || {
   echo "go is required — install from https://go.dev/dl/"
   exit 1
-fi
+}
+UNAME_BIN="$(lookup_trusted_command uname)" || {
+  echo "uname not found in trusted command directories"
+  exit 1
+}
+ID_BIN="$(lookup_trusted_command id)" || {
+  echo "id not found in trusted command directories"
+  exit 1
+}
+INSTALL_BIN="$(lookup_trusted_command install)" || {
+  echo "install not found in trusted command directories"
+  exit 1
+}
 
-OS="$(uname -s)"
+OS="$("${UNAME_BIN}" -s)"
 INSTALL_TUI="${INSTALL_TUI:-0}"
 
 if [ "$OS" != "Linux" ] && [ "$OS" != "FreeBSD" ]; then
@@ -16,24 +53,30 @@ if [ "$OS" != "Linux" ] && [ "$OS" != "FreeBSD" ]; then
   exit 1
 fi
 
-if [ "$(id -u)" -ne 0 ]; then
+if [ "$("${ID_BIN}" -u)" -ne 0 ]; then
   echo "run as root (e.g. sudo ./scripts/install_one_touch.sh)"
   exit 1
 fi
 
 cd "$ROOT_DIR"
-go build -o dist/splitter ./cmd/splitter
+"${GO_BIN}" build -o dist/splitter ./cmd/splitter
 
 if [ "$OS" = "Linux" ]; then
-  make install
+  MAKE_BIN="$(lookup_trusted_command make)" || {
+    echo "make not found in trusted command directories"
+    exit 1
+  }
+  "${MAKE_BIN}" install
   if [ "$INSTALL_TUI" = "1" ]; then
-    make install-tui
+    "${MAKE_BIN}" install-tui
   fi
-  if command -v systemctl >/dev/null 2>&1; then
-    systemctl daemon-reload
-    systemctl enable --now gov-pass
+  if SYSTEMCTL_BIN="$(lookup_trusted_command systemctl)"; then
+    "${SYSTEMCTL_BIN}" daemon-reload
+    "${SYSTEMCTL_BIN}" enable --now gov-pass
   fi
   echo "Installed on Linux: /opt/gov-pass/dist/splitter"
+  echo "Linux service defaults keep --auto-install-tools=false in /etc/default/gov-pass."
+  echo "On multi-egress, VPN, or container hosts, set --iface explicitly in /etc/default/gov-pass."
   if [ "$INSTALL_TUI" = "1" ]; then
     echo "Installed on Linux: /opt/gov-pass/dist/gov-pass-tui (TUI controller)"
     echo "Linux runs as terminal TUI controller (nmtui-like via whiptail when available)."
@@ -41,16 +84,33 @@ if [ "$OS" = "Linux" ]; then
   exit 0
 fi
 
-install -d /usr/local/sbin
-install -m 0755 dist/splitter /usr/local/sbin/splitter
+"${INSTALL_BIN}" -d /usr/local/sbin
+"${INSTALL_BIN}" -d /usr/local/etc/gov-pass
+"${INSTALL_BIN}" -d /usr/local/etc/rc.d
+"${INSTALL_BIN}" -d /usr/local/libexec/gov-pass
+"${INSTALL_BIN}" -m 0755 dist/splitter /usr/local/sbin/splitter
 if [ "$INSTALL_TUI" = "1" ]; then
-  go build -o dist/gov-pass-tui ./cmd/gov-pass-tui
-  install -m 0755 dist/gov-pass-tui /usr/local/sbin/gov-pass-tui
+  "${GO_BIN}" build -o dist/gov-pass-tui ./cmd/gov-pass-tui
+  "${INSTALL_BIN}" -m 0755 dist/gov-pass-tui /usr/local/sbin/gov-pass-tui
+fi
+"${INSTALL_BIN}" -m 0755 scripts/freebsd/gov-pass /usr/local/etc/rc.d/gov-pass
+"${INSTALL_BIN}" -m 0755 scripts/freebsd/install_pf_anchor.sh /usr/local/libexec/gov-pass/install_pf_anchor.sh
+"${INSTALL_BIN}" -m 0755 scripts/freebsd/uninstall_pf_anchor.sh /usr/local/libexec/gov-pass/uninstall_pf_anchor.sh
+if [ ! -f /usr/local/etc/gov-pass/config.json ]; then
+  "${INSTALL_BIN}" -m 0644 docs/examples/splitter.freebsd.json /usr/local/etc/gov-pass/config.json
+fi
+if [ ! -f /usr/local/etc/gov-pass/pf.anchor.conf ]; then
+  "${INSTALL_BIN}" -m 0644 docs/pf/gov-pass.anchor.wan.conf /usr/local/etc/gov-pass/pf.anchor.conf
 fi
 
 echo "Installed on FreeBSD: /usr/local/sbin/splitter"
 if [ "$INSTALL_TUI" = "1" ]; then
   echo "Installed on FreeBSD: /usr/local/sbin/gov-pass-tui (TUI controller)"
 fi
-echo "Configure pf divert rules before starting (see docs/pf/ and docs/DESIGN_BSD.md)."
-echo "Start command: /usr/local/sbin/splitter"
+echo "Installed FreeBSD service: /usr/local/etc/rc.d/gov-pass"
+echo "Installed PF helpers: /usr/local/libexec/gov-pass/install_pf_anchor.sh and /usr/local/libexec/gov-pass/uninstall_pf_anchor.sh"
+echo "Edit /usr/local/etc/gov-pass/pf.anchor.conf, then apply with:"
+echo "  /usr/local/libexec/gov-pass/install_pf_anchor.sh"
+echo "Config path: /usr/local/etc/gov-pass/config.json"
+echo "Enable service with:"
+echo "  sysrc gov_pass_enable=YES && service gov-pass start"

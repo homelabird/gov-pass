@@ -128,6 +128,44 @@ function Wait-ServiceMissing {
   throw "Service $Name still exists after ${TimeoutSeconds}s"
 }
 
+function Invoke-NativeCapture {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$FilePath,
+    [string[]]$ArgumentList = @(),
+    [string]$InputText = ""
+  )
+
+  $psi = New-Object System.Diagnostics.ProcessStartInfo
+  $psi.FileName = $FilePath
+  $psi.UseShellExecute = $false
+  $psi.RedirectStandardOutput = $true
+  $psi.RedirectStandardError = $true
+  $psi.RedirectStandardInput = $true
+  foreach ($arg in $ArgumentList) {
+    [void]$psi.ArgumentList.Add($arg)
+  }
+
+  $proc = New-Object System.Diagnostics.Process
+  $proc.StartInfo = $psi
+  [void]$proc.Start()
+  if (-not [string]::IsNullOrEmpty($InputText)) {
+    $proc.StandardInput.Write($InputText)
+  }
+  $proc.StandardInput.Close()
+
+  $stdout = $proc.StandardOutput.ReadToEnd()
+  $stderr = $proc.StandardError.ReadToEnd()
+  $proc.WaitForExit()
+
+  [pscustomobject]@{
+    ExitCode = $proc.ExitCode
+    Stdout   = $stdout
+    Stderr   = $stderr
+    Output   = $stdout + $stderr
+  }
+}
+
 $programDataDir = "C:\\ProgramData\\gov-pass"
 $cfgPath = Join-Path $programDataDir "config.json"
 $logPath = Join-Path $programDataDir "splitter.log"
@@ -258,6 +296,31 @@ try {
   $svc = Wait-ServiceStatus -Name $svcName -Status "Stopped" -TimeoutSeconds 60
   Start-Service -Name $svcName -ErrorAction Stop
   $svc = Wait-ServiceStatus -Name $svcName -Status "Running" -TimeoutSeconds 60
+
+  # TUI smoke.
+  $tuiStatus = Invoke-NativeCapture -FilePath $tuiExePath -ArgumentList @("--service-name", $svcName, "--action", "status")
+  if ($tuiStatus.ExitCode -ne 0) {
+    throw "TUI status smoke failed with exit code $($tuiStatus.ExitCode): $($tuiStatus.Output)"
+  }
+  if ($tuiStatus.Output -notmatch "active|inactive") {
+    throw "TUI status smoke returned unexpected output: $($tuiStatus.Output)"
+  }
+
+  $tuiReload = Invoke-NativeCapture -FilePath $tuiExePath -ArgumentList @("--service-name", $svcName, "--action", "reload")
+  if ($tuiReload.ExitCode -ne 0) {
+    throw "TUI reload smoke failed with exit code $($tuiReload.ExitCode): $($tuiReload.Output)"
+  }
+
+  $tuiPanel = Invoke-NativeCapture -FilePath $tuiExePath -ArgumentList @("--service-name", $svcName) -InputText "r`nq`n"
+  if ($tuiPanel.ExitCode -ne 0) {
+    throw "Interactive TUI smoke failed with exit code $($tuiPanel.ExitCode): $($tuiPanel.Output)"
+  }
+  if ($tuiPanel.Output -notmatch "GOV-PASS CONTROL") {
+    throw "Interactive TUI smoke missing panel header: $($tuiPanel.Output)"
+  }
+  if ($tuiPanel.Output -notmatch "Select>") {
+    throw "Interactive TUI smoke missing prompt: $($tuiPanel.Output)"
+  }
 
 } finally {
   # Best-effort uninstall.

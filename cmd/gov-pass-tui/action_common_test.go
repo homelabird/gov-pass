@@ -39,38 +39,46 @@ func TestNormalizeAction_Invalid(t *testing.T) {
 	}
 }
 
-func TestActionGate(t *testing.T) {
-	var g actionGate
-	if !g.tryBegin() {
-		t.Fatal("first tryBegin should succeed")
-	}
-	if g.tryBegin() {
-		t.Fatal("second tryBegin should fail while busy")
-	}
-	g.end()
-	if !g.tryBegin() {
-		t.Fatal("tryBegin should succeed after end")
-	}
-}
-
-func TestNormalizeServiceName_Valid(t *testing.T) {
+func TestNormalizeUnixServiceName_Valid(t *testing.T) {
 	tests := []string{"gov-pass", "gov_pass", "gov.pass", "gov-pass@prod", "GovPass1"}
 	for _, in := range tests {
-		got, err := normalizeServiceName(in)
+		got, err := normalizeUnixServiceName(in)
 		if err != nil {
-			t.Fatalf("normalizeServiceName(%q) unexpected error: %v", in, err)
+			t.Fatalf("normalizeUnixServiceName(%q) unexpected error: %v", in, err)
 		}
 		if got != strings.TrimSpace(in) {
-			t.Fatalf("normalizeServiceName(%q) = %q", in, got)
+			t.Fatalf("normalizeUnixServiceName(%q) = %q", in, got)
 		}
 	}
 }
 
-func TestNormalizeServiceName_Invalid(t *testing.T) {
+func TestNormalizeUnixServiceName_Invalid(t *testing.T) {
 	tests := []string{"", "  ", "-gov-pass", "gov pass", "gov/pass", "gov\npass"}
 	for _, in := range tests {
-		if _, err := normalizeServiceName(in); err == nil {
-			t.Fatalf("normalizeServiceName(%q) expected error", in)
+		if _, err := normalizeUnixServiceName(in); err == nil {
+			t.Fatalf("normalizeUnixServiceName(%q) expected error", in)
+		}
+	}
+}
+
+func TestNormalizeWindowsServiceName_Valid(t *testing.T) {
+	tests := []string{"gov-pass", "Gov Pass", "GovPass_Prod", "Gov.Pass@Lab"}
+	for _, in := range tests {
+		got, err := normalizeWindowsServiceName(in)
+		if err != nil {
+			t.Fatalf("normalizeWindowsServiceName(%q) unexpected error: %v", in, err)
+		}
+		if got != strings.TrimSpace(in) {
+			t.Fatalf("normalizeWindowsServiceName(%q) = %q", in, got)
+		}
+	}
+}
+
+func TestNormalizeWindowsServiceName_Invalid(t *testing.T) {
+	tests := []string{"", "  ", "bad\nname", "bad\rname"}
+	for _, in := range tests {
+		if _, err := normalizeWindowsServiceName(in); err == nil {
+			t.Fatalf("normalizeWindowsServiceName(%q) expected error", in)
 		}
 	}
 }
