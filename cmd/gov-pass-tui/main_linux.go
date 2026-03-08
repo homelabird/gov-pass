@@ -9,10 +9,24 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 )
 
 const defaultServiceName = "gov-pass"
+
+var (
+	linuxLookPath     = linuxTUICommandLookPath
+	linuxSystemctlCmd = func(args ...string) (*exec.Cmd, error) {
+		return systemctlCommand(args...)
+	}
+	linuxSudoSystemctlCmd = func(action, serviceName string) (*exec.Cmd, error) {
+		return sudoSystemctlCommand(action, serviceName)
+	}
+	linuxPkexecSystemctlCmd = func(action, serviceName string) (*exec.Cmd, error) {
+		return pkexecSystemctlCommand(action, serviceName)
+	}
+)
 
 func main() {
 	serviceName := flag.String("service-name", defaultServiceName, "systemd service name to control")
@@ -23,7 +37,7 @@ func main() {
 	if name == "" {
 		name = defaultServiceName
 	}
-	name, err := normalizeServiceName(name)
+	name, err := normalizeUnixServiceName(name)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
@@ -53,7 +67,8 @@ func runTUI(serviceName string) error {
 
 func runWhiptailTUI(serviceName string) error {
 	for {
-		choice, canceled, err := whiptailMenu(serviceName, buildStatusSummary(serviceName))
+		status := collectTUIStatus(serviceName)
+		choice, canceled, err := whiptailMenu(serviceName, status)
 		if err != nil {
 			return err
 		}
@@ -72,18 +87,23 @@ func runWhiptailTUI(serviceName string) error {
 	}
 }
 
-func whiptailMenu(serviceName, summary string) (choice string, canceled bool, err error) {
+func whiptailMenu(serviceName string, status tuiStatus) (choice string, canceled bool, err error) {
+	height, width, menuHeight := whiptailMenuDimensions(status)
 	args := []string{
-		"--title", "gov-pass control",
-		"--menu", summary,
-		"18", "88", "9",
-		"1", fmt.Sprintf("Start/Stop service (%s)", serviceName),
-		"2", "Restart service",
-		"3", fmt.Sprintf("Enable/Disable boot start (%s)", serviceName),
+		"--title", "gov-pass operator panel",
+		"--menu", buildCompactStatusSummary(status),
+		strconv.Itoa(height), strconv.Itoa(width), strconv.Itoa(menuHeight),
+		"1", fmt.Sprintf("Toggle service state (%s)", serviceName),
+		"2", "Restart runtime cleanly",
+		"3", fmt.Sprintf("Toggle boot policy (%s)", serviceName),
+		"r", "Refresh status panel",
 		"q", "Quit",
 		"--output-fd", "1",
 	}
-	cmd := whiptailCommand(args...)
+	cmd, err := whiptailCommand(args...)
+	if err != nil {
+		return "", false, err
+	}
 	cmd.Stdin = os.Stdin
 	cmd.Stderr = os.Stderr
 	out, cmdErr := cmd.Output()
@@ -101,14 +121,11 @@ func whiptailMenu(serviceName, summary string) (choice string, canceled bool, er
 }
 
 func whiptailMessage(title, text string) error {
-	cmd := whiptailCommand("--title", title, "--msgbox", text, "16", "90")
-	cmd.Stdin = os.Stdin
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
-}
-
-func whiptailShowText(title, text string) error {
-	cmd := whiptailCommand("--title", title, "--scrolltext", "--msgbox", text, "28", "110")
+	height, width := whiptailMessageDimensions(text)
+	cmd, err := whiptailCommand("--title", title, "--msgbox", text, strconv.Itoa(height), strconv.Itoa(width))
+	if err != nil {
+		return err
+	}
 	cmd.Stdin = os.Stdin
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
@@ -119,7 +136,7 @@ func runPlainTUI(serviceName string) error {
 	lastNote := "Ready."
 
 	for {
-		renderPlainTUI(serviceName, lastNote)
+		renderPlainTUI(collectTUIStatus(serviceName), lastNote)
 		fmt.Print("Select> ")
 
 		if !scanner.Scan() {
@@ -150,21 +167,30 @@ func runPlainTUI(serviceName string) error {
 	}
 }
 
-func renderPlainTUI(serviceName, note string) {
+func renderPlainTUI(status tuiStatus, note string) {
 	clearTerminalScreen()
-	fmt.Println("=== gov-pass TUI ===")
-	fmt.Println(buildStatusSummary(serviceName))
+	fmt.Print(renderPlainTUIView(status, note))
 	fmt.Println()
-	fmt.Printf("1. Start/Stop service (%s)\n", serviceName)
-	fmt.Println("2. Restart service")
-	fmt.Printf("3. Enable/Disable boot start (%s)\n", serviceName)
-	fmt.Println("q. Quit")
-	if strings.TrimSpace(note) != "" {
-		fmt.Println()
-		fmt.Println("Message:")
-		fmt.Println(note)
-	}
-	fmt.Println()
+}
+
+func whiptailMenuDimensions(status tuiStatus) (height, width, menuHeight int) {
+	size := currentTerminalSize()
+	maxWidth := maxInt(16, size.Cols-2)
+	width = clampInt(size.Cols-4, minInt(60, maxWidth), maxWidth)
+	summaryLines := countWrappedTextLines(buildCompactStatusSummary(status), width-8)
+	maxHeight := maxInt(8, size.Rows-2)
+	height = clampInt(summaryLines+len(defaultTUIActions)+9, minInt(16, maxHeight), maxHeight)
+	menuHeight = clampInt(len(defaultTUIActions), minInt(5, maxInt(1, height-summaryLines-7)), maxInt(1, height-summaryLines-7))
+	return height, width, menuHeight
+}
+
+func whiptailMessageDimensions(text string) (height, width int) {
+	size := currentTerminalSize()
+	maxWidth := maxInt(16, size.Cols-2)
+	width = clampInt(size.Cols-6, minInt(56, maxWidth), maxWidth)
+	maxHeight := maxInt(8, size.Rows-2)
+	height = clampInt(countWrappedTextLines(text, width-8)+6, minInt(10, maxHeight), maxHeight)
+	return height, width
 }
 
 func clearTerminalScreen() {
@@ -213,39 +239,22 @@ func executeMenuChoice(serviceName, choice string) (string, error) {
 	}
 }
 
-func buildStatusSummary(serviceName string) string {
-	active, activeErr := isServiceActive(serviceName)
+func collectTUIStatus(serviceName string) tuiStatus {
 	stateText, stateErr := serviceStatusText(serviceName)
 	enabled, enabledErr := isServiceEnabled(serviceName)
-
-	state := "unknown"
-	if stateText != "" {
-		state = stateText
-	}
-	activeStr := "no"
-	if active {
-		activeStr = "yes"
-	}
-	enabledStr := "no"
-	if enabled {
-		enabledStr = "yes"
-	}
-
-	lines := []string{
-		fmt.Sprintf("Service: %s", serviceName),
-		fmt.Sprintf("Status: %s (active=%s)", state, activeStr),
-		fmt.Sprintf("Enabled at boot: %s", enabledStr),
-	}
-
-	if activeErr != nil || stateErr != nil || enabledErr != nil {
-		lines = append(lines, "Warning: some status checks failed.")
-	}
-
-	return strings.Join(lines, "\n")
+	return newTUIStatus(
+		"Linux",
+		serviceName,
+		stateText,
+		strings.EqualFold(stateText, "active"),
+		enabled,
+		statusIssue{Label: "service", Err: stateErr},
+		statusIssue{Label: "boot", Err: enabledErr},
+	)
 }
 
 func runAction(serviceName string, action string) error {
-	serviceName, err := normalizeServiceName(serviceName)
+	serviceName, err := normalizeUnixServiceName(serviceName)
 	if err != nil {
 		return err
 	}
@@ -283,67 +292,53 @@ func runAction(serviceName string, action string) error {
 }
 
 func isServiceActive(serviceName string) (bool, error) {
-	cmd := systemctlCommand("is-active", "--quiet", serviceName)
-	err := cmd.Run()
-	if err == nil {
-		return true, nil
-	}
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
-		return false, nil
-	}
-	return false, err
+	state, err := serviceStatusText(serviceName)
+	return strings.EqualFold(state, "active"), err
 }
 
 func isServiceEnabled(serviceName string) (bool, error) {
-	cmd := systemctlCommand("is-enabled", "--quiet", serviceName)
-	err := cmd.Run()
-	if err == nil {
-		return true, nil
+	cmd, err := linuxSystemctlCmd("is-enabled", serviceName)
+	if err != nil {
+		return false, err
 	}
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
-		return false, nil
+	out, err := cmd.CombinedOutput()
+	text := strings.TrimSpace(string(out))
+	if enabled, ok := classifySystemctlEnabledStatus(text); ok {
+		return enabled, nil
 	}
-	return false, err
+	if err != nil {
+		return false, fmt.Errorf("systemctl is-enabled %s failed: %s", serviceName, nonEmpty(text, err.Error()))
+	}
+	if text == "" {
+		return false, fmt.Errorf("systemctl is-enabled %s returned empty output", serviceName)
+	}
+	return false, fmt.Errorf("systemctl is-enabled %s returned unrecognized state: %s", serviceName, text)
 }
 
 func serviceStatusText(serviceName string) (string, error) {
-	cmd := systemctlCommand("is-active", serviceName)
+	cmd, err := linuxSystemctlCmd("is-active", serviceName)
+	if err != nil {
+		return "", err
+	}
 	out, err := cmd.CombinedOutput()
 	text := strings.TrimSpace(string(out))
+	if state, _, ok := classifySystemctlActiveStatus(text); ok {
+		return state, nil
+	}
+	if err != nil {
+		return nonEmpty(firstStatusLine(text), "unknown"), fmt.Errorf("systemctl is-active %s failed: %s", serviceName, nonEmpty(text, err.Error()))
+	}
 	if text == "" {
-		if err == nil {
-			return "unknown", nil
-		}
-		return "", err
+		return "unknown", fmt.Errorf("systemctl is-active %s returned empty output", serviceName)
 	}
-	return text, nil
-}
-
-func serviceStatusDetail(serviceName string) (string, error) {
-	cmd := systemctlCommand("status", "--no-pager", serviceName)
-	out, err := cmd.CombinedOutput()
-	text := strings.TrimSpace(string(out))
-	if text == "" && err != nil {
-		return "", err
-	}
-	return text, nil
-}
-
-func serviceRecentLogs(serviceName string, lines int) (string, error) {
-	lineArg := fmt.Sprintf("%d", lines)
-	cmd := journalctlCommand("-u", serviceName, "-n", lineArg, "--no-pager")
-	out, err := cmd.CombinedOutput()
-	text := strings.TrimSpace(string(out))
-	if text == "" && err != nil {
-		return "", err
-	}
-	return text, nil
+	return nonEmpty(firstStatusLine(text), "unknown"), fmt.Errorf("systemctl is-active %s returned unrecognized state: %s", serviceName, text)
 }
 
 func elevatedSystemctl(action, serviceName string) error {
-	cmd := systemctlCommand(action, serviceName)
+	cmd, err := linuxSystemctlCmd(action, serviceName)
+	if err != nil {
+		return err
+	}
 	out, err := cmd.CombinedOutput()
 	if err == nil {
 		return nil
@@ -358,13 +353,26 @@ func elevatedSystemctl(action, serviceName string) error {
 		return fmt.Errorf("systemctl %s %s failed: %s", action, serviceName, nonEmpty(outText, err.Error()))
 	}
 
-	sudo := sudoSystemctlCommand(action, serviceName)
+	sudo, sudoResolveErr := linuxSudoSystemctlCmd(action, serviceName)
+	if sudoResolveErr != nil {
+		return fmt.Errorf("systemctl %s %s failed: %s | sudo: %s", action, serviceName, nonEmpty(outText, err.Error()), sudoResolveErr.Error())
+	}
 	sudoOut, sudoErr := sudo.CombinedOutput()
 	if sudoErr == nil {
 		return nil
 	}
 
-	pkexec := pkexecSystemctlCommand(action, serviceName)
+	pkexec, pkexecResolveErr := linuxPkexecSystemctlCmd(action, serviceName)
+	if pkexecResolveErr != nil {
+		return fmt.Errorf(
+			"systemctl %s %s failed: %s | sudo: %s | pkexec: %s",
+			action,
+			serviceName,
+			nonEmpty(outText, err.Error()),
+			nonEmpty(strings.TrimSpace(string(sudoOut)), sudoErr.Error()),
+			pkexecResolveErr.Error(),
+		)
+	}
 	pkOut, pkErr := pkexec.CombinedOutput()
 	if pkErr == nil {
 		return nil
@@ -409,31 +417,50 @@ func nonEmpty(primary, fallback string) string {
 }
 
 func hasCommand(name string) bool {
-	_, err := exec.LookPath(name)
-	return err == nil
+	_, ok := linuxLookPath(name)
+	return ok
 }
 
-func whiptailCommand(args ...string) *exec.Cmd {
-	// #nosec G204 -- runs a fixed binary without a shell; title/text arguments stay positional.
-	return exec.Command("whiptail", args...)
+func whiptailCommand(args ...string) (*exec.Cmd, error) {
+	path, ok := linuxLookPath("whiptail")
+	if !ok {
+		return nil, fmt.Errorf("whiptail not found in trusted command directories")
+	}
+	// #nosec G204 -- path is resolved from trusted command directories and arguments stay positional.
+	return exec.Command(path, args...), nil
 }
 
-func systemctlCommand(args ...string) *exec.Cmd {
+func systemctlCommand(args ...string) (*exec.Cmd, error) {
+	path, ok := linuxLookPath("systemctl")
+	if !ok {
+		return nil, fmt.Errorf("systemctl not found in trusted command directories")
+	}
 	// #nosec G204 -- action and service name are normalized through allowlists before invocation.
-	return exec.Command("systemctl", args...)
+	return exec.Command(path, args...), nil
 }
 
-func journalctlCommand(args ...string) *exec.Cmd {
-	// #nosec G204 -- service name and line count are normalized before invocation.
-	return exec.Command("journalctl", args...)
-}
-
-func sudoSystemctlCommand(action, serviceName string) *exec.Cmd {
+func sudoSystemctlCommand(action, serviceName string) (*exec.Cmd, error) {
+	sudoPath, ok := linuxLookPath("sudo")
+	if !ok {
+		return nil, fmt.Errorf("sudo not found in trusted command directories")
+	}
+	systemctlPath, ok := linuxLookPath("systemctl")
+	if !ok {
+		return nil, fmt.Errorf("systemctl not found in trusted command directories")
+	}
 	// #nosec G204 -- action and service name are normalized through allowlists before invocation.
-	return exec.Command("sudo", "-n", "systemctl", action, serviceName)
+	return exec.Command(sudoPath, "-n", systemctlPath, action, serviceName), nil
 }
 
-func pkexecSystemctlCommand(action, serviceName string) *exec.Cmd {
+func pkexecSystemctlCommand(action, serviceName string) (*exec.Cmd, error) {
+	pkexecPath, ok := linuxLookPath("pkexec")
+	if !ok {
+		return nil, fmt.Errorf("pkexec not found in trusted command directories")
+	}
+	systemctlPath, ok := linuxLookPath("systemctl")
+	if !ok {
+		return nil, fmt.Errorf("systemctl not found in trusted command directories")
+	}
 	// #nosec G204 -- action and service name are normalized through allowlists before invocation.
-	return exec.Command("pkexec", "systemctl", action, serviceName)
+	return exec.Command(pkexecPath, systemctlPath, action, serviceName), nil
 }

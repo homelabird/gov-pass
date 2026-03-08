@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync/atomic"
 )
 
 var allowedTUIActions = map[string]struct{}{
@@ -26,7 +25,7 @@ func normalizeAction(action string) (string, error) {
 	return normalized, nil
 }
 
-func normalizeServiceName(name string) (string, error) {
+func normalizeUnixServiceName(name string) (string, error) {
 	normalized := strings.TrimSpace(name)
 	if normalized == "" {
 		return "", errors.New("service name is empty")
@@ -51,14 +50,18 @@ func normalizeServiceName(name string) (string, error) {
 	return normalized, nil
 }
 
-type actionGate struct {
-	busy uint32
-}
-
-func (g *actionGate) tryBegin() bool {
-	return atomic.CompareAndSwapUint32(&g.busy, 0, 1)
-}
-
-func (g *actionGate) end() {
-	atomic.StoreUint32(&g.busy, 0)
+func normalizeWindowsServiceName(name string) (string, error) {
+	normalized := strings.TrimSpace(name)
+	if normalized == "" {
+		return "", errors.New("service name is empty")
+	}
+	if len(normalized) > 256 {
+		return "", errors.New("service name is too long")
+	}
+	for _, r := range normalized {
+		if r == 0 || r == '\r' || r == '\n' {
+			return "", fmt.Errorf("service name contains unsupported character %q", r)
+		}
+	}
+	return normalized, nil
 }

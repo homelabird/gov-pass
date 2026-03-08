@@ -41,14 +41,15 @@ type engineJSONConfig struct {
 }
 
 type winDivertJSONConfig struct {
-	Filter            *string `json:"filter,omitempty"`
-	QueueLen          *uint64 `json:"queue_len,omitempty"`
-	QueueTimeMs       *uint64 `json:"queue_time_ms,omitempty"`
-	QueueSizeBytes    *uint64 `json:"queue_size_bytes,omitempty"`
-	WinDivertDir      *string `json:"windivert_dir,omitempty"`
-	WinDivertSys      *string `json:"windivert_sys,omitempty"`
-	AutoInstallDriver *bool   `json:"auto_install_driver,omitempty"`
-	AutoDownloadFiles *bool   `json:"auto_download_files,omitempty"`
+	Filter               *string `json:"filter,omitempty"`
+	QueueLen             *uint64 `json:"queue_len,omitempty"`
+	QueueTimeMs          *uint64 `json:"queue_time_ms,omitempty"`
+	QueueSizeBytes       *uint64 `json:"queue_size_bytes,omitempty"`
+	WinDivertDir         *string `json:"windivert_dir,omitempty"`
+	WinDivertSys         *string `json:"windivert_sys,omitempty"`
+	AllowServiceTakeover *bool   `json:"allow_service_takeover,omitempty"`
+	AutoInstallDriver    *bool   `json:"auto_install_driver,omitempty"`
+	AutoDownloadFiles    *bool   `json:"auto_download_files,omitempty"`
 }
 
 type windowsCLIArgs struct {
@@ -73,8 +74,9 @@ type windowsCLIArgs struct {
 	QueueTime uint64
 	QueueSize uint64
 
-	WinDivertDir string
-	WinDivertSys string
+	WinDivertDir         string
+	WinDivertSys         string
+	AllowServiceTakeover bool
 
 	AutoInstall   bool
 	AutoUninstall bool
@@ -91,8 +93,56 @@ func defaultProgramDataDir() string {
 	return base
 }
 
+func defaultProgramFilesDir() string {
+	base := os.Getenv("ProgramFiles")
+	if base == "" {
+		base = `C:\Program Files`
+	}
+	return base
+}
+
 func defaultServiceConfigPath() string {
 	return filepath.Join(defaultProgramDataDir(), "gov-pass", "config.json")
+}
+
+func defaultInstallRootDir() string {
+	return filepath.Join(defaultProgramFilesDir(), "gov-pass")
+}
+
+func validateWindowsServiceManagedPath(label string, path string, allowedRoots ...string) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return fmt.Errorf("%s path is empty", label)
+	}
+	if !filepath.IsAbs(path) {
+		return fmt.Errorf("%s path must be absolute in service mode", label)
+	}
+	for _, root := range allowedRoots {
+		root = strings.TrimSpace(root)
+		if root == "" {
+			continue
+		}
+		if isUnderDir(path, root) {
+			return nil
+		}
+	}
+	return fmt.Errorf("%s path must stay under one of: %s", label, strings.Join(allowedRoots, ", "))
+}
+
+func validateWindowsServiceConfigPath(path string) error {
+	return validateWindowsServiceManagedPath("config", path, filepath.Join(defaultProgramDataDir(), "gov-pass"))
+}
+
+func validateWindowsServiceLogPath(path string) error {
+	return validateWindowsServiceManagedPath("service log", path, filepath.Join(defaultProgramDataDir(), "gov-pass"))
+}
+
+func validateWindowsServiceDriverDir(dir string) error {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return nil
+	}
+	return validateWindowsServiceManagedPath("WinDivert directory", dir, filepath.Join(defaultProgramDataDir(), "gov-pass"), defaultInstallRootDir())
 }
 
 func readWindowsJSONConfig(path string) (windowsJSONConfig, error) {
@@ -239,6 +289,9 @@ func applyWindowsJSONConfig(dstEngine *engine.Config, dstWin *windowsRunConfig, 
 		if cfg.WinDivert.WinDivertSys != nil {
 			dstWin.WinDivertSys = strings.TrimSpace(*cfg.WinDivert.WinDivertSys)
 		}
+		if cfg.WinDivert.AllowServiceTakeover != nil {
+			dstWin.AllowServiceTakeover = *cfg.WinDivert.AllowServiceTakeover
+		}
 		if cfg.WinDivert.AutoInstallDriver != nil {
 			dstWin.AutoInstallDriver = *cfg.WinDivert.AutoInstallDriver
 		}
@@ -283,16 +336,18 @@ func windowsJSONConfigFromDefaults(cfg engine.Config, wc windowsRunConfig) windo
 	queueLen := wc.AdapterOpts.QueueLen
 	queueTime := wc.AdapterOpts.QueueTime
 	queueSize := wc.AdapterOpts.QueueSize
+	allowTakeover := wc.AllowServiceTakeover
 	autoInstall := wc.AutoInstallDriver
 	autoDownload := wc.AutoDownloadFiles
 
 	winCfg := &winDivertJSONConfig{
-		Filter:            &filter,
-		QueueLen:          &queueLen,
-		QueueTimeMs:       &queueTime,
-		QueueSizeBytes:    &queueSize,
-		AutoInstallDriver: &autoInstall,
-		AutoDownloadFiles: &autoDownload,
+		Filter:               &filter,
+		QueueLen:             &queueLen,
+		QueueTimeMs:          &queueTime,
+		QueueSizeBytes:       &queueSize,
+		AllowServiceTakeover: &allowTakeover,
+		AutoInstallDriver:    &autoInstall,
+		AutoDownloadFiles:    &autoDownload,
 	}
 
 	// Keep explicit windivert_dir/sys out of the default template; the MSI layout
@@ -374,12 +429,13 @@ func windowsDefaults() (engine.Config, windowsRunConfig) {
 			QueueTime: defaultQueueTimeMs,
 			QueueSize: defaultQueueSize,
 		},
-		WinDivertDir:        "",
-		WinDivertSys:        "",
-		WinDivertSvcName:    defaultWinDivertServiceName,
-		AutoInstallDriver:   true,
-		AutoUninstallDriver: true,
-		AutoDownloadFiles:   true,
+		WinDivertDir:         "",
+		WinDivertSys:         "",
+		WinDivertSvcName:     defaultWinDivertServiceName,
+		AllowServiceTakeover: false,
+		AutoInstallDriver:    true,
+		AutoUninstallDriver:  true,
+		AutoDownloadFiles:    true,
 	}
 	return cfg, wc
 }
@@ -395,6 +451,11 @@ func effectiveWindowsConfig(args windowsCLIArgs, setFlags map[string]bool, asSer
 	}
 
 	programDataRoot := filepath.Join(defaultProgramDataDir(), "gov-pass")
+	if asService && configPath != "" {
+		if err := validateWindowsServiceConfigPath(configPath); err != nil {
+			return engine.Config{}, windowsRunConfig{}, err
+		}
+	}
 	if asService && configPath != "" && isUnderDir(configPath, programDataRoot) {
 		// Ensure ProgramData state is not user-writable. This prevents config
 		// tampering and DLL hijacking via windivert_dir in service mode.
@@ -500,6 +561,9 @@ func effectiveWindowsConfig(args windowsCLIArgs, setFlags map[string]bool, asSer
 	if setFlags["windivert-sys"] {
 		wc.WinDivertSys = args.WinDivertSys
 	}
+	if setFlags["allow-service-takeover"] {
+		wc.AllowServiceTakeover = args.AllowServiceTakeover
+	}
 	if setFlags["auto-install"] {
 		wc.AutoInstallDriver = args.AutoInstall
 	}
@@ -513,6 +577,9 @@ func effectiveWindowsConfig(args windowsCLIArgs, setFlags map[string]bool, asSer
 	// In service mode, never uninstall the driver on stop/uninstall.
 	if asService {
 		wc.AutoUninstallDriver = false
+		if err := validateWindowsServiceDriverDir(wc.WinDivertDir); err != nil {
+			return engine.Config{}, windowsRunConfig{}, err
+		}
 	}
 
 	if err := validateEngineConfig(cfg); err != nil {

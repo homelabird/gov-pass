@@ -43,6 +43,15 @@ External downloads:
 - The download uses a pinned official WinDivert release zip and verifies its SHA256.
 - You can disable auto-download with `--auto-download-windivert=false` or via the service config.
 
+Release integrity:
+- Download the bootstrap installer from a release asset and verify it against
+  the signed `SHA256SUMS` manifest before executing it with `sudo`.
+- The Linux release installer requires a trusted PEM public key
+  (`GOV_PASS_RELEASE_PUBKEY_PATH`, `GOV_PASS_RELEASE_PUBKEY_PEM`, or
+  `GOV_PASS_RELEASE_PUBKEY_PEM_B64`) before it will install a release artifact.
+- Published checksum manifests are shipped with detached signatures and the
+  installer verifies the manifest signature before trusting any asset checksum.
+
 Operational guidance:
 - Treat `C:\ProgramData\gov-pass\config.json` as an admin-managed file.
 - Do not run an interactive instance while the service is running (avoid double interception).
@@ -68,6 +77,14 @@ Offload safety (implemented):
 External tool installation:
 - Optional package-manager installation of missing tools for auto helpers (`--auto-install-tools=true`).
 - Disable this in locked-down environments and pre-provision tools instead.
+- Packaged/systemd service mode keeps `--auto-install-tools=false` by default so
+  dependency changes do not happen during steady-state service restarts.
+- Package-manager installs run with a minimal inherited environment to reduce
+  unexpected influence from caller-controlled variables.
+
+Operational guidance:
+- Prefer `nftables`; use `iptables`/`ip6tables` fallback only where `nft` is not available.
+- On multi-egress, VPN, or container-heavy hosts, set `--iface` explicitly instead of relying on route auto-detection.
 
 ## FreeBSD / pfSense (pf divert)
 
@@ -76,6 +93,12 @@ Privileges:
 
 Operational notes:
 - pf rules should be managed via an anchor so uninstall/reload is bounded to "our rules".
+- The source installer now adds an `rc.d` service plus
+  `/usr/local/libexec/gov-pass/install_pf_anchor.sh` and
+  `/usr/local/libexec/gov-pass/uninstall_pf_anchor.sh`, but the actual anchor
+  policy still requires operator review and editing before it is applied.
+- Privileged helper invocations resolve `service`, `sysrc`, `sudo`, `doas`, and
+  `pfctl` from trusted absolute-path locations instead of the ambient `PATH`.
 - Offload may affect observed packet boundaries; validate per target NIC/OS.
 
 ## Vulnerability Reporting
@@ -83,4 +106,3 @@ Operational notes:
 If you discover a security issue:
 - Prefer reporting privately (GitLab "confidential issue" if available in your deployment).
 - If you must use a public issue, avoid posting exploit details and include only high-level impact and reproduction constraints.
-

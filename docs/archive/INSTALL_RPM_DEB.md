@@ -6,16 +6,25 @@ Targets:
 - RPM: Fedora, RHEL, Rocky, AlmaLinux
 - DEB: Debian, Ubuntu
 
-## One-touch Install via curl
+## One-touch Install via Release Asset
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/homelabird/gov-pass/main/scripts/install_one_touch_curl.sh | bash
+TAG="vX.Y.Z"
+PUBKEY="/path/to/release-signing-pub.pem"
+BASE_URL="https://github.com/homelabird/gov-pass/releases/download/${TAG}"
+
+curl --proto '=https' --tlsv1.2 -fL "${BASE_URL}/install_one_touch_curl.sh" -o install_one_touch_curl.sh
+curl --proto '=https' --tlsv1.2 -fL "${BASE_URL}/SHA256SUMS" -o SHA256SUMS
+curl --proto '=https' --tlsv1.2 -fL "${BASE_URL}/SHA256SUMS.sig" -o SHA256SUMS.sig
+openssl dgst -sha256 -verify "${PUBKEY}" -signature SHA256SUMS.sig SHA256SUMS
+awk '$2 == "install_one_touch_curl.sh" { print $1 "  install_one_touch_curl.sh" }' SHA256SUMS | sha256sum -c -
+sudo GOV_PASS_VERSION="${TAG}" GOV_PASS_RELEASE_PUBKEY_PATH="${PUBKEY}" bash ./install_one_touch_curl.sh
 ```
 
 Install with TUI controller in one step:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/homelabird/gov-pass/main/scripts/install_one_touch_curl.sh | sudo INSTALL_TUI=1 bash
+sudo INSTALL_TUI=1 GOV_PASS_VERSION="${TAG}" GOV_PASS_RELEASE_PUBKEY_PATH="${PUBKEY}" bash ./install_one_touch_curl.sh
 ```
 
 Linux TUI mode note:

@@ -1,0 +1,28 @@
+{
+  "engine": {
+    "split_mode": "tls-hello",
+    "split_chunk": 5,
+    "collect_timeout": "250ms",
+    "max_buffer_bytes": 65536,
+    "max_held_packets": 32,
+    "max_segment_payload": 1460,
+    "workers": 4,
+    "flow_idle_timeout": "30s",
+    "gc_interval": "5s",
+    "max_flows_per_worker": 4096,
+    "max_reassembly_bytes_per_worker": 67108864,
+    "max_held_bytes_per_worker": 67108864,
+    "shutdown_fail_open_timeout": "5s",
+    "shutdown_fail_open_max_packets": 200000,
+    "adapter_flush_timeout": "2s"
+  },
+  "windivert": {
+    "filter": "outbound and (ip or ipv6) and tcp.DstPort == 443",
+    "queue_len": 4096,
+    "queue_time_ms": 2000,
+    "queue_size_bytes": 33554432,
+    "allow_service_takeover": false,
+    "auto_install_driver": true,
+    "auto_download_files": true
+  }
+}

@@ -2,7 +2,7 @@
 
 ## Prereqs
 
-- Go 1.21+
+- Go 1.25.8+
 - Windows development/testing may require Administrator privileges (WinDivert driver + service control).
 - Linux development/testing may require root or capabilities (`CAP_NET_ADMIN`, `CAP_NET_RAW`) depending on how you run it.
 
@@ -70,9 +70,30 @@ sudo ./scripts/linux/uninstall_nfqueue.sh --queue-num 100 --mark 1
 ## CI / Release
 
 - GitLab CI builds release artifacts on tags (`build_release`).
+- GitHub Actions publishes GitHub release assets on tag pushes via [`release.yml`](.github/workflows/release.yml), including `install_one_touch_curl.sh`, signed checksum manifests, and platform bundles.
+- Branch pipelines now run:
+  - `verify_go_tests`: `go test ./...` + `go vet ./...`
+  - `verify_cross_builds`: Linux/FreeBSD/Windows cross-build smoke
+  - `verify_release_signing_helpers`: detached-signature helper round-trip
+  - `verify_tui_tests`: TUI-focused tests + Windows TUI compile smoke
+- GitHub release publishing requires checksum-signing secrets:
+  - `RELEASE_CHECKSUM_SIGNING_KEY_PEM` or `RELEASE_CHECKSUM_SIGNING_KEY_PEM_B64`
+  - optional `RELEASE_CHECKSUM_SIGNING_KEY_PASS`
+- Windows Authenticode signing in GitHub release publishing is optional and uses:
+  - `WINDOWS_CODESIGN_PFX_B64`
+  - `WINDOWS_CODESIGN_PFX_PASSWORD`
+- Linux root/network namespace E2E is available as an opt-in verify job:
+  - Set `LINUX_NETNS_E2E=1`
+  - Runner tag requirement: `linux-root`
+  - Job: `verify_linux_netns_e2e`
 - Windows MSI E2E verification requires a Windows runner with Administrator privileges:
   - Enable by setting `WINDOWS_E2E=1` for tagged pipelines.
   - Job: `verify_windows_msi_e2e` runs `scripts/windows/ci_msi_e2e.ps1`.
+  - Coverage: MSI install/uninstall, service reload/start/stop, and `gov-pass-tui.exe` status/reload/interactive smoke.
+- FreeBSD TUI smoke verification is available as an opt-in verify job:
+  - Set `FREEBSD_E2E=1`
+  - Runner tag requirement: `freebsd-root`
+  - Job: `verify_freebsd_tui_smoke` installs via `scripts/install_one_touch.sh` with `INSTALL_TUI=1` and runs `scripts/freebsd/ci_tui_smoke.sh`.
 
 ## Engineering Guidelines
 

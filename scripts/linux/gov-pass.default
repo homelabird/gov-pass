@@ -1,0 +1,10 @@
+# /etc/default/gov-pass
+# Queue number used by NFQUEUE rule and splitter instance.
+GOV_PASS_QUEUE_NUM=100
+# SO_MARK used for reinjected packets and NFQUEUE bypass alignment.
+GOV_PASS_MARK=1
+# Extra splitter flags for the packaged service.
+# Keep auto-install-tools disabled in service mode so package managers are not
+# mutated at runtime. In multi-egress, VPN, or container-heavy hosts, prefer an
+# explicit --iface value instead of route auto-detect.
+GOV_PASS_ARGS=--auto-install-tools=false

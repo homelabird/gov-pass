@@ -16,14 +16,14 @@ const defaultServiceName = "gov-pass"
 
 func main() {
 	serviceName := flag.String("service-name", defaultServiceName, "FreeBSD service name to control")
-	action := flag.String("action", "", "action mode: start|stop|restart|reload|enable|disable|toggle|status (runs and exits)")
+	action := flag.String("action", "", "action mode: start|stop|restart|enable|disable|toggle|status (runs and exits); reload is not supported")
 	flag.Parse()
 
 	name := strings.TrimSpace(*serviceName)
 	if name == "" {
 		name = defaultServiceName
 	}
-	name, err := normalizeServiceName(name)
+	name, err := normalizeUnixServiceName(name)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
@@ -50,16 +50,7 @@ func runTUI(serviceName string) error {
 
 	for {
 		clearTerminalScreen()
-		fmt.Println("=== gov-pass TUI (FreeBSD) ===")
-		fmt.Println(buildStatusSummary(serviceName))
-		fmt.Println()
-		fmt.Printf("1. Start/Stop service (%s)\n", serviceName)
-		fmt.Println("2. Restart service")
-		fmt.Printf("3. Enable/Disable boot start (%s)\n", serviceName)
-		fmt.Println("q. Quit")
-		fmt.Println()
-		fmt.Println("Message:")
-		fmt.Println(lastNote)
+		fmt.Print(renderPlainTUIView(collectTUIStatus(serviceName), lastNote))
 		fmt.Println()
 		fmt.Print("Select> ")
 
@@ -128,38 +119,29 @@ func executeMenuChoice(serviceName, choice string) (string, error) {
 			return "", err
 		}
 		return fmt.Sprintf("Boot start enabled: %s", serviceName), nil
+	case "r", "refresh":
+		return "", nil
 	default:
 		return "", fmt.Errorf("unknown selection: %s", choice)
 	}
 }
 
-func buildStatusSummary(serviceName string) string {
-	active, activeErr := isServiceActive(serviceName)
-	state, stateErr := serviceStatusText(serviceName)
+func collectTUIStatus(serviceName string) tuiStatus {
+	state, activeErr := serviceStatusText(serviceName)
 	enabled, enabledErr := isServiceEnabled(serviceName)
-
-	activeStr := "no"
-	if active {
-		activeStr = "yes"
-	}
-	enabledStr := "no"
-	if enabled {
-		enabledStr = "yes"
-	}
-
-	lines := []string{
-		fmt.Sprintf("Service: %s", serviceName),
-		fmt.Sprintf("Status: %s (active=%s)", state, activeStr),
-		fmt.Sprintf("Enabled at boot: %s", enabledStr),
-	}
-	if activeErr != nil || stateErr != nil || enabledErr != nil {
-		lines = append(lines, "Warning: some status checks failed.")
-	}
-	return strings.Join(lines, "\n")
+	return newTUIStatus(
+		"FreeBSD",
+		serviceName,
+		state,
+		strings.EqualFold(state, "active"),
+		enabled,
+		statusIssue{Label: "service", Err: activeErr},
+		statusIssue{Label: "boot", Err: enabledErr},
+	)
 }
 
 func runAction(serviceName string, action string) error {
-	serviceName, err := normalizeServiceName(serviceName)
+	serviceName, err := normalizeUnixServiceName(serviceName)
 	if err != nil {
 		return err
 	}
@@ -176,11 +158,11 @@ func runAction(serviceName string, action string) error {
 	case "restart":
 		return runPrivileged("service", serviceName, "onerestart")
 	case "reload":
-		return runPrivileged("service", serviceName, "onereload")
+		return errors.New("reload is not supported on FreeBSD; use restart")
 	case "enable":
-		return runPrivileged("sysrc", fmt.Sprintf("%s_enable=YES", serviceName))
+		return runPrivileged("sysrc", fmt.Sprintf("%s=YES", freeBSDRcVarName(serviceName)))
 	case "disable":
-		return runPrivileged("sysrc", fmt.Sprintf("%s_enable=NO", serviceName))
+		return runPrivileged("sysrc", fmt.Sprintf("%s=NO", freeBSDRcVarName(serviceName)))
 	case "toggle":
 		active, err := isServiceActive(serviceName)
 		if err != nil {
@@ -207,56 +189,61 @@ func runAction(serviceName string, action string) error {
 }
 
 func isServiceActive(serviceName string) (bool, error) {
-	cmd := exec.Command("service", serviceName, "onestatus")
-	err := cmd.Run()
-	if err == nil {
-		return true, nil
-	}
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
-		return false, nil
-	}
-	return false, err
-}
-
-func isServiceEnabled(serviceName string) (bool, error) {
-	key := fmt.Sprintf("%s_enable", serviceName)
-	cmd := exec.Command("sysrc", "-n", key)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			return false, nil
-		}
-		return false, err
-	}
-	v := strings.ToLower(strings.TrimSpace(string(out)))
-	return v == "yes" || v == "true" || v == "1" || v == "on", nil
+	state, err := serviceStatusText(serviceName)
+	return strings.EqualFold(state, "active"), err
 }
 
 func serviceStatusText(serviceName string) (string, error) {
-	active, err := isServiceActive(serviceName)
+	servicePath, err := resolveTrustedFreeBSDCommand("service")
 	if err != nil {
-		return "unknown", err
+		return "", err
 	}
-	if active {
-		return "active", nil
+	cmd := exec.Command(servicePath, serviceName, "onestatus")
+	out, err := cmd.CombinedOutput()
+	text := strings.TrimSpace(string(out))
+	if state, _, ok := classifyFreeBSDServiceStatusOutput(text, err == nil); ok {
+		return state, nil
 	}
-	return "inactive", nil
+	if err != nil {
+		return "unknown", fmt.Errorf("service %s onestatus failed: %s", serviceName, nonEmpty(text, err.Error()))
+	}
+	return "unknown", fmt.Errorf("service %s onestatus returned unrecognized status", serviceName)
+}
+
+func isServiceEnabled(serviceName string) (bool, error) {
+	key := freeBSDRcVarName(serviceName)
+	sysrcPath, err := resolveTrustedFreeBSDCommand("sysrc")
+	if err != nil {
+		return false, err
+	}
+	cmd := exec.Command(sysrcPath, "-n", key)
+	out, err := cmd.CombinedOutput()
+	text := strings.TrimSpace(string(out))
+	if err == nil {
+		if enabled, ok := classifyFreeBSDBootSetting(text); ok {
+			return enabled, nil
+		}
+		return false, fmt.Errorf("sysrc -n %s returned unrecognized value: %s", key, text)
+	}
+	return false, fmt.Errorf("sysrc -n %s failed: %s", key, nonEmpty(text, err.Error()))
 }
 
 func runPrivileged(name string, args ...string) error {
-	if _, err := runCommand(name, args...); err == nil {
+	targetPath, err := resolveTrustedFreeBSDCommand(name)
+	if err != nil {
+		return err
+	}
+	if _, err := runCommandPath(targetPath, args...); err == nil {
 		return nil
 	} else if !requiresPrivilegedRetry(err.Error()) || os.Geteuid() == 0 {
 		return err
 	} else {
 		primaryErr := err
 
-		if _, sudoErr := runCommand("sudo", append([]string{"-n", name}, args...)...); sudoErr == nil {
+		if _, sudoErr := runCommand("sudo", append([]string{"-n", targetPath}, args...)...); sudoErr == nil {
 			return nil
 		} else if hasCommand("doas") {
-			if _, doasErr := runCommand("doas", append([]string{name}, args...)...); doasErr == nil {
+			if _, doasErr := runCommand("doas", append([]string{targetPath}, args...)...); doasErr == nil {
 				return nil
 			} else {
 				return fmt.Errorf("%v | doas: %v", primaryErr, doasErr)
@@ -268,11 +255,19 @@ func runPrivileged(name string, args ...string) error {
 }
 
 func runCommand(name string, args ...string) (string, error) {
-	cmd := exec.Command(name, args...)
+	path, err := resolveTrustedFreeBSDCommand(name)
+	if err != nil {
+		return "", err
+	}
+	return runCommandPath(path, args...)
+}
+
+func runCommandPath(path string, args ...string) (string, error) {
+	cmd := exec.Command(path, args...)
 	out, err := cmd.CombinedOutput()
 	text := strings.TrimSpace(string(out))
 	if err != nil {
-		return text, fmt.Errorf("%s %s failed: %s", name, strings.Join(args, " "), nonEmpty(text, err.Error()))
+		return text, fmt.Errorf("%s %s failed: %s", path, strings.Join(args, " "), nonEmpty(text, err.Error()))
 	}
 	return text, nil
 }
@@ -310,6 +305,6 @@ func nonEmpty(primary, fallback string) string {
 }
 
 func hasCommand(name string) bool {
-	_, err := exec.LookPath(name)
-	return err == nil
+	_, ok := freeBSDCommandLookPath(name)
+	return ok
 }
