@@ -6,138 +6,328 @@ import (
 	"unicode"
 )
 
-type tuiStatus struct {
-	Platform    string
-	ServiceName string
-	State       string
-	Active      bool
-	Enabled     bool
-	Warning     string
+type panel struct {
+	Title      string
+	Lines      []string
+	BorderChar rune
 }
 
-type tuiAction struct {
-	Key    string
-	Label  string
-	Detail string
+type plainLayoutProfile struct {
+	TwoColumns         bool
+	CompactActions     bool
+	ShowRawState       bool
+	ShowHints          bool
+	WarningDetailLimit int
+	FeedbackDetail     bool
 }
 
-var defaultTUIActions = []tuiAction{
-	{Key: "1", Label: "Toggle service", Detail: "Start when stopped, stop when running"},
-	{Key: "2", Label: "Restart service", Detail: "Restart the runtime without changing boot mode"},
-	{Key: "3", Label: "Toggle boot", Detail: "Enable or disable startup at boot"},
-	{Key: "r", Label: "Refresh", Detail: "Re-read service state from the host"},
-	{Key: "q", Label: "Quit", Detail: "Leave the operator panel"},
+func renderPlainTUIView(status tuiStatus, feedback tuiFeedback) string {
+	size := currentTerminalSize()
+	return renderPlainTUIViewForSize(status, feedback, size.Cols, size.Rows)
 }
 
-func renderPlainTUIView(status tuiStatus, note string) string {
-	return renderPlainTUIViewForWidth(status, note, currentTerminalSize().Cols)
+func renderPlainTUIViewForWidth(status tuiStatus, feedback tuiFeedback, width int) string {
+	return renderPlainTUIViewForSize(status, feedback, width, currentTerminalSize().Rows)
 }
 
-func renderPlainTUIViewForWidth(status tuiStatus, note string, width int) string {
-	sections := []panel{
-		{
-			Title: "GOV-PASS CONTROL",
-			Lines: []string{
-				fmt.Sprintf("Platform : %s", strings.ToUpper(nonEmptyString(status.Platform, "unknown"))),
-				fmt.Sprintf("Service  : %s", nonEmptyString(status.ServiceName, "-")),
-				fmt.Sprintf("State    : %s", strings.ToUpper(nonEmptyString(status.State, "unknown"))),
-				fmt.Sprintf("Signals  : %s %s", boolBadge(status.Active, "ACTIVE", "IDLE"), boolBadge(status.Enabled, "BOOT ON", "BOOT OFF")),
-			},
-		},
-		{
-			Title: "ACTIONS",
-			Lines: formatActionLines(defaultTUIActions),
-		},
-		{
-			Title: "MESSAGE",
-			Lines: append([]string{fmt.Sprintf("Tone    : %s", noteTone(note))}, prefixedLines(note, "Text    : ", "          ")...),
-		},
+func renderPlainTUIViewForSize(status tuiStatus, feedback tuiFeedback, width, height int) string {
+	width = normalizeRenderWidth(width)
+	height = normalizeRenderHeight(height)
+
+	profile := newPlainLayoutProfile(width, height)
+	overviewPanel := panel{
+		Title:      fmt.Sprintf("GOV-PASS OPERATOR PANEL [%s]", healthLabel(status.Health)),
+		Lines:      overviewPanelLines(status, profile),
+		BorderChar: '=',
+	}
+	actionsPanel := panel{
+		Title: "ACTIONS",
+		Lines: actionPanelLines(status, profile),
+	}
+	resultPanel := panel{
+		Title: "LAST RESULT",
+		Lines: feedbackPanelLines(feedback, profile),
+	}
+	hintsPanel := panel{
+		Title: "HINTS",
+		Lines: hintPanelLines(status),
 	}
 
-	if strings.TrimSpace(status.Warning) != "" {
-		sections = append(sections[:1], append([]panel{{
-			Title: "STATUS WARNING",
-			Lines: prefixedLines(status.Warning, "Notice  : ", "          "),
-		}}, sections[1:]...)...)
+	var warningPanel *panel
+	if strings.TrimSpace(status.WarningSummary) != "" {
+		warningPanel = &panel{
+			Title: "WARNINGS",
+			Lines: warningPanelLines(status, profile),
+		}
 	}
 
-	return renderPanels(sections, normalizeRenderWidth(width))
-}
+	var lines []string
+	if profile.TwoColumns {
+		gap := 2
+		leftWidth := (width - gap) / 2
+		rightWidth := width - gap - leftWidth
 
-func buildCompactStatusSummary(status tuiStatus) string {
-	lines := []string{
-		fmt.Sprintf("Platform: %s", nonEmptyString(status.Platform, "unknown")),
-		fmt.Sprintf("Service: %s", nonEmptyString(status.ServiceName, "-")),
-		fmt.Sprintf("State: %s", nonEmptyString(status.State, "unknown")),
-		fmt.Sprintf("Signals: %s %s", boolBadge(status.Active, "ACTIVE", "IDLE"), boolBadge(status.Enabled, "BOOT ON", "BOOT OFF")),
-		"",
-		"Choose an action:",
+		leftPanels := []panel{overviewPanel, actionsPanel}
+		rightPanels := []panel{resultPanel}
+		if warningPanel != nil {
+			rightPanels = append(rightPanels, *warningPanel)
+		}
+		if profile.ShowHints {
+			rightPanels = append(rightPanels, hintsPanel)
+		}
+
+		lines = joinColumns(
+			renderPanelStack(leftPanels, leftWidth),
+			renderPanelStack(rightPanels, rightWidth),
+			leftWidth,
+			rightWidth,
+			gap,
+		)
+	} else {
+		panels := []panel{overviewPanel, actionsPanel, resultPanel}
+		if warningPanel != nil {
+			panels = append(panels, *warningPanel)
+		}
+		if profile.ShowHints {
+			panels = append(panels, hintsPanel)
+		}
+		lines = renderPanelStack(panels, width)
 	}
-	if strings.TrimSpace(status.Warning) != "" {
-		warningLines := append(prefixedLines(status.Warning, "Warning: ", "         "), "")
-		lines = append(lines[:4], append(warningLines, lines[4:]...)...)
-	}
+
+	lines = trimRenderedLines(lines, height)
 	return strings.Join(lines, "\n")
 }
 
-type panel struct {
-	Title string
-	Lines []string
-}
-
-func renderPanels(panels []panel, width int) string {
-	var b strings.Builder
-	for i, section := range panels {
-		borderChar := '-'
-		if i == 0 {
-			borderChar = '='
-		}
-		writePanel(&b, width, borderChar, section.Title, section.Lines)
+func buildCompactStatusSummary(status tuiStatus, feedback tuiFeedback) string {
+	lines := []string{
+		fmt.Sprintf("Health: %s", healthLabel(status.Health)),
+		fmt.Sprintf("Service: %s", nonEmptyString(status.ServiceName, "-")),
+		fmt.Sprintf("State: %s", status.StateLabel),
+		fmt.Sprintf("Boot: %s", status.BootLabel),
+		fmt.Sprintf("Reload: %s", capabilityLabel(status.Capabilities.Reload)),
 	}
-	return b.String()
+	if strings.TrimSpace(status.WarningSummary) != "" {
+		lines = append(lines, fmt.Sprintf("Warning: %s", status.WarningSummary))
+	}
+	if summary := strings.TrimSpace(feedback.Summary); summary != "" {
+		lines = append(lines, fmt.Sprintf("Last: %s", summary))
+	}
+	lines = append(lines, "", "Choose an action:")
+	return strings.Join(lines, "\n")
 }
 
-func writePanel(b *strings.Builder, width int, borderChar rune, title string, lines []string) {
+func newPlainLayoutProfile(width, height int) plainLayoutProfile {
+	profile := plainLayoutProfile{
+		TwoColumns:         width >= 96 && height >= 18,
+		CompactActions:     width < 72 || height < 24,
+		ShowRawState:       width >= 56 && height >= 16,
+		ShowHints:          height >= 18,
+		WarningDetailLimit: 0,
+		FeedbackDetail:     height >= 14,
+	}
+
+	switch {
+	case height >= 30:
+		profile.WarningDetailLimit = 4
+	case height >= 24:
+		profile.WarningDetailLimit = 2
+	case height >= 18:
+		profile.WarningDetailLimit = 1
+	}
+
+	return profile
+}
+
+func overviewPanelLines(status tuiStatus, profile plainLayoutProfile) []string {
+	lines := []string{
+		fmt.Sprintf("Platform : %s", nonEmptyString(status.Platform, "Unknown")),
+		fmt.Sprintf("Service  : %s", nonEmptyString(status.ServiceName, "-")),
+		fmt.Sprintf("Health   : %s", healthLabel(status.Health)),
+		fmt.Sprintf("Summary  : %s", nonEmptyString(status.Summary, "Service state is unknown.")),
+		fmt.Sprintf("State    : %s", status.StateLabel),
+		fmt.Sprintf("Boot     : %s", status.BootLabel),
+		fmt.Sprintf("Reload   : %s", capabilityLabel(status.Capabilities.Reload)),
+		fmt.Sprintf("Updated  : %s", status.UpdatedAt.Format("2006-01-02 15:04:05")),
+	}
+	if profile.ShowRawState {
+		lines = append(lines[0:5], append([]string{fmt.Sprintf("Raw      : %s", nonEmptyString(status.RawState, "unknown"))}, lines[5:]...)...)
+	}
+	return lines
+}
+
+func feedbackPanelLines(feedback tuiFeedback, profile plainLayoutProfile) []string {
+	summary := nonEmptyString(feedback.Summary, "Ready.")
+	lines := []string{
+		fmt.Sprintf("Level    : %s", nonEmptyString(string(feedback.Level), string(tuiFeedbackOK))),
+		fmt.Sprintf("Summary  : %s", summary),
+	}
+	if profile.FeedbackDetail && strings.TrimSpace(feedback.Detail) != "" {
+		lines = append(lines, prefixedLines(feedback.Detail, "Detail   : ", "           ")...)
+	}
+	return lines
+}
+
+func warningPanelLines(status tuiStatus, profile plainLayoutProfile) []string {
+	lines := []string{
+		fmt.Sprintf("Summary  : %s", status.WarningSummary),
+	}
+
+	if profile.WarningDetailLimit <= 0 {
+		return lines
+	}
+
+	limit := minInt(profile.WarningDetailLimit, len(status.WarningDetails))
+	for i := 0; i < limit; i++ {
+		lines = append(lines, prefixedLines(status.WarningDetails[i], "Detail   : ", "           ")...)
+	}
+
+	if len(status.WarningDetails) > limit {
+		lines = append(lines, fmt.Sprintf("Detail   : +%d more issue(s)", len(status.WarningDetails)-limit))
+	}
+
+	return lines
+}
+
+func actionPanelLines(status tuiStatus, profile plainLayoutProfile) []string {
+	actions := tuiActionsForStatus(status)
+	lines := make([]string, 0, len(actions)*2)
+	for _, action := range actions {
+		if profile.CompactActions {
+			lines = append(lines, fmt.Sprintf("[%s] %s", action.Key, action.Label))
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("[%s] %s", action.Key, action.Label))
+		lines = append(lines, "    "+action.Detail)
+	}
+	return lines
+}
+
+func hintPanelLines(status tuiStatus) []string {
+	lines := []string{
+		"Input    : Type the key shown in brackets and press Enter.",
+		"Refresh  : Use refresh after external service changes.",
+	}
+	if !status.Capabilities.Reload {
+		lines = append(lines, "Reload   : Use restart on this platform.")
+	}
+	return lines
+}
+
+func capabilityLabel(supported bool) string {
+	if supported {
+		return "Supported"
+	}
+	return "Restart required"
+}
+
+func renderPanelStack(panels []panel, width int) []string {
+	lines := make([]string, 0, len(panels)*8)
+	for _, section := range panels {
+		lines = append(lines, renderPanelLines(section, width)...)
+	}
+	return lines
+}
+
+func renderPanelLines(section panel, width int) []string {
+	borderChar := section.BorderChar
+	if borderChar == 0 {
+		borderChar = '-'
+	}
 	horizontal := strings.Repeat(string(borderChar), width-2)
-	b.WriteString("+")
-	b.WriteString(horizontal)
-	b.WriteString("+\n")
-	for _, line := range wrapPanelLine(strings.TrimSpace(title), width-3) {
-		writePaddedLine(b, width, " "+line)
+
+	lines := []string{
+		"+" + horizontal + "+",
 	}
-	b.WriteString("+")
-	b.WriteString(horizontal)
-	b.WriteString("+\n")
-	for _, line := range lines {
+	for _, line := range wrapPanelLine(strings.TrimSpace(section.Title), width-3) {
+		lines = append(lines, formatPaddedLine(width, " "+line))
+	}
+	lines = append(lines, "+"+horizontal+"+")
+
+	for _, line := range section.Lines {
 		for _, wrapped := range wrapPanelLine(line, width-3) {
-			writePaddedLine(b, width, " "+wrapped)
+			lines = append(lines, formatPaddedLine(width, " "+wrapped))
 		}
 	}
+
+	return lines
 }
 
-func writePaddedLine(b *strings.Builder, width int, content string) {
+func joinColumns(left, right []string, leftWidth, rightWidth, gap int) []string {
+	maxLines := maxInt(len(left), len(right))
+	out := make([]string, 0, maxLines)
+	gutter := strings.Repeat(" ", gap)
+	leftBlank := strings.Repeat(" ", leftWidth)
+	rightBlank := strings.Repeat(" ", rightWidth)
+
+	for i := 0; i < maxLines; i++ {
+		leftLine := leftBlank
+		rightLine := rightBlank
+		if i < len(left) {
+			leftLine = left[i]
+		}
+		if i < len(right) {
+			rightLine = right[i]
+		}
+		out = append(out, leftLine+gutter+rightLine)
+	}
+
+	return out
+}
+
+func trimRenderedLines(lines []string, height int) []string {
+	if height <= 0 || len(lines) <= height {
+		return lines
+	}
+	if height < 2 {
+		return lines[:height]
+	}
+
+	trimmed := append([]string(nil), lines[:height-1]...)
+	last := lines[height-2]
+	width := runeLen(last)
+	trimmed = append(trimmed, truncateLineToWidth("... output truncated for terminal height ...", width))
+	return trimmed
+}
+
+func formatPaddedLine(width int, content string) string {
 	if runeLen(content) > width-2 {
 		content = string([]rune(content)[:width-2])
 	}
 	padding := width - 2 - runeLen(content)
-	b.WriteString("|")
-	b.WriteString(content)
-	if padding > 0 {
-		b.WriteString(strings.Repeat(" ", padding))
+	return "|" + content + strings.Repeat(" ", maxInt(padding, 0)) + "|"
+}
+
+func truncateLineToWidth(text string, width int) string {
+	if width <= 0 {
+		return ""
 	}
-	b.WriteString("|\n")
+	if runeLen(text) > width {
+		return string([]rune(text)[:width])
+	}
+	return text + strings.Repeat(" ", width-runeLen(text))
 }
 
 func normalizeRenderWidth(width int) int {
 	switch {
 	case width <= 0:
 		return 96
-	case width < 16:
-		return 16
-	case width > 120:
-		return 120
+	case width < 20:
+		return 20
+	case width > 140:
+		return 140
 	default:
 		return width
+	}
+}
+
+func normalizeRenderHeight(height int) int {
+	switch {
+	case height <= 0:
+		return 28
+	case height < 10:
+		return 10
+	default:
+		return height
 	}
 }
 
@@ -232,14 +422,6 @@ func maxInt(a, b int) int {
 	return b
 }
 
-func formatActionLines(actions []tuiAction) []string {
-	lines := make([]string, 0, len(actions))
-	for _, action := range actions {
-		lines = append(lines, fmt.Sprintf("[%s] %-14s %s", action.Key, action.Label, action.Detail))
-	}
-	return lines
-}
-
 func prefixedLines(text, firstPrefix, nextPrefix string) []string {
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {
@@ -255,27 +437,6 @@ func prefixedLines(text, firstPrefix, nextPrefix string) []string {
 		lines = append(lines, prefix+strings.TrimSpace(raw))
 	}
 	return lines
-}
-
-func boolBadge(ok bool, onText, offText string) string {
-	if ok {
-		return "[" + onText + "]"
-	}
-	return "[" + offText + "]"
-}
-
-func noteTone(note string) string {
-	trimmed := strings.TrimSpace(strings.ToLower(note))
-	switch {
-	case trimmed == "", trimmed == "ready.", trimmed == "done.":
-		return "OK"
-	case strings.HasPrefix(trimmed, "error:"):
-		return "ERROR"
-	case strings.Contains(trimmed, "warning"):
-		return "WARN"
-	default:
-		return "INFO"
-	}
 }
 
 func nonEmptyString(primary, fallback string) string {

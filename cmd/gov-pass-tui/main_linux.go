@@ -59,16 +59,15 @@ func main() {
 }
 
 func runTUI(serviceName string) error {
-	if hasCommand("whiptail") {
-		return runWhiptailTUI(serviceName)
-	}
-	return runPlainTUI(serviceName)
+	return runBubbleTUI(serviceName, collectTUIStatus)
 }
 
 func runWhiptailTUI(serviceName string) error {
+	lastFeedback := readyTUIFeedback()
+
 	for {
 		status := collectTUIStatus(serviceName)
-		choice, canceled, err := whiptailMenu(serviceName, status)
+		choice, canceled, err := whiptailMenu(status, lastFeedback)
 		if err != nil {
 			return err
 		}
@@ -76,29 +75,32 @@ func runWhiptailTUI(serviceName string) error {
 			return nil
 		}
 
-		msg, err := executeMenuChoice(serviceName, choice)
+		feedback, err := executeMenuChoice(serviceName, status, choice)
 		if err != nil {
-			_ = whiptailMessage("gov-pass error", err.Error())
+			lastFeedback = errorTUIFeedback(err)
+			_ = whiptailMessage(lastFeedback.dialogTitle(), lastFeedback.text())
 			continue
 		}
-		if strings.TrimSpace(msg) != "" {
-			_ = whiptailMessage("gov-pass", msg)
+		if !feedback.isZero() {
+			lastFeedback = feedback
+		}
+		if feedback.Popup {
+			_ = whiptailMessage(feedback.dialogTitle(), feedback.text())
 		}
 	}
 }
 
-func whiptailMenu(serviceName string, status tuiStatus) (choice string, canceled bool, err error) {
-	height, width, menuHeight := whiptailMenuDimensions(status)
+func whiptailMenu(status tuiStatus, feedback tuiFeedback) (choice string, canceled bool, err error) {
+	height, width, menuHeight := whiptailMenuDimensions(status, feedback)
+	actions := tuiActionsForStatus(status)
 	args := []string{
 		"--title", "gov-pass operator panel",
-		"--menu", buildCompactStatusSummary(status),
+		"--menu", buildCompactStatusSummary(status, feedback),
 		strconv.Itoa(height), strconv.Itoa(width), strconv.Itoa(menuHeight),
-		"1", fmt.Sprintf("Toggle service state (%s)", serviceName),
-		"2", "Restart runtime cleanly",
-		"3", fmt.Sprintf("Toggle boot policy (%s)", serviceName),
-		"r", "Refresh status panel",
-		"q", "Quit",
 		"--output-fd", "1",
+	}
+	for _, action := range actions {
+		args = append(args, action.Key, fmt.Sprintf("%s: %s", action.Label, action.Detail))
 	}
 	cmd, err := whiptailCommand(args...)
 	if err != nil {
@@ -133,10 +135,11 @@ func whiptailMessage(title, text string) error {
 
 func runPlainTUI(serviceName string) error {
 	scanner := bufio.NewScanner(os.Stdin)
-	lastNote := "Ready."
+	lastFeedback := readyTUIFeedback()
 
 	for {
-		renderPlainTUI(collectTUIStatus(serviceName), lastNote)
+		status := collectTUIStatus(serviceName)
+		renderPlainTUI(status, lastFeedback)
 		fmt.Print("Select> ")
 
 		if !scanner.Scan() {
@@ -147,40 +150,39 @@ func runPlainTUI(serviceName string) error {
 		}
 		choice := strings.ToLower(strings.TrimSpace(scanner.Text()))
 		if choice == "" {
-			lastNote = "No selection."
+			lastFeedback = infoTUIFeedback("No selection.", "Type one of the keys shown in brackets.")
 			continue
 		}
 		if choice == "q" || choice == "quit" || choice == "exit" {
 			return nil
 		}
 
-		msg, err := executeMenuChoice(serviceName, choice)
+		feedback, err := executeMenuChoice(serviceName, status, choice)
 		if err != nil {
-			lastNote = "Error: " + err.Error()
+			lastFeedback = errorTUIFeedback(err)
 			continue
 		}
-		if strings.TrimSpace(msg) != "" {
-			lastNote = msg
-		} else {
-			lastNote = "Done."
+		if !feedback.isZero() {
+			lastFeedback = feedback
 		}
 	}
 }
 
-func renderPlainTUI(status tuiStatus, note string) {
+func renderPlainTUI(status tuiStatus, feedback tuiFeedback) {
 	clearTerminalScreen()
-	fmt.Print(renderPlainTUIView(status, note))
+	fmt.Print(renderPlainTUIView(status, feedback))
 	fmt.Println()
 }
 
-func whiptailMenuDimensions(status tuiStatus) (height, width, menuHeight int) {
+func whiptailMenuDimensions(status tuiStatus, feedback tuiFeedback) (height, width, menuHeight int) {
 	size := currentTerminalSize()
 	maxWidth := maxInt(16, size.Cols-2)
 	width = clampInt(size.Cols-4, minInt(60, maxWidth), maxWidth)
-	summaryLines := countWrappedTextLines(buildCompactStatusSummary(status), width-8)
+	summaryLines := countWrappedTextLines(buildCompactStatusSummary(status, feedback), width-8)
+	actions := tuiActionsForStatus(status)
 	maxHeight := maxInt(8, size.Rows-2)
-	height = clampInt(summaryLines+len(defaultTUIActions)+9, minInt(16, maxHeight), maxHeight)
-	menuHeight = clampInt(len(defaultTUIActions), minInt(5, maxInt(1, height-summaryLines-7)), maxInt(1, height-summaryLines-7))
+	height = clampInt(summaryLines+len(actions)+9, minInt(16, maxHeight), maxHeight)
+	menuHeight = clampInt(len(actions), minInt(5, maxInt(1, height-summaryLines-7)), maxInt(1, height-summaryLines-7))
 	return height, width, menuHeight
 }
 
@@ -198,56 +200,19 @@ func clearTerminalScreen() {
 	fmt.Print("\033[H\033[2J")
 }
 
-func executeMenuChoice(serviceName, choice string) (string, error) {
-	switch strings.ToLower(strings.TrimSpace(choice)) {
-	case "1", "switch", "start-stop":
-		active, err := isServiceActive(serviceName)
-		if err != nil {
-			return "", err
-		}
-		if active {
-			if err := runAction(serviceName, "stop"); err != nil {
-				return "", err
-			}
-			return fmt.Sprintf("Service stopped: %s", serviceName), nil
-		}
-		if err := runAction(serviceName, "start"); err != nil {
-			return "", err
-		}
-		return fmt.Sprintf("Service started: %s", serviceName), nil
-	case "2", "restart":
-		return "Service restart requested.", runAction(serviceName, "restart")
-	case "3", "boot":
-		enabled, err := isServiceEnabled(serviceName)
-		if err != nil {
-			return "", err
-		}
-		if enabled {
-			if err := runAction(serviceName, "disable"); err != nil {
-				return "", err
-			}
-			return fmt.Sprintf("Boot start disabled: %s", serviceName), nil
-		}
-		if err := runAction(serviceName, "enable"); err != nil {
-			return "", err
-		}
-		return fmt.Sprintf("Boot start enabled: %s", serviceName), nil
-	case "r", "refresh":
-		return "", nil
-	default:
-		return "", fmt.Errorf("unknown selection: %s", choice)
-	}
-}
-
 func collectTUIStatus(serviceName string) tuiStatus {
 	stateText, stateErr := serviceStatusText(serviceName)
 	enabled, enabledErr := isServiceEnabled(serviceName)
-	return newTUIStatus(
-		"Linux",
-		serviceName,
-		stateText,
-		strings.EqualFold(stateText, "active"),
-		enabled,
+	return newTUIStatus(tuiStatusInput{
+		Platform:     "Linux",
+		ServiceName:  serviceName,
+		RawState:     stateText,
+		Active:       strings.EqualFold(stateText, "active"),
+		ActiveKnown:  stateErr == nil && !strings.EqualFold(strings.TrimSpace(stateText), "unknown"),
+		Enabled:      enabled,
+		EnabledKnown: enabledErr == nil,
+		Capabilities: tuiCapabilities{Reload: true},
+	},
 		statusIssue{Label: "service", Err: stateErr},
 		statusIssue{Label: "boot", Err: enabledErr},
 	)

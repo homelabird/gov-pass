@@ -81,12 +81,13 @@ func TestExecuteMenuChoice_StartsInactiveService(t *testing.T) {
 	t.Setenv("FAKE_FREEBSD_SYSRC_OUTPUT", "NO")
 	t.Setenv("FAKE_FREEBSD_SYSRC_EXIT", "0")
 
-	msg, err := executeMenuChoice("gov-pass", "1")
+	status := collectTUIStatus("gov-pass")
+	feedback, err := executeMenuChoice("gov-pass", status, "1")
 	if err != nil {
 		t.Fatalf("executeMenuChoice unexpected error: %v", err)
 	}
-	if msg != "Service started: gov-pass" {
-		t.Fatalf("executeMenuChoice message = %q", msg)
+	if feedback.Summary != "Service start requested." {
+		t.Fatalf("executeMenuChoice summary = %q", feedback.Summary)
 	}
 
 	logBytes, err := os.ReadFile(logPath)
@@ -105,12 +106,13 @@ func TestExecuteMenuChoice_DisablesBootWhenEnabled(t *testing.T) {
 	t.Setenv("FAKE_FREEBSD_SYSRC_OUTPUT", "YES")
 	t.Setenv("FAKE_FREEBSD_SYSRC_EXIT", "0")
 
-	msg, err := executeMenuChoice("gov-pass", "3")
+	status := collectTUIStatus("gov-pass")
+	feedback, err := executeMenuChoice("gov-pass", status, "3")
 	if err != nil {
 		t.Fatalf("executeMenuChoice unexpected error: %v", err)
 	}
-	if msg != "Boot start disabled: gov-pass" {
-		t.Fatalf("executeMenuChoice message = %q", msg)
+	if feedback.Summary != "Boot start disabled." {
+		t.Fatalf("executeMenuChoice summary = %q", feedback.Summary)
 	}
 
 	logBytes, err := os.ReadFile(logPath)
