@@ -1,5 +1,7 @@
 # gov-pass
 
+![Current gov-pass TUI panel](docs/screenshots/gov-pass-tui-main-2026-03-09.png)
+
 `gov-pass` is a split-only TLS ClientHello splitter for outbound TCP/443 traffic.
 It is not a proxy, VPN, or general DPI bypass tool. The runtime only collects the
 first TLS record, splits that payload, then returns the flow to pass-through mode.
