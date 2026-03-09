@@ -1,32 +1,41 @@
 package main
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
 
 func TestRenderPlainTUIView(t *testing.T) {
-	view := renderPlainTUIView(tuiStatus{
-		Platform:    "Linux",
-		ServiceName: "gov-pass",
-		State:       "active",
-		Active:      true,
-		Enabled:     false,
-		Warning:     "service: systemctl is-active gov-pass failed",
-	}, "Service restarted: gov-pass")
+	status := newTUIStatus(tuiStatusInput{
+		Platform:     "Linux",
+		ServiceName:  "gov-pass",
+		RawState:     "active",
+		Active:       true,
+		ActiveKnown:  true,
+		Enabled:      false,
+		EnabledKnown: true,
+		Capabilities: tuiCapabilities{Reload: true},
+	}, statusIssue{Label: "service", Err: errors.New("systemctl is-active gov-pass failed")})
+
+	view := renderPlainTUIViewForSize(status, successTUIFeedback("Service restart requested.", "Target service: gov-pass", false), 100, 40)
 
 	for _, want := range []string{
-		"GOV-PASS CONTROL",
-		"STATUS WARNING",
-		"Platform : LINUX",
+		"GOV-PASS OPERATOR PANEL [DEGRADED]",
+		"Platform : Linux",
 		"Service  : gov-pass",
-		"State    : ACTIVE",
-		"Signals  : [ACTIVE] [BOOT OFF]",
-		"[1] Toggle service",
-		"[r] Refresh",
-		"Tone    : INFO",
-		"Notice  : service: systemctl is-active gov-pass failed",
-		"Text    : Service restarted: gov-pass",
+		"Health   : DEGRADED",
+		"State    : Running",
+		"Boot     : Disabled",
+		"Reload   : Supported",
+		"[1] Stop service",
+		"[3] Enable boot",
+		"[4] Reload service",
+		"Summary  : Service check needs attention.",
+		"Detail   : Service check: systemctl is-active",
+		"gov-pass failed",
+		"Level    : OK",
+		"Summary  : Service restart requested.",
 	} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("rendered view missing %q:\n%s", want, view)
@@ -35,22 +44,24 @@ func TestRenderPlainTUIView(t *testing.T) {
 }
 
 func TestRenderPlainTUIViewForWidth_WrapsLongLines(t *testing.T) {
-	view := renderPlainTUIViewForWidth(tuiStatus{
-		Platform:    "Linux",
-		ServiceName: "gov-pass",
-		State:       "active",
-		Active:      true,
-		Enabled:     true,
-		Warning:     "service: a very long status error that should wrap cleanly across multiple lines",
-	}, "Service restart requested while the operator panel is still open.", 44)
+	status := newTUIStatus(tuiStatusInput{
+		Platform:     "Linux",
+		ServiceName:  "gov-pass",
+		RawState:     "active",
+		Active:       true,
+		ActiveKnown:  true,
+		Enabled:      true,
+		EnabledKnown: true,
+		Capabilities: tuiCapabilities{Reload: true},
+	}, statusIssue{Label: "service", Err: errors.New("a very long status error that should wrap cleanly across multiple lines")})
+
+	view := renderPlainTUIViewForSize(status, infoTUIFeedback("Service restart requested.", "The operator panel should wrap this detail line cleanly across multiple rows."), 44, 36)
 
 	for _, want := range []string{
-		"Notice  : service: a very long status",
-		"error that should wrap cleanly",
-		"across multiple lines",
-		"Text    : Service restart requested",
-		"while the operator panel is",
-		"still open.",
+		"Detail   : The operator panel should",
+		"wrap this detail line cleanly",
+		"across multiple rows.",
+		"Summary  : Service check needs attention.",
 	} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("wrapped view missing %q:\n%s", want, view)
@@ -59,26 +70,67 @@ func TestRenderPlainTUIViewForWidth_WrapsLongLines(t *testing.T) {
 }
 
 func TestBuildCompactStatusSummary(t *testing.T) {
-	summary := buildCompactStatusSummary(tuiStatus{
-		Platform:    "Windows",
-		ServiceName: "gov-pass",
-		State:       "running",
-		Active:      true,
-		Enabled:     true,
-		Warning:     "service: query failed\nboot: config failed",
-	})
+	status := newTUIStatus(tuiStatusInput{
+		Platform:     "Windows",
+		ServiceName:  "gov-pass",
+		RawState:     "running",
+		Active:       true,
+		ActiveKnown:  true,
+		Enabled:      true,
+		EnabledKnown: true,
+		Capabilities: tuiCapabilities{Reload: true},
+	}, statusIssue{Label: "service", Err: errors.New("query failed")}, statusIssue{Label: "boot", Err: errors.New("config failed")})
+
+	summary := buildCompactStatusSummary(status, successTUIFeedback("Service reload requested.", "", false))
 
 	for _, want := range []string{
-		"Platform: Windows",
+		"Health: DEGRADED",
 		"Service: gov-pass",
-		"State: running",
-		"Signals: [ACTIVE] [BOOT ON]",
-		"Warning: service: query failed",
-		"         boot: config failed",
+		"State: Running",
+		"Boot: Enabled",
+		"Reload: Supported",
+		"Warning: 2 checks need attention.",
+		"Last: Service reload requested.",
 		"Choose an action:",
 	} {
 		if !strings.Contains(summary, want) {
 			t.Fatalf("summary missing %q:\n%s", want, summary)
+		}
+	}
+}
+
+func TestTUIActionsForStatus_ReflectsServiceAndBootState(t *testing.T) {
+	activeActions := tuiActionsForStatus(tuiStatus{
+		Active:       true,
+		ActiveKnown:  true,
+		Enabled:      true,
+		EnabledKnown: true,
+		Capabilities: tuiCapabilities{Reload: true},
+	})
+	if activeActions[0].Label != "Stop service" {
+		t.Fatalf("service action when active = %q", activeActions[0].Label)
+	}
+	if activeActions[2].Label != "Disable boot" {
+		t.Fatalf("boot action when enabled = %q", activeActions[2].Label)
+	}
+	if activeActions[3].Label != "Reload service" {
+		t.Fatalf("reload action when supported = %q", activeActions[3].Label)
+	}
+
+	unknownActions := tuiActionsForStatus(tuiStatus{
+		ActiveKnown:  false,
+		EnabledKnown: false,
+		Capabilities: tuiCapabilities{Reload: false},
+	})
+	if unknownActions[0].Label != "Toggle service" {
+		t.Fatalf("service action when unknown = %q", unknownActions[0].Label)
+	}
+	if unknownActions[2].Label != "Toggle boot" {
+		t.Fatalf("boot action when unknown = %q", unknownActions[2].Label)
+	}
+	for _, action := range unknownActions {
+		if action.Label == "Reload service" {
+			t.Fatal("reload action should be omitted when unsupported")
 		}
 	}
 }

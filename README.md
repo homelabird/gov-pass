@@ -146,11 +146,11 @@ go build -o dist\splitter.exe .\cmd\splitter
 `gov-pass-tui` is a terminal TUI for service control. It supports
 start/stop/restart and boot enable/disable on Linux, Windows, and FreeBSD.
 
-![Current gov-pass TUI panel](docs/screenshots/gov-pass-tui-main.png)
+![Current gov-pass TUI panel](docs/screenshots/gov-pass-tui-main-2026-03-09.png)
 
 Platform notes:
 
-- Linux uses `whiptail` when available and falls back to the plain ASCII panel otherwise.
+- Linux, Windows, and FreeBSD now use the shared Bubble Tea operator panel.
 - Windows `reload` uses SCM `paramchange`
 - Windows `--service-name` accepts normal SCM service names, including names with spaces.
 - FreeBSD does not support in-place reload; use restart

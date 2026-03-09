@@ -3,7 +3,6 @@
 package main
 
 import (
-	"bufio"
 	"errors"
 	"flag"
 	"fmt"
@@ -45,96 +44,22 @@ func main() {
 }
 
 func runTUI(serviceName string) error {
-	scanner := bufio.NewScanner(os.Stdin)
-	lastNote := "Ready."
-
-	for {
-		clearTerminalScreen()
-		fmt.Print(renderPlainTUIView(collectTUIStatus(serviceName), lastNote))
-		fmt.Println()
-		fmt.Print("Select> ")
-
-		if !scanner.Scan() {
-			if err := scanner.Err(); err != nil {
-				return err
-			}
-			return nil
-		}
-		choice := strings.ToLower(strings.TrimSpace(scanner.Text()))
-		if choice == "" {
-			lastNote = "No selection."
-			continue
-		}
-		if choice == "q" || choice == "quit" || choice == "exit" {
-			return nil
-		}
-
-		msg, err := executeMenuChoice(serviceName, choice)
-		if err != nil {
-			lastNote = "Error: " + err.Error()
-			continue
-		}
-		if strings.TrimSpace(msg) == "" {
-			lastNote = "Done."
-		} else {
-			lastNote = msg
-		}
-	}
-}
-
-func executeMenuChoice(serviceName, choice string) (string, error) {
-	switch strings.ToLower(strings.TrimSpace(choice)) {
-	case "1", "switch", "start-stop":
-		active, err := isServiceActive(serviceName)
-		if err != nil {
-			return "", err
-		}
-		if active {
-			if err := runAction(serviceName, "stop"); err != nil {
-				return "", err
-			}
-			return fmt.Sprintf("Service stopped: %s", serviceName), nil
-		}
-		if err := runAction(serviceName, "start"); err != nil {
-			return "", err
-		}
-		return fmt.Sprintf("Service started: %s", serviceName), nil
-	case "2", "restart":
-		if err := runAction(serviceName, "restart"); err != nil {
-			return "", err
-		}
-		return fmt.Sprintf("Service restarted: %s", serviceName), nil
-	case "3", "boot":
-		enabled, err := isServiceEnabled(serviceName)
-		if err != nil {
-			return "", err
-		}
-		if enabled {
-			if err := runAction(serviceName, "disable"); err != nil {
-				return "", err
-			}
-			return fmt.Sprintf("Boot start disabled: %s", serviceName), nil
-		}
-		if err := runAction(serviceName, "enable"); err != nil {
-			return "", err
-		}
-		return fmt.Sprintf("Boot start enabled: %s", serviceName), nil
-	case "r", "refresh":
-		return "", nil
-	default:
-		return "", fmt.Errorf("unknown selection: %s", choice)
-	}
+	return runBubbleTUI(serviceName, collectTUIStatus)
 }
 
 func collectTUIStatus(serviceName string) tuiStatus {
 	state, activeErr := serviceStatusText(serviceName)
 	enabled, enabledErr := isServiceEnabled(serviceName)
-	return newTUIStatus(
-		"FreeBSD",
-		serviceName,
-		state,
-		strings.EqualFold(state, "active"),
-		enabled,
+	return newTUIStatus(tuiStatusInput{
+		Platform:     "FreeBSD",
+		ServiceName:  serviceName,
+		RawState:     state,
+		Active:       strings.EqualFold(state, "active"),
+		ActiveKnown:  activeErr == nil && !strings.EqualFold(strings.TrimSpace(state), "unknown"),
+		Enabled:      enabled,
+		EnabledKnown: enabledErr == nil,
+		Capabilities: tuiCapabilities{Reload: false},
+	},
 		statusIssue{Label: "service", Err: activeErr},
 		statusIssue{Label: "boot", Err: enabledErr},
 	)
