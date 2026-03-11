@@ -11,8 +11,12 @@ first TLS record, splits that payload, then returns the flow to pass-through mod
 | Platform | Backend | Status |
 | --- | --- | --- |
 | Windows 10/11 (x64) | WinDivert | Stable |
-| Linux (x86_64) | NFQUEUE | Beta |
+| Linux (x86_64) | NFQUEUE | Stable |
 | FreeBSD / pfSense | pf divert | Experimental |
+
+Linux on supported x86_64 hosts is suitable for day-to-day use. For
+multi-egress, VPN, or container environments, pin `--iface` explicitly in the
+service defaults before enabling the service.
 
 ## Quick Start
 
