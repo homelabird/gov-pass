@@ -17,21 +17,34 @@ type Engine struct {
 	adapter adapter.Adapter
 	sharder *flow.Sharder
 	workers []*worker
+	stats   *stats
 }
 
 func New(cfg Config, ad adapter.Adapter) *Engine {
 	cfg = cloneConfig(cfg)
 	sharder := flow.NewSharder(cfg.WorkerCount)
+	stats := newStats()
 	workers := make([]*worker, sharder.Workers())
 	for i := range workers {
-		workers[i] = newWorker(i, cfg, ad)
+		workers[i] = newWorker(i, cfg, ad, stats)
 	}
 	return &Engine{
 		cfg:     cfg,
 		adapter: ad,
 		sharder: sharder,
 		workers: workers,
+		stats:   stats,
 	}
+}
+
+func (e *Engine) Stats() StatsSnapshot {
+	if e == nil {
+		return StatsSnapshot{
+			FailOpen: map[string]uint64{},
+			Pressure: map[string]uint64{},
+		}
+	}
+	return e.stats.snapshot()
 }
 
 // Reload updates the engine configuration in-place without stopping packet

@@ -27,6 +27,19 @@ Use [`pf/`](pf/) for example anchor fragments.
 - On failure, reinject held packets in original order.
 - After the first decision, leave the rest of the flow in pass-through mode.
 
+## Current Scope
+
+- `reload` is not supported on FreeBSD; use service restart flows instead.
+- `pf` policy remains operator-managed. The installer lays down helper scripts
+  and an editable anchor template, but operators still choose when to apply
+  `pfctl` changes.
+- The current divert socket open/bind path is `AF_INET`-based. Treat IPv6
+  divert handling as unsupported until the adapter grows an explicit IPv6
+  receive/bind path.
+- `splitter --check` validates root and required operator commands (`pfctl`,
+  `service`, `sysrc`) and emits notes about the current scope; it does not
+  attempt to prove that `pf` rules are already installed.
+
 ## Caveats
 
 - Validate offload settings on each target NIC and OS combination.

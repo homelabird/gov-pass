@@ -22,10 +22,10 @@ endif
 
 # ── quality ──────────────────────────────────────────────────────────────
 test:
-	$(GO) test ./internal/... ./cmd/splitter/...
+	$(GO) test $(GOFLAGS) ./... -count=1
 
 vet:
-	$(GO) vet ./internal/... ./cmd/splitter/...
+	$(GO) vet $(GOFLAGS) ./...
 
 # ── install / uninstall (Linux, requires root) ──────────────────────────
 install: build

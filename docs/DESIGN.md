@@ -52,3 +52,16 @@ flow continues unchanged.
   `C:\ProgramData\gov-pass\`.
 - Shutdown drains held work with explicit bounds and flushes adapter-level
   pending packets best-effort before the handle closes.
+
+## Reload Model
+
+- `sc.exe control gov-pass paramchange` triggers config reload in service mode.
+- Most `engine.*` settings reload in place.
+- `engine.workers`, `engine.worker_queue_size`, `windivert_dir`, and
+  `windivert_sys` remain restart-only.
+- `windivert.filter` now reloads by reopening the WinDivert handle.
+- `windivert.queue_len`, `windivert.queue_time_ms`, and
+  `windivert.queue_size_bytes` reload in place for non-zero values and fall
+  back to driver defaults through the same handle reopen path when set to `0`.
+
+Use [`PACKAGING.md`](PACKAGING.md) for the current operator-facing matrix.

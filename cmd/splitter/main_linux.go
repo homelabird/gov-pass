@@ -250,13 +250,13 @@ func run() error {
 			return fmt.Errorf("auto rule install failed: %w", err)
 		}
 		rulesCleanup = cleanup
-		log.Printf("auto rules installed via %s", backend)
+		logInfo("linux_rules_installed", "auto rules installed", "backend", backend)
 		defer func() {
 			if rulesCleanup == nil {
 				return
 			}
 			if err := rulesCleanup(); err != nil {
-				log.Printf("auto rule uninstall failed: %v", err)
+				logError("linux_rules_cleanup_failed", "auto rule uninstall failed", err)
 			}
 		}()
 	}
@@ -278,7 +278,7 @@ func run() error {
 		if *autoOffloadRestore {
 			st, err := readOffloadState(ifaceName)
 			if err != nil {
-				log.Printf("warning: could not read offload state on %s; restore disabled: %v", ifaceName, err)
+				logWarn("linux_offload_state_unavailable", "warning: could not read offload state; restore disabled", "iface", ifaceName, "err", err)
 			} else {
 				restore = &st
 			}
@@ -288,9 +288,9 @@ func run() error {
 			st := *restore
 			defer func() {
 				if err := applyOffloadState(ifaceName, st); err != nil {
-					log.Printf("offload restore failed on %s: %v", ifaceName, err)
+					logError("linux_offload_restore_failed", "offload restore failed", err, "iface", ifaceName)
 				} else {
-					log.Printf("offload restored on %s (gro=%v gso=%v tso=%v)", ifaceName, st.gro, st.gso, st.tso)
+					logInfo("linux_offload_restored", "offload restored", "iface", ifaceName, "gro", st.gro, "gso", st.gso, "tso", st.tso)
 				}
 			}()
 		}
@@ -301,11 +301,11 @@ func run() error {
 			}
 			return fmt.Errorf("disable offload failed: %w", err)
 		}
-		log.Printf("offload disabled on %s (gro/gso/tso)", ifaceName)
+		logInfo("linux_offload_disabled", "offload disabled", "iface", ifaceName, "gro", false, "gso", false, "tso", false)
 	}
 
 	if *mark == 0 {
-		log.Printf("warning: mark=0; ensure NFQUEUE bypass rules prevent reinjection loops")
+		logWarn("linux_mark_zero", "warning: mark=0; ensure NFQUEUE bypass rules prevent reinjection loops")
 	}
 
 	opts := adapter.NFQueueOptions{
@@ -320,7 +320,10 @@ func run() error {
 	}
 	eng := engine.New(cfg, ad)
 
-	if err := eng.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+	logInfo("engine_started", "engine started", "workers", cfg.WorkerCount, "split_mode", cfg.SplitMode, "split_chunk", cfg.SplitChunk)
+	err = eng.Run(ctx)
+	logInfo("engine_stats", "engine stats", "stats", eng.Stats())
+	if err != nil && !errors.Is(err, context.Canceled) {
 		return fmt.Errorf("engine stopped: %w", err)
 	}
 	return nil
@@ -1042,32 +1045,78 @@ func detectEgressInterface() (string, error) {
 	if !ok {
 		return "", errors.New("ip command not found in PATH; use --iface")
 	}
+	return detectEgressInterfaceWith(path, runCommand)
+}
 
-	out, err := runCommand(path, "-4", "route", "get", "1.1.1.1")
-	if err == nil {
-		if iface := parseRouteDev(out); iface != "" {
-			return iface, nil
+type linuxCommandRunner func(name string, args ...string) (string, error)
+
+func detectEgressInterfaceWith(path string, runner linuxCommandRunner) (string, error) {
+	probes := []struct {
+		args []string
+	}{
+		{args: []string{"-o", "-4", "route", "get", "1.1.1.1"}},
+		{args: []string{"-o", "-6", "route", "get", "2606:4700:4700::1111"}},
+		{args: []string{"-o", "-4", "route", "show", "default"}},
+		{args: []string{"-o", "-6", "route", "show", "default"}},
+	}
+
+	var candidates []string
+	seen := make(map[string]struct{})
+	for _, probe := range probes {
+		out, err := runner(path, probe.args...)
+		if err != nil {
+			continue
+		}
+		for _, iface := range parseRouteDevs(out) {
+			if _, ok := seen[iface]; ok {
+				continue
+			}
+			seen[iface] = struct{}{}
+			candidates = append(candidates, iface)
 		}
 	}
 
-	out, err = runCommand(path, "-4", "route", "show", "default")
-	if err != nil {
-		return "", fmt.Errorf("ip route lookup failed: %w", err)
+	switch len(candidates) {
+	case 0:
+		return "", errors.New("could not detect egress interface from IPv4/IPv6 route lookups; use --iface")
+	case 1:
+		return candidates[0], nil
+	default:
+		return "", fmt.Errorf("detected multiple candidate egress interfaces (%s); use --iface", strings.Join(candidates, ", "))
 	}
-	if iface := parseRouteDev(out); iface != "" {
-		return iface, nil
-	}
-	return "", errors.New("could not detect egress interface; use --iface")
 }
 
 func parseRouteDev(output string) string {
-	fields := strings.Fields(output)
-	for i := 0; i+1 < len(fields); i++ {
-		if fields[i] == "dev" {
-			return fields[i+1]
+	devs := parseRouteDevs(output)
+	if len(devs) == 0 {
+		return ""
+	}
+	return devs[0]
+}
+
+func parseRouteDevs(output string) []string {
+	scanner := bufio.NewScanner(strings.NewReader(output))
+	seen := make(map[string]struct{})
+	var devs []string
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		for i := 0; i+1 < len(fields); i++ {
+			if fields[i] != "dev" {
+				continue
+			}
+			iface := fields[i+1]
+			if iface == "" {
+				break
+			}
+			if _, ok := seen[iface]; ok {
+				break
+			}
+			seen[iface] = struct{}{}
+			devs = append(devs, iface)
+			break
 		}
 	}
-	return ""
+	return devs
 }
 
 func runCommand(name string, args ...string) (string, error) {
@@ -1201,7 +1250,7 @@ func ensureLinuxExternalTools(autoInstall bool, needs linuxToolNeeds) error {
 		return fmt.Errorf("missing required external tools: %s", strings.Join(missing, ", "))
 	}
 
-	log.Printf("installing missing tools via %s: %s", mgrKind, strings.Join(pkgs, " "))
+	logInfo("linux_install_tools", "installing missing tools", "manager", mgrKind, "packages", strings.Join(pkgs, ","))
 	if err := installLinuxPackages(mgrKind, mgrPath, pkgs); err != nil {
 		return fmt.Errorf("auto-install-tools failed: %w", err)
 	}

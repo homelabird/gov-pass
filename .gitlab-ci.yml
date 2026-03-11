@@ -163,6 +163,9 @@ verify_go_tests:
     - apt-get install -y --no-install-recommends pkg-config gcc
   script:
     - bash -n scripts/install_one_touch_curl.sh
+    - bash -n scripts/linux/install_nfqueue.sh
+    - bash -n scripts/linux/uninstall_nfqueue.sh
+    - bash -n scripts/linux/netns_integration_test.sh
     - bash -n scripts/ci/sign_release_manifests.sh
     - bash -n scripts/ci/verify_release_manifest_signature.sh
     - go test ./... -count=1
@@ -212,12 +215,13 @@ verify_linux_netns_e2e:
   stage: verify
   image: golang:1.25.8-bookworm
   rules:
+    - if: $CI_COMMIT_TAG
     - if: ($CI_COMMIT_BRANCH || $CI_MERGE_REQUEST_IID) && $LINUX_NETNS_E2E == "1"
   tags:
     - linux-root
   before_script:
     - apt-get update
-    - apt-get install -y --no-install-recommends iproute2 curl openssl
+    - apt-get install -y --no-install-recommends iproute2 curl openssl nftables iptables
   script:
     - go build -o dist/splitter ./cmd/splitter
     - ./scripts/linux/netns_integration_test.sh

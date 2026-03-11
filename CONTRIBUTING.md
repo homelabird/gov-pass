@@ -82,9 +82,11 @@ sudo ./scripts/linux/uninstall_nfqueue.sh --queue-num 100 --mark 1
 - Windows Authenticode signing in GitHub release publishing is optional and uses:
   - `WINDOWS_CODESIGN_PFX_B64`
   - `WINDOWS_CODESIGN_PFX_PASSWORD`
-- Linux root/network namespace E2E is available as an opt-in verify job:
-  - Set `LINUX_NETNS_E2E=1`
+- Linux root/network namespace E2E uses `verify_linux_netns_e2e`:
+  - Tag pipelines always run `verify_linux_netns_e2e` and require a `linux-root` runner.
+  - Branch/MR pipelines can opt in by setting `LINUX_NETNS_E2E=1`
   - Runner tag requirement: `linux-root`
+  - Runner must permit `ip netns` creation and veth pair setup (`CAP_NET_ADMIN`)
   - Job: `verify_linux_netns_e2e`
 - Windows MSI E2E verification requires a Windows runner with Administrator privileges:
   - Enable by setting `WINDOWS_E2E=1` for tagged pipelines.

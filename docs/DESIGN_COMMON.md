@@ -35,3 +35,19 @@ pass-through.
 - On success, drop held originals and inject split segments.
 - On failure, reinject or accept held packets in original order.
 - Bound shutdown with a timeout and packet limit so stop paths cannot hang.
+
+## Observability
+
+- The engine keeps in-memory counters for `splits_ok`, fail-open reasons, and
+  pressure-triggered bypasses.
+- Linux, Windows, and FreeBSD entrypoints emit a one-line counter summary when
+  the engine stops so operator logs can confirm whether the path mostly split,
+  failed open, or bypassed under pressure.
+- Operational logs use `level=... event=... msg=...` logfmt-style fields so
+  service reload/start/stop and platform helper events have stable event IDs.
+
+## Regression Coverage
+
+- Engine tests replay synthetic multi-packet TLS ClientHello flows directly and
+  through a classic pcap/Ethernet harness, verifying payload preservation and
+  policy-specific split chunk selection.

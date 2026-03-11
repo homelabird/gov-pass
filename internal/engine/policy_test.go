@@ -106,7 +106,7 @@ func TestResolveFlowPlan_StickyAcrossReload(t *testing.T) {
 		HasSplitChunk: true,
 		SplitChunk:    7,
 	}}
-	w := newWorker(0, cfg, nil)
+	w := newWorker(0, cfg, nil, newStats())
 	st := &flow.FlowState{}
 	meta := meta4(9, 9, 9, 9)
 

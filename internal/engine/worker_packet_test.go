@@ -34,7 +34,7 @@ func TestInjectWindow_FailOpensOnIPv6ExtensionHeaders(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.SplitChunk = 3
 	ad := &recordingAdapter{}
-	w := newWorker(0, cfg, ad)
+	w := newWorker(0, cfg, ad, newStats())
 
 	tpl := &packet.Packet{
 		Data:    testIPv6PacketWithPayload(true, []byte("abcdef")),
@@ -78,6 +78,10 @@ func TestInjectWindow_FailOpensOnIPv6ExtensionHeaders(t *testing.T) {
 	}
 	if st.Template != nil || st.Reassembler != nil || len(st.HeldPackets) != 0 {
 		t.Fatalf("expected collecting state cleared, got %+v", st)
+	}
+	stats := w.stats.snapshot()
+	if got := stats.FailOpen["ipv6_extension_headers"]; got != 1 {
+		t.Fatalf("expected ipv6_extension_headers fail-open count=1, got %d", got)
 	}
 }
 

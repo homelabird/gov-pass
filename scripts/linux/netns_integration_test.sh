@@ -2,10 +2,12 @@
 set -eu
 
 NS="govpass"
-VETH_HOST="veth-gp0"
-VETH_NS="veth-gp1"
-HOST_IP="10.200.1.1/24"
-NS_IP="10.200.1.2/24"
+CLIENT_NS=""
+SERVER_NS=""
+CLIENT_VETH="veth-gpc0"
+SERVER_VETH="veth-gps0"
+SERVER_IP="10.200.1.1/24"
+CLIENT_IP="10.200.1.2/24"
 QUEUE_NUM=100
 MARK=1
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/../.."; pwd)"
@@ -41,6 +43,9 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+CLIENT_NS="${NS}-client"
+SERVER_NS="${NS}-server"
+
 if [ "$(id -u)" -ne 0 ]; then
   echo "root required"
   exit 1
@@ -52,6 +57,11 @@ for cmd in ip openssl curl; do
     exit 1
   fi
 done
+if ! command -v nft >/dev/null 2>&1 && \
+   { ! command -v iptables >/dev/null 2>&1 || ! command -v ip6tables >/dev/null 2>&1; }; then
+  echo "missing dependency: nft or iptables+ip6tables"
+  exit 1
+fi
 
 if [ ! -x "$BIN" ]; then
   echo "splitter not found: $BIN"
@@ -65,40 +75,63 @@ cleanup() {
   if [ -n "${SERVER_PID:-}" ]; then
     kill "$SERVER_PID" >/dev/null 2>&1 || true
   fi
-  if ip netns list | grep -q "^${NS}\b"; then
-    ip netns exec "$NS" "$ROOT/scripts/linux/uninstall_nfqueue.sh" --queue-num "$QUEUE_NUM" --mark "$MARK" >/dev/null 2>&1 || true
-    ip netns del "$NS" >/dev/null 2>&1 || true
+  if ip netns list | grep -q "^${CLIENT_NS}\b"; then
+    ip netns exec "$CLIENT_NS" "$ROOT/scripts/linux/uninstall_nfqueue.sh" --queue-num "$QUEUE_NUM" --mark "$MARK" >/dev/null 2>&1 || true
+    ip netns del "$CLIENT_NS" >/dev/null 2>&1 || true
   fi
-  ip link del "$VETH_HOST" >/dev/null 2>&1 || true
+  if ip netns list | grep -q "^${SERVER_NS}\b"; then
+    ip netns del "$SERVER_NS" >/dev/null 2>&1 || true
+  fi
   if [ -n "${CERT_DIR:-}" ]; then
     rm -rf "$CERT_DIR" || true
   fi
 }
 trap cleanup EXIT
 
-ip netns add "$NS"
-ip link add "$VETH_HOST" type veth peer name "$VETH_NS"
-ip link set "$VETH_NS" netns "$NS"
-ip addr add "$HOST_IP" dev "$VETH_HOST"
-ip link set "$VETH_HOST" up
-ip -n "$NS" addr add "$NS_IP" dev "$VETH_NS"
-ip -n "$NS" link set "$VETH_NS" up
-ip -n "$NS" link set lo up
+ip netns add "$CLIENT_NS"
+ip netns add "$SERVER_NS"
+ip link add "$CLIENT_VETH" type veth peer name "$SERVER_VETH"
+ip link set "$CLIENT_VETH" netns "$CLIENT_NS"
+ip link set "$SERVER_VETH" netns "$SERVER_NS"
+ip -n "$CLIENT_NS" addr add "$CLIENT_IP" dev "$CLIENT_VETH"
+ip -n "$CLIENT_NS" link set "$CLIENT_VETH" up
+ip -n "$CLIENT_NS" link set lo up
+ip -n "$SERVER_NS" addr add "$SERVER_IP" dev "$SERVER_VETH"
+ip -n "$SERVER_NS" link set "$SERVER_VETH" up
+ip -n "$SERVER_NS" link set lo up
 
 CERT_DIR="$(mktemp -d)"
 openssl req -x509 -newkey rsa:2048 -nodes \
   -keyout "$CERT_DIR/key.pem" -out "$CERT_DIR/cert.pem" \
   -subj "/CN=gov-pass-test" -days 1 >/dev/null 2>&1
 
-openssl s_server -quiet -accept 10.200.1.1:443 \
+ip netns exec "$SERVER_NS" openssl s_server -quiet -WWW -accept 10.200.1.1:443 \
   -key "$CERT_DIR/key.pem" -cert "$CERT_DIR/cert.pem" >/dev/null 2>&1 &
 SERVER_PID=$!
 
-ip netns exec "$NS" "$ROOT/scripts/linux/install_nfqueue.sh" --queue-num "$QUEUE_NUM" --mark "$MARK"
-ip netns exec "$NS" "$BIN" --queue-num "$QUEUE_NUM" --mark "$MARK" >/dev/null 2>&1 &
+ip netns exec "$CLIENT_NS" "$ROOT/scripts/linux/install_nfqueue.sh" --queue-num "$QUEUE_NUM" --mark "$MARK"
+# Exercise the packaged helper scripts directly and keep runtime helpers off so
+# the smoke test stays deterministic on dedicated CI runners.
+ip netns exec "$CLIENT_NS" "$BIN" \
+  --queue-num "$QUEUE_NUM" \
+  --mark "$MARK" \
+  --auto-rules=false \
+  --auto-offload=false \
+  --auto-install-tools=false >/dev/null 2>&1 &
 SPLITTER_PID=$!
 
-sleep 1
-ip netns exec "$NS" curl -sk --max-time 5 https://10.200.1.1/ >/dev/null
+success=0
+for _ in 1 2 3 4 5; do
+  if ip netns exec "$CLIENT_NS" curl -sk --max-time 5 https://10.200.1.1/ >/dev/null; then
+    success=1
+    break
+  fi
+  sleep 1
+done
+
+if [ "$success" -ne 1 ]; then
+  echo "netns integration test: TLS handshake failed"
+  exit 1
+fi
 
 echo "netns integration test: OK"

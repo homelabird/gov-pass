@@ -3,6 +3,8 @@
 package main
 
 import (
+	"errors"
+	"strings"
 	"testing"
 
 	"fk-gov/internal/engine"
@@ -100,6 +102,104 @@ func TestParseRouteDev(t *testing.T) {
 		if got := parseRouteDev(tt.out); got != tt.want {
 			t.Fatalf("parseRouteDev(%q) = %q, want %q", tt.out, got, tt.want)
 		}
+	}
+}
+
+func TestParseRouteDevs(t *testing.T) {
+	out := strings.Join([]string{
+		"default via 10.0.0.1 dev eth0 proto dhcp metric 100",
+		"default via fe80::1 dev eth0 proto ra metric 100",
+		"2606:4700:4700::1111 from :: via fe80::2 dev tun0 src 2001:db8::2 metric 10",
+		"default via 192.168.50.1 proto dhcp metric 100",
+	}, "\n")
+
+	got := parseRouteDevs(out)
+	want := []string{"eth0", "tun0"}
+	if len(got) != len(want) {
+		t.Fatalf("parseRouteDevs len = %d, want %d (%v)", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("parseRouteDevs[%d] = %q, want %q (%v)", i, got[i], want[i], got)
+		}
+	}
+}
+
+func TestDetectEgressInterfaceWith(t *testing.T) {
+	type result struct {
+		out string
+		err error
+	}
+
+	tests := []struct {
+		name    string
+		results map[string]result
+		want    string
+		wantErr string
+	}{
+		{
+			name: "prefers single ipv4 candidate",
+			results: map[string]result{
+				"-o -4 route get 1.1.1.1": {out: "1.1.1.1 via 192.168.0.1 dev eth0 src 192.168.0.10"},
+			},
+			want: "eth0",
+		},
+		{
+			name: "falls back to ipv6 default route",
+			results: map[string]result{
+				"-o -4 route get 1.1.1.1":              {err: errors.New("network unreachable")},
+				"-o -6 route get 2606:4700:4700::1111": {err: errors.New("network unreachable")},
+				"-o -4 route show default":             {err: errors.New("no ipv4 default")},
+				"-o -6 route show default":             {out: "default via fe80::1 dev eth1 proto ra metric 100"},
+			},
+			want: "eth1",
+		},
+		{
+			name: "returns ambiguity when families disagree",
+			results: map[string]result{
+				"-o -4 route get 1.1.1.1":              {out: "1.1.1.1 via 192.168.0.1 dev eth0 src 192.168.0.10"},
+				"-o -6 route get 2606:4700:4700::1111": {out: "2606:4700:4700::1111 from :: via fe80::1 dev tun0 src 2001:db8::2 metric 10"},
+			},
+			wantErr: "multiple candidate egress interfaces (eth0, tun0)",
+		},
+		{
+			name: "returns explicit error when no routes resolve",
+			results: map[string]result{
+				"-o -4 route get 1.1.1.1":              {err: errors.New("network unreachable")},
+				"-o -6 route get 2606:4700:4700::1111": {err: errors.New("network unreachable")},
+				"-o -4 route show default":             {out: ""},
+				"-o -6 route show default":             {out: ""},
+			},
+			wantErr: "could not detect egress interface from IPv4/IPv6 route lookups",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runner := func(_ string, args ...string) (string, error) {
+				if res, ok := tt.results[strings.Join(args, " ")]; ok {
+					return res.out, res.err
+				}
+				return "", errors.New("unexpected probe")
+			}
+
+			got, err := detectEgressInterfaceWith("/usr/bin/ip", runner)
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got nil", tt.wantErr)
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("error = %q, want substring %q", err.Error(), tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("iface = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 

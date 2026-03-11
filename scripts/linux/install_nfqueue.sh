@@ -51,37 +51,63 @@ if command -v nft >/dev/null 2>&1; then
 
   # Delete only rules we previously installed (tagged), do not flush user rules.
   nft -a list chain inet "$TABLE" "$CHAIN" 2>/dev/null | \
-    awk -v tag="comment \\\"$TAG\\\"" '$0 ~ tag { for (i=1;i<=NF;i++) if ($i==\"handle\") print $(i+1) }' | \
+    awk -v tag="comment \"$TAG\"" '$0 ~ tag { for (i=1;i<=NF;i++) if ($i=="handle") print $(i+1) }' | \
     while read -r h; do
       [ -n "$h" ] || continue
       nft delete rule inet "$TABLE" "$CHAIN" handle "$h" 2>/dev/null || true
     done
 
-  nft add rule inet "$TABLE" "$CHAIN" meta mark \& "$MARK" == "$MARK" return comment "$TAG"
+  if [ "$MARK" -ne 0 ]; then
+    nft add rule inet "$TABLE" "$CHAIN" meta mark \& "$MARK" == "$MARK" return comment "$TAG"
+  fi
   if [ "$EXCLUDE_LOOPBACK" -eq 1 ]; then
     nft add rule inet "$TABLE" "$CHAIN" oifname "lo" return comment "$TAG"
   fi
-  # Restrict to IPv4 only; the splitter currently only handles AF_INET packets.
-  nft add rule inet "$TABLE" "$CHAIN" meta nfproto ipv4 tcp dport 443 queue num "$QUEUE_NUM" bypass comment "$TAG"
+  for FAMILY in ipv4 ipv6; do
+    nft add rule inet "$TABLE" "$CHAIN" meta nfproto "$FAMILY" tcp dport 443 queue num "$QUEUE_NUM" bypass comment "$TAG"
+  done
   exit 0
 fi
 
-if ! command -v iptables >/dev/null 2>&1; then
-  echo "iptables or nft is required"
+if ! command -v iptables >/dev/null 2>&1 || ! command -v ip6tables >/dev/null 2>&1; then
+  echo "iptables+ip6tables or nft is required"
   exit 1
 fi
 
-CHAIN="GOVPASS_OUTPUT"
+install_family() {
+  TOOL="$1"
+  CHAIN="$2"
 
-# Dedicated chain so we only manage our own rules and can cleanly uninstall.
-iptables -t mangle -N "$CHAIN" 2>/dev/null || true
-iptables -t mangle -F "$CHAIN"
+  # Dedicated chains let the helper manage only its own rules and cleanly
+  # remove them later without disturbing user-owned OUTPUT rules.
+  "$TOOL" -t mangle -N "$CHAIN" 2>/dev/null || true
+  "$TOOL" -t mangle -F "$CHAIN"
 
-iptables -t mangle -C OUTPUT -j "$CHAIN" 2>/dev/null || \
-  iptables -t mangle -I OUTPUT 1 -j "$CHAIN"
+  "$TOOL" -t mangle -C OUTPUT -j "$CHAIN" 2>/dev/null || \
+    "$TOOL" -t mangle -I OUTPUT 1 -j "$CHAIN"
 
-iptables -t mangle -A "$CHAIN" -m mark --mark "$MARK"/"$MARK" -j RETURN
-if [ "$EXCLUDE_LOOPBACK" -eq 1 ]; then
-  iptables -t mangle -A "$CHAIN" -o lo -j RETURN
+  if [ "$MARK" -ne 0 ]; then
+    "$TOOL" -t mangle -A "$CHAIN" -m mark --mark "$MARK"/"$MARK" -j RETURN
+  fi
+  if [ "$EXCLUDE_LOOPBACK" -eq 1 ]; then
+    "$TOOL" -t mangle -A "$CHAIN" -o lo -j RETURN
+  fi
+  "$TOOL" -t mangle -A "$CHAIN" -p tcp --dport 443 -j NFQUEUE --queue-num "$QUEUE_NUM" --queue-bypass
+}
+
+uninstall_family() {
+  TOOL="$1"
+  CHAIN="$2"
+
+  while "$TOOL" -t mangle -D OUTPUT -j "$CHAIN" 2>/dev/null; do
+    :
+  done
+  "$TOOL" -t mangle -F "$CHAIN" 2>/dev/null || true
+  "$TOOL" -t mangle -X "$CHAIN" 2>/dev/null || true
+}
+
+install_family iptables GOVPASS_OUTPUT
+if ! install_family ip6tables GOVPASS_OUTPUT6; then
+  uninstall_family iptables GOVPASS_OUTPUT || true
+  exit 1
 fi
-iptables -t mangle -A "$CHAIN" -p tcp --dport 443 -j NFQUEUE --queue-num "$QUEUE_NUM" --queue-bypass

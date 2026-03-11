@@ -40,16 +40,31 @@ MSI expectations:
 
 Reload model:
 
-- Reloadable in place:
-  - most `engine.*` settings except worker topology
-  - `windivert.queue_len`, `windivert.queue_time_ms`, `windivert.queue_size_bytes` when set to non-zero values
-- Restart required:
-  - `engine.workers`
-  - `engine.worker_queue_size`
-  - `windivert.filter`
-  - `windivert_dir`
-  - `windivert_sys`
-  - queue values changed back to `0` (driver default)
+| Setting | In-place reload | Notes |
+| --- | --- | --- |
+| `engine.split_mode` | Yes | Applied through `Engine.Reload`. |
+| `engine.split_chunk` | Yes | Applied through `Engine.Reload`. |
+| `engine.collect_timeout` | Yes | Applied through `Engine.Reload`. |
+| `engine.max_buffer_bytes` | Yes | Applied through `Engine.Reload`. |
+| `engine.max_held_packets` | Yes | Applied through `Engine.Reload`. |
+| `engine.max_segment_payload` | Yes | Applied through `Engine.Reload`. |
+| `engine.flow_idle_timeout` | Yes | Applied through `Engine.Reload`. |
+| `engine.gc_interval` | Yes | Applied through `Engine.Reload`. |
+| `engine.max_flows_per_worker` | Yes | Applied through `Engine.Reload`. |
+| `engine.max_reassembly_bytes_per_worker` | Yes | Applied through `Engine.Reload`. |
+| `engine.max_held_bytes_per_worker` | Yes | Applied through `Engine.Reload`. |
+| `engine.shutdown_fail_open_timeout` | Yes | Applied through `Engine.Reload`. |
+| `engine.shutdown_fail_open_max_packets` | Yes | Applied through `Engine.Reload`. |
+| `engine.adapter_flush_timeout` | Yes | Applied through `Engine.Reload`. |
+| `engine.policies` | Yes | Applied through `Engine.Reload`. |
+| `windivert.filter` | Yes | Applied by reopening the WinDivert handle in service reload. |
+| `windivert.queue_len` | Yes | Non-zero values use `SetParam`; `0` reverts to driver default via handle reopen. |
+| `windivert.queue_time_ms` | Yes | Non-zero values use `SetParam`; `0` reverts to driver default via handle reopen. |
+| `windivert.queue_size_bytes` | Yes | Non-zero values use `SetParam`; `0` reverts to driver default via handle reopen. |
+| `engine.workers` | No | Worker topology changes require a service restart. |
+| `engine.worker_queue_size` | No | Worker topology changes require a service restart. |
+| `windivert_dir` | No | Driver file location changes require a restart. |
+| `windivert_sys` | No | Driver file location changes require a restart. |
 
 Build notes:
 
@@ -124,6 +139,15 @@ standard service/helper paths:
   - `/usr/local/libexec/gov-pass/uninstall_pf_anchor.sh`
 - install editable anchor template: `/usr/local/etc/gov-pass/pf.anchor.conf`
 - keep `pf` policy operator-managed through the helper and anchor template
+
+Current scope:
+
+- reload is not supported; use restart from the service wrapper or TUI
+- the current divert socket path is IPv4-focused (`AF_INET`), so treat IPv6
+  divert handling as unsupported for now
+- `splitter --check` validates root plus required operator commands (`pfctl`,
+  `service`, `sysrc`) and prints scope notes; it does not auto-install `pf`
+  policy
 
 Use [`pf/`](pf/) for anchor templates and [`DESIGN_BSD.md`](DESIGN_BSD.md) for
 the divert flow model.

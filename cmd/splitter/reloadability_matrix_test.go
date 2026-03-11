@@ -12,9 +12,9 @@ func TestWindowsReloadabilityMatrix_HasExpectedEntries(t *testing.T) {
 
 	mustContain(t, windowsReloadableSettings, "engine.split_mode")
 	mustContain(t, windowsReloadableSettings, "engine.policies")
-	mustContain(t, windowsReloadableSettings, "windivert.queue_len (non-zero values)")
-	mustContain(t, windowsRestartRequiredSettings, "windivert.filter")
-	mustContain(t, windowsRestartRequiredSettings, "windivert.queue_len=0 (revert to driver default)")
+	mustContain(t, windowsReloadableSettings, "windivert.filter (via handle reopen)")
+	mustContain(t, windowsReloadableSettings, "windivert.queue_len (including 0/default via handle reopen)")
+	mustContain(t, windowsRestartRequiredSettings, "windivert_dir")
 }
 
 func TestWindowsReloadabilityMatrix_NoOverlap(t *testing.T) {

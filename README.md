@@ -86,7 +86,8 @@ sc.exe control gov-pass paramchange
 
 Use [`docs/examples/splitter.windows.json`](docs/examples/splitter.windows.json) as
 the service config template and `splitter.exe --print-reloadability` to see
-which settings are reloadable vs restart-only.
+which settings are reloadable vs restart-only. [`docs/PACKAGING.md`](docs/PACKAGING.md)
+also carries the current reloadability matrix as an operator reference.
 
 ### FreeBSD
 
@@ -104,7 +105,9 @@ sudo service gov-pass start
 ```
 
 Use [`docs/pf/`](docs/pf/) for anchor examples and
-[`docs/DESIGN_BSD.md`](docs/DESIGN_BSD.md) for the divert model.
+[`docs/DESIGN_BSD.md`](docs/DESIGN_BSD.md) for the divert model. Current scope:
+reload is restart-only, `pf` policy remains operator-managed, and the current
+divert socket path should be treated as IPv4-only.
 
 ## Manual Build
 

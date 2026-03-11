@@ -110,6 +110,25 @@ function Wait-PathMissing {
   throw "Path still exists after ${TimeoutSeconds}s: $Path"
 }
 
+function Wait-LogMatch {
+  param(
+    [string]$Path,
+    [string]$Pattern,
+    [int]$TimeoutSeconds = 30
+  )
+  $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+  while ((Get-Date) -lt $deadline) {
+    if (Test-Path $Path) {
+      $content = Get-Content -Raw -Path $Path
+      if ($content -match $Pattern) {
+        return $content
+      }
+    }
+    Start-Sleep -Seconds 1
+  }
+  throw "Log pattern not found within ${TimeoutSeconds}s: $Pattern"
+}
+
 function Wait-ServiceMissing {
   param(
     [string]$Name,
@@ -260,8 +279,14 @@ try {
   if (-not $cfg.engine) {
     throw "config.json missing engine section"
   }
-  if (-not $cfg.engine.split_chunk) {
+  if ($null -eq $cfg.engine.split_chunk) {
     throw "config.json missing engine.split_chunk"
+  }
+  if (-not $cfg.windivert) {
+    throw "config.json missing windivert section"
+  }
+  if ([string]::IsNullOrWhiteSpace([string]$cfg.windivert.filter)) {
+    throw "config.json missing windivert.filter"
   }
   $oldChunk = [int]$cfg.engine.split_chunk
   $newChunk = $oldChunk + 1
@@ -279,7 +304,7 @@ try {
   }
 
   # Confirm we applied config without restarting the engine loop.
-  $log = Get-Content -Raw -Path $logPath
+  $log = Wait-LogMatch -Path $logPath -Pattern ([regex]::Escape("split_chunk=$newChunk")) -TimeoutSeconds 30
   $engineStartedCount = ([regex]::Matches($log, "engine started \\(workers=")).Count
   if ($engineStartedCount -lt 1) {
     throw "Expected 'engine started' log line not found"
@@ -287,8 +312,47 @@ try {
   if ($engineStartedCount -gt 1) {
     throw "Engine appears to have restarted during reload (engine started count=$engineStartedCount)"
   }
-  if ($log -notmatch "split_chunk=$newChunk") {
-    throw "Reload did not log expected split_chunk=$newChunk"
+
+  # Mutate filter + queue defaults so service reload must reopen the WinDivert handle.
+  $oldFilter = [string]$cfg.windivert.filter
+  $newFilter = if ($oldFilter -match "8443") {
+    "outbound and (ip or ipv6) and tcp.DstPort == 443"
+  } elseif ($oldFilter -match "443") {
+    $oldFilter -replace "443", "8443"
+  } else {
+    "outbound and (ip or ipv6) and tcp.DstPort == 8443"
+  }
+  $cfg.windivert.filter = $newFilter
+  $cfg.windivert.queue_len = 0
+  $cfg.windivert.queue_time_ms = 0
+  $cfg.windivert.queue_size_bytes = 0
+  ($cfg | ConvertTo-Json -Depth 16) + "`n" | Set-Content -Encoding ASCII -Path $cfgPath
+
+  & sc.exe control $svcName paramchange | Out-Host
+  Start-Sleep -Seconds 2
+
+  $svc = Get-Service -Name $svcName -ErrorAction Stop
+  $svc.Refresh()
+  if ($svc.Status -ne [System.ServiceProcess.ServiceControllerStatus]::Running) {
+    throw "Service not running after WinDivert reload (status: $($svc.Status))"
+  }
+
+  $log = Wait-LogMatch -Path $logPath -Pattern ([regex]::Escape("reload: WinDivert handle reopened")) -TimeoutSeconds 30
+  $engineStartedCountAfterReopen = ([regex]::Matches($log, "engine started \\(workers=")).Count
+  if ($engineStartedCountAfterReopen -ne $engineStartedCount) {
+    throw "Engine appears to have restarted during WinDivert reload (before=$engineStartedCount after=$engineStartedCountAfterReopen)"
+  }
+  if ($log -notmatch [regex]::Escape($newFilter)) {
+    throw "WinDivert reopen log missing updated filter: $newFilter"
+  }
+  if ($log -notmatch "queue_len=0") {
+    throw "WinDivert reopen log missing queue_len=0"
+  }
+  if ($log -notmatch "queue_time_ms=0") {
+    throw "WinDivert reopen log missing queue_time_ms=0"
+  }
+  if ($log -notmatch "queue_size_bytes=0") {
+    throw "WinDivert reopen log missing queue_size_bytes=0"
   }
 
   # Stop/Start smoke.

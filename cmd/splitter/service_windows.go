@@ -109,7 +109,7 @@ func setupServiceLogging(cfg serviceLogConfig) (*os.File, error) {
 	}
 	log.SetOutput(f)
 	log.SetFlags(log.LstdFlags | log.LUTC)
-	log.Printf("service logging to %s (max_bytes=%d max_files=%d)", path, maxBytes, maxFiles)
+	logInfo("service_log_ready", "service logging configured", "path", path, "max_bytes", maxBytes, "max_files", maxFiles)
 	return f, nil
 }
 
@@ -182,22 +182,22 @@ func (s *splitterService) Execute(args []string, r <-chan svc.ChangeRequest, cha
 			case svc.Interrogate:
 				changes <- c.CurrentStatus
 			case svc.ParamChange:
-				log.Printf("service reload requested (paramchange)")
+				logInfo("service_reload_requested", "service reload requested (paramchange)")
 				select {
 				case reloadCh <- struct{}{}:
 				default:
 				}
 			case svc.Stop, svc.Shutdown:
-				log.Printf("service stop requested (%v)", c.Cmd)
+				logInfo("service_stop_requested", "service stop requested", "command", c.Cmd)
 				changes <- svc.Status{State: svc.StopPending}
 				cancel()
 				err := <-errCh
 				if err != nil && !errors.Is(err, context.Canceled) {
-					log.Printf("service stopped with error: %v", err)
+					logError("service_stopped_error", "service stopped with error", err)
 					changes <- svc.Status{State: svc.Stopped}
 					return false, 1
 				}
-				log.Printf("service stopped")
+				logInfo("service_stopped", "service stopped")
 				changes <- svc.Status{State: svc.Stopped}
 				return false, 0
 			default:
@@ -206,11 +206,11 @@ func (s *splitterService) Execute(args []string, r <-chan svc.ChangeRequest, cha
 		case err := <-errCh:
 			cancel()
 			if err != nil && !errors.Is(err, context.Canceled) {
-				log.Printf("service exited with error: %v", err)
+				logError("service_exited_error", "service exited with error", err)
 				changes <- svc.Status{State: svc.Stopped}
 				return false, 1
 			}
-			log.Printf("service exited")
+			logInfo("service_exited", "service exited")
 			changes <- svc.Status{State: svc.Stopped}
 			return false, 0
 		}

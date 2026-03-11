@@ -147,9 +147,10 @@ type windowsRunConfig struct {
 	WinDivertSys     string
 	WinDivertSvcName string
 
-	AutoInstallDriver   bool
-	AutoUninstallDriver bool
-	AutoDownloadFiles   bool
+	AllowServiceTakeover bool
+	AutoInstallDriver    bool
+	AutoUninstallDriver  bool
+	AutoDownloadFiles    bool
 }
 
 func runWindows(ctx context.Context, cfg engine.Config, wc windowsRunConfig) error {
@@ -187,7 +188,7 @@ func runWindows(ctx context.Context, cfg engine.Config, wc windowsRunConfig) err
 	if cleanup != nil {
 		defer func() {
 			if err := cleanup(); err != nil {
-				log.Printf("driver cleanup failed: %v", err)
+				logError("windivert_cleanup_failed", "driver cleanup failed", err)
 			}
 		}()
 	}
@@ -198,7 +199,10 @@ func runWindows(ctx context.Context, cfg engine.Config, wc windowsRunConfig) err
 	}
 	eng := engine.New(cfg, ad)
 
-	if err := eng.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+	logInfo("engine_started", "engine started", "workers", cfg.WorkerCount, "split_mode", cfg.SplitMode, "split_chunk", cfg.SplitChunk)
+	err = eng.Run(ctx)
+	logInfo("engine_stats", "engine stats", "stats", eng.Stats())
+	if err != nil && !errors.Is(err, context.Canceled) {
 		return fmt.Errorf("engine stopped: %w", err)
 	}
 	return nil
@@ -244,7 +248,7 @@ func runWindowsService(ctx context.Context, args windowsCLIArgs, setFlags map[st
 	if cleanup != nil {
 		defer func() {
 			if err := cleanup(); err != nil {
-				log.Printf("driver cleanup failed: %v", err)
+				logError("windivert_cleanup_failed", "driver cleanup failed", err)
 			}
 		}()
 	}
@@ -257,55 +261,65 @@ func runWindowsService(ctx context.Context, args windowsCLIArgs, setFlags map[st
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- eng.Run(ctx)
+		runErr := eng.Run(ctx)
+		logInfo("engine_stats", "engine stats", "stats", eng.Stats())
+		errCh <- runErr
 	}()
 
 	curCfg := cfg
 	curWc := wc
-	log.Printf("engine started (workers=%d)", curCfg.WorkerCount)
+	logInfo("engine_started", fmt.Sprintf("engine started (workers=%d)", curCfg.WorkerCount), "workers", curCfg.WorkerCount, "split_mode", curCfg.SplitMode, "split_chunk", curCfg.SplitChunk)
 
 	for {
 		select {
 		case <-reload:
 			newCfg, newWc, err := effectiveWindowsConfig(args, setFlags, true)
 			if err != nil {
-				log.Printf("reload failed: %v", err)
+				logError("reload_failed", "reload failed", err)
 				continue
 			}
 
-			if newWc.Filter != curWc.Filter {
-				log.Printf("reload: windivert.filter changed; requires service restart to apply")
-			}
 			if strings.TrimSpace(newWc.WinDivertDir) != strings.TrimSpace(curWc.WinDivertDir) ||
 				strings.TrimSpace(newWc.WinDivertSys) != strings.TrimSpace(curWc.WinDivertSys) {
-				log.Printf("reload: windivert_dir/sys changed; requires service restart to apply")
+				logWarn("reload_restart_required_driver_path", "reload: windivert_dir/sys changed; requires service restart to apply", "windivert_dir", newWc.WinDivertDir, "windivert_sys", newWc.WinDivertSys)
 			}
 
-			// Best-effort update of queue parameters in-place. "0" means "use driver
-			// default", which cannot be applied without re-opening the handle.
-			if newWc.AdapterOpts.QueueLen != curWc.AdapterOpts.QueueLen {
-				if newWc.AdapterOpts.QueueLen == 0 {
-					log.Printf("reload: queue_len=0 requires service restart to apply (revert to driver default)")
-				} else if err := ad.UpdateOptions(adapter.WinDivertOptions{QueueLen: newWc.AdapterOpts.QueueLen}); err != nil {
-					log.Printf("reload: update queue_len failed: %v", err)
+			reopened := false
+			if requiresWinDivertReopenForReload(curWc.Filter, curWc.AdapterOpts, newWc.Filter, newWc.AdapterOpts) {
+				if err := ad.Reopen(newWc.Filter, newWc.AdapterOpts); err != nil {
+					logError("reload_handle_reopen_failed", "reload: WinDivert handle reopen failed", err)
+					continue
+				}
+				reopened = true
+				curWc.Filter = newWc.Filter
+				curWc.AdapterOpts = newWc.AdapterOpts
+				logInfo("reload_handle_reopened", "reload: WinDivert handle reopened",
+					"filter", curWc.Filter,
+					"queue_len", curWc.AdapterOpts.QueueLen,
+					"queue_time_ms", curWc.AdapterOpts.QueueTime,
+					"queue_size_bytes", curWc.AdapterOpts.QueueSize,
+				)
+			}
+
+			// Best-effort update of queue parameters in-place when reopen is not
+			// required. Reopen paths already applied the full option set.
+			if !reopened && newWc.AdapterOpts.QueueLen != curWc.AdapterOpts.QueueLen {
+				if err := ad.UpdateOptions(adapter.WinDivertOptions{QueueLen: newWc.AdapterOpts.QueueLen}); err != nil {
+					logError("reload_queue_len_update_failed", "reload: update queue_len failed", err, "queue_len", newWc.AdapterOpts.QueueLen)
 				} else {
 					curWc.AdapterOpts.QueueLen = newWc.AdapterOpts.QueueLen
 				}
 			}
-			if newWc.AdapterOpts.QueueTime != curWc.AdapterOpts.QueueTime {
-				if newWc.AdapterOpts.QueueTime == 0 {
-					log.Printf("reload: queue_time_ms=0 requires service restart to apply (revert to driver default)")
-				} else if err := ad.UpdateOptions(adapter.WinDivertOptions{QueueTime: newWc.AdapterOpts.QueueTime}); err != nil {
-					log.Printf("reload: update queue_time_ms failed: %v", err)
+			if !reopened && newWc.AdapterOpts.QueueTime != curWc.AdapterOpts.QueueTime {
+				if err := ad.UpdateOptions(adapter.WinDivertOptions{QueueTime: newWc.AdapterOpts.QueueTime}); err != nil {
+					logError("reload_queue_time_update_failed", "reload: update queue_time_ms failed", err, "queue_time_ms", newWc.AdapterOpts.QueueTime)
 				} else {
 					curWc.AdapterOpts.QueueTime = newWc.AdapterOpts.QueueTime
 				}
 			}
-			if newWc.AdapterOpts.QueueSize != curWc.AdapterOpts.QueueSize {
-				if newWc.AdapterOpts.QueueSize == 0 {
-					log.Printf("reload: queue_size_bytes=0 requires service restart to apply (revert to driver default)")
-				} else if err := ad.UpdateOptions(adapter.WinDivertOptions{QueueSize: newWc.AdapterOpts.QueueSize}); err != nil {
-					log.Printf("reload: update queue_size_bytes failed: %v", err)
+			if !reopened && newWc.AdapterOpts.QueueSize != curWc.AdapterOpts.QueueSize {
+				if err := ad.UpdateOptions(adapter.WinDivertOptions{QueueSize: newWc.AdapterOpts.QueueSize}); err != nil {
+					logError("reload_queue_size_update_failed", "reload: update queue_size_bytes failed", err, "queue_size_bytes", newWc.AdapterOpts.QueueSize)
 				} else {
 					curWc.AdapterOpts.QueueSize = newWc.AdapterOpts.QueueSize
 				}
@@ -313,20 +327,20 @@ func runWindowsService(ctx context.Context, args windowsCLIArgs, setFlags map[st
 
 			applyCfg := newCfg
 			if applyCfg.WorkerCount != curCfg.WorkerCount {
-				log.Printf("reload: workers changed; requires service restart to apply (%d -> %d)", curCfg.WorkerCount, applyCfg.WorkerCount)
+				logWarn("reload_restart_required_workers", "reload: workers changed; requires service restart to apply", "from", curCfg.WorkerCount, "to", applyCfg.WorkerCount)
 				applyCfg.WorkerCount = curCfg.WorkerCount
 			}
 			if applyCfg.WorkerQueueSize != curCfg.WorkerQueueSize {
-				log.Printf("reload: worker_queue_size changed; requires service restart to apply (%d -> %d)", curCfg.WorkerQueueSize, applyCfg.WorkerQueueSize)
+				logWarn("reload_restart_required_worker_queue", "reload: worker_queue_size changed; requires service restart to apply", "from", curCfg.WorkerQueueSize, "to", applyCfg.WorkerQueueSize)
 				applyCfg.WorkerQueueSize = curCfg.WorkerQueueSize
 			}
 
 			if err := eng.Reload(applyCfg); err != nil {
-				log.Printf("reload: engine config apply failed: %v", err)
+				logError("reload_engine_apply_failed", "reload: engine config apply failed", err)
 				continue
 			}
 			curCfg = applyCfg
-			log.Printf("reload: engine config applied (split_mode=%v split_chunk=%d collect_timeout=%s)", curCfg.SplitMode, curCfg.SplitChunk, curCfg.CollectTimeout)
+			logInfo("reload_engine_applied", "reload: engine config applied", "split_mode", curCfg.SplitMode, "split_chunk", curCfg.SplitChunk, "collect_timeout", curCfg.CollectTimeout)
 
 		case err := <-errCh:
 			if err != nil && !errors.Is(err, context.Canceled) {
@@ -347,22 +361,21 @@ func logWinDivertReport(report driver.Report) {
 	if report.ResolvedDir == "" && report.ServiceName == "" {
 		return
 	}
-	log.Printf(
-		"windivert state: dir=%q sys=%q files_present=%t service=%q exists=%t running=%t created=%t reconfigured=%t started=%t bin_path=%q bin_path_exists=%t bin_path_matches=%t cleanup_stop=%t cleanup_delete=%t",
-		report.ResolvedDir,
-		report.ResolvedSysPath,
-		report.FilesPresent,
-		report.ServiceName,
-		report.ServiceExists,
-		report.ServiceRunning,
-		report.ServiceCreated,
-		report.ServiceReconfigured,
-		report.ServiceStarted,
-		report.ServiceBinPath,
-		report.ServiceBinPathExists,
-		report.ServiceBinPathMatchesDesired,
-		report.CleanupWillStop,
-		report.CleanupWillDelete,
+	logInfo("windivert_state", "windivert state",
+		"dir", report.ResolvedDir,
+		"sys", report.ResolvedSysPath,
+		"files_present", report.FilesPresent,
+		"service", report.ServiceName,
+		"exists", report.ServiceExists,
+		"running", report.ServiceRunning,
+		"created", report.ServiceCreated,
+		"reconfigured", report.ServiceReconfigured,
+		"started", report.ServiceStarted,
+		"bin_path", report.ServiceBinPath,
+		"bin_path_exists", report.ServiceBinPathExists,
+		"bin_path_matches", report.ServiceBinPathMatchesDesired,
+		"cleanup_stop", report.CleanupWillStop,
+		"cleanup_delete", report.CleanupWillDelete,
 	)
 }
 

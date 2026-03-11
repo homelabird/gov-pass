@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"os/signal"
 	"strings"
 	"syscall"
@@ -168,7 +169,10 @@ func main() {
 	}
 	eng := engine.New(cfg, ad)
 
-	if err := eng.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+	logInfo("engine_started", "engine started", "workers", cfg.WorkerCount, "split_mode", cfg.SplitMode, "split_chunk", cfg.SplitChunk)
+	err = eng.Run(ctx)
+	logInfo("engine_stats", "engine stats", "stats", eng.Stats())
+	if err != nil && !errors.Is(err, context.Canceled) {
 		log.Fatalf("engine stopped: %v", err)
 	}
 }
@@ -357,20 +361,34 @@ type freebsdPreflightCheck struct {
 type freebsdPreflightReport struct {
 	OK     bool                    `json:"ok"`
 	Checks []freebsdPreflightCheck `json:"checks"`
+	Notes  []string                `json:"notes,omitempty"`
 }
 
 func runFreeBSDPreflight(jsonOut bool) error {
-	checks := []freebsdPreflightCheck{
-		{
-			Name:   "root",
-			OK:     os.Geteuid() == 0,
-			Detail: "required to open pf divert socket",
-		},
+	checks := make([]freebsdPreflightCheck, 0, 4)
+	add := func(name string, ok bool, detail string) {
+		checks = append(checks, freebsdPreflightCheck{Name: name, OK: ok, Detail: detail})
+	}
+
+	add("root", os.Geteuid() == 0, "required to open pf divert socket")
+	for _, cmd := range []string{"pfctl", "service", "sysrc"} {
+		if _, err := exec.LookPath(cmd); err != nil {
+			add(cmd, false, "required for the documented FreeBSD operator workflow")
+			continue
+		}
+		add(cmd, true, "found in PATH")
+	}
+
+	notes := []string{
+		"reload is not supported on FreeBSD; use restart",
+		"pf policy remains operator-managed; run install_pf_anchor.sh separately",
+		"the current divert socket path is IPv4-focused; treat IPv6 divert handling as unsupported",
 	}
 
 	report := freebsdPreflightReport{
 		OK:     true,
 		Checks: checks,
+		Notes:  notes,
 	}
 	for i := range report.Checks {
 		if !report.Checks[i].OK {
@@ -392,6 +410,9 @@ func runFreeBSDPreflight(jsonOut bool) error {
 				state = "FAIL"
 			}
 			fmt.Printf("[%s] %s: %s\n", state, c.Name, c.Detail)
+		}
+		for _, note := range report.Notes {
+			fmt.Printf("[INFO] %s\n", note)
 		}
 	}
 

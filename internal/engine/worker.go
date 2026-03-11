@@ -22,6 +22,7 @@ type worker struct {
 	id      int
 	cfg     atomic.Pointer[Config]
 	adapter adapter.Adapter
+	stats   *stats
 	in      chan *packet.Packet
 	touch   chan flow.Key
 	flows   *flow.Table
@@ -30,7 +31,7 @@ type worker struct {
 	reassemblyBytes int64
 }
 
-func newWorker(id int, cfg Config, ad adapter.Adapter) *worker {
+func newWorker(id int, cfg Config, ad adapter.Adapter, st *stats) *worker {
 	if cfg.WorkerQueueSize < 1 {
 		cfg.WorkerQueueSize = 1024
 	}
@@ -52,6 +53,7 @@ func newWorker(id int, cfg Config, ad adapter.Adapter) *worker {
 	w := &worker{
 		id:      id,
 		adapter: ad,
+		stats:   st,
 		in:      make(chan *packet.Packet, cfg.WorkerQueueSize),
 		touch:   make(chan flow.Key, cfg.WorkerQueueSize),
 		flows:   flow.NewTable(),
@@ -151,7 +153,7 @@ func (w *worker) handlePacket(ctx context.Context, pkt *packet.Packet) error {
 		// promptly even when payloadless packets are fast-pathed.
 		if len(payload) == 0 && (pkt.HasFlag(packet.TCPFlagRST) || pkt.HasFlag(packet.TCPFlagFIN)) {
 			if st.State == flow.StateCollecting {
-				if err := w.failOpen(ctx, key, st); err != nil {
+				if err := w.failOpenWithReason(ctx, key, st, failOpenReasonControlFlag); err != nil {
 					return err
 				}
 			}
@@ -170,7 +172,7 @@ func (w *worker) handlePacket(ctx context.Context, pkt *packet.Packet) error {
 		}
 		if resolved && plan.Skip {
 			if st.State == flow.StateCollecting && len(st.HeldPackets) > 0 {
-				if err := w.failOpen(ctx, key, st); err != nil {
+				if err := w.failOpenWithReason(ctx, key, st, failOpenReasonPolicySkip); err != nil {
 					return err
 				}
 			}
@@ -197,7 +199,7 @@ func (w *worker) handlePacket(ctx context.Context, pkt *packet.Packet) error {
 			need := int64(len(pkt.Data))
 			limit := int64(cfg.MaxHeldBytesPerWorker)
 			if w.heldBytes+need > limit {
-				if err := w.failOpen(ctx, key, st); err != nil {
+				if err := w.failOpenWithReason(ctx, key, st, failOpenReasonHeldBytesLimit); err != nil {
 					return err
 				}
 				return w.adapter.Send(ctx, pkt)
@@ -206,13 +208,13 @@ func (w *worker) handlePacket(ctx context.Context, pkt *packet.Packet) error {
 		st.HeldPackets = append(st.HeldPackets, pkt)
 		w.heldBytes += int64(len(pkt.Data))
 		if len(st.HeldPackets) >= cfg.MaxHeldPackets {
-			return w.failOpen(ctx, key, st)
+			return w.failOpenWithReason(ctx, key, st, failOpenReasonHeldPacketsLimit)
 		}
 		if now.Sub(st.CollectStart) > cfg.CollectTimeout {
-			return w.failOpen(ctx, key, st)
+			return w.failOpenWithReason(ctx, key, st, failOpenReasonCollectTimeout)
 		}
 		if st.Reassembler == nil {
-			return w.failOpen(ctx, key, st)
+			return w.failOpenWithReason(ctx, key, st, failOpenReasonStateInvalid)
 		}
 		before := int64(st.Reassembler.TotalBytes())
 		err := st.Reassembler.Push(pkt.Meta.Seq, payload)
@@ -222,18 +224,18 @@ func (w *worker) handlePacket(ctx context.Context, pkt *packet.Packet) error {
 			w.reassemblyBytes = 0
 		}
 		if err != nil {
-			return w.failOpen(ctx, key, st)
+			return w.failOpenWithReason(ctx, key, st, failOpenReasonReassemblyError)
 		}
 		if cfg.MaxReassemblyBytesPerWorker > 0 && w.reassemblyBytes > int64(cfg.MaxReassemblyBytesPerWorker) {
-			return w.failOpen(ctx, key, st)
+			return w.failOpenWithReason(ctx, key, st, failOpenReasonReassemblyBytesLimit)
 		}
 
 		if pkt.HasFlag(packet.TCPFlagSYN) {
-			return w.failOpen(ctx, key, st)
+			return w.failOpenWithReason(ctx, key, st, failOpenReasonControlFlag)
 		}
 
 		if pkt.HasFlag(packet.TCPFlagRST) {
-			if err := w.failOpen(ctx, key, st); err != nil {
+			if err := w.failOpenWithReason(ctx, key, st, failOpenReasonControlFlag); err != nil {
 				return err
 			}
 			w.flows.Delete(key)
@@ -241,7 +243,7 @@ func (w *worker) handlePacket(ctx context.Context, pkt *packet.Packet) error {
 		}
 
 		if pkt.HasFlag(packet.TCPFlagFIN) {
-			if err := w.failOpen(ctx, key, st); err != nil {
+			if err := w.failOpenWithReason(ctx, key, st, failOpenReasonControlFlag); err != nil {
 				return err
 			}
 			w.flows.Delete(key)
@@ -270,6 +272,7 @@ func (w *worker) handlePacket(ctx context.Context, pkt *packet.Packet) error {
 
 	// DoS guard: bound the number of tracked flows per worker.
 	if cfg.MaxFlowsPerWorker > 0 && w.flows.Len() >= cfg.MaxFlowsPerWorker {
+		w.notePressure(pressureReasonFlowLimit)
 		return w.adapter.Send(ctx, pkt)
 	}
 
@@ -287,6 +290,7 @@ func (w *worker) handlePacket(ctx context.Context, pkt *packet.Packet) error {
 		need := int64(len(pkt.Data))
 		limit := int64(cfg.MaxHeldBytesPerWorker)
 		if w.heldBytes+need > limit {
+			w.notePressure(pressureReasonHeldBytesLimit)
 			return w.adapter.Send(ctx, pkt)
 		}
 	}
@@ -294,6 +298,7 @@ func (w *worker) handlePacket(ctx context.Context, pkt *packet.Packet) error {
 		need := int64(len(payload))
 		limit := int64(cfg.MaxReassemblyBytesPerWorker)
 		if w.reassemblyBytes+need > limit {
+			w.notePressure(pressureReasonReassemblyBytesLimit)
 			return w.adapter.Send(ctx, pkt)
 		}
 	}
@@ -323,7 +328,7 @@ func (w *worker) handlePacket(ctx context.Context, pkt *packet.Packet) error {
 		need := int64(len(pkt.Data))
 		limit := int64(cfg.MaxHeldBytesPerWorker)
 		if w.heldBytes+need > limit {
-			if err := w.failOpen(ctx, key, st); err != nil {
+			if err := w.failOpenWithReason(ctx, key, st, failOpenReasonHeldBytesLimit); err != nil {
 				return err
 			}
 			return w.adapter.Send(ctx, pkt)
@@ -332,10 +337,10 @@ func (w *worker) handlePacket(ctx context.Context, pkt *packet.Packet) error {
 	st.HeldPackets = append(st.HeldPackets, pkt)
 	w.heldBytes += int64(len(pkt.Data))
 	if len(st.HeldPackets) >= cfg.MaxHeldPackets {
-		return w.failOpen(ctx, key, st)
+		return w.failOpenWithReason(ctx, key, st, failOpenReasonHeldPacketsLimit)
 	}
 	if now.Sub(st.CollectStart) > cfg.CollectTimeout {
-		return w.failOpen(ctx, key, st)
+		return w.failOpenWithReason(ctx, key, st, failOpenReasonCollectTimeout)
 	}
 	before := int64(st.Reassembler.TotalBytes())
 	err := st.Reassembler.Push(pkt.Meta.Seq, payload)
@@ -345,14 +350,14 @@ func (w *worker) handlePacket(ctx context.Context, pkt *packet.Packet) error {
 		w.reassemblyBytes = 0
 	}
 	if err != nil {
-		return w.failOpen(ctx, key, st)
+		return w.failOpenWithReason(ctx, key, st, failOpenReasonReassemblyError)
 	}
 	if cfg.MaxReassemblyBytesPerWorker > 0 && w.reassemblyBytes > int64(cfg.MaxReassemblyBytesPerWorker) {
-		return w.failOpen(ctx, key, st)
+		return w.failOpenWithReason(ctx, key, st, failOpenReasonReassemblyBytesLimit)
 	}
 
 	if pkt.HasFlag(packet.TCPFlagSYN) || pkt.HasFlag(packet.TCPFlagRST) {
-		if err := w.failOpen(ctx, key, st); err != nil {
+		if err := w.failOpenWithReason(ctx, key, st, failOpenReasonControlFlag); err != nil {
 			return err
 		}
 		if pkt.HasFlag(packet.TCPFlagRST) {
@@ -362,7 +367,7 @@ func (w *worker) handlePacket(ctx context.Context, pkt *packet.Packet) error {
 	}
 
 	if pkt.HasFlag(packet.TCPFlagFIN) {
-		if err := w.failOpen(ctx, key, st); err != nil {
+		if err := w.failOpenWithReason(ctx, key, st, failOpenReasonControlFlag); err != nil {
 			return err
 		}
 		w.flows.Delete(key)
@@ -389,7 +394,7 @@ func (w *worker) trySplitImmediate(ctx context.Context, key flow.Key, st *flow.F
 		return nil
 	}
 	if st.Reassembler == nil {
-		return w.failOpen(ctx, key, st)
+		return w.failOpenWithReason(ctx, key, st, failOpenReasonStateInvalid)
 	}
 	contig := st.Reassembler.Contiguous()
 	if len(contig) < st.FirstPayloadLen {
@@ -405,7 +410,7 @@ func (w *worker) trySplitTLSHello(ctx context.Context, key flow.Key, st *flow.Fl
 	}
 
 	if st.Reassembler == nil {
-		return w.failOpen(ctx, key, st)
+		return w.failOpenWithReason(ctx, key, st, failOpenReasonStateInvalid)
 	}
 	contig := st.Reassembler.Contiguous()
 	recordLen, result := tls.DetectClientHelloRecord(contig)
@@ -413,12 +418,12 @@ func (w *worker) trySplitTLSHello(ctx context.Context, key flow.Key, st *flow.Fl
 		return nil
 	}
 	if result == tls.ResultMismatch {
-		return w.failOpen(ctx, key, st)
+		return w.failOpenWithReason(ctx, key, st, failOpenReasonTLSMismatch)
 	}
 
 	need := 5 + int(recordLen)
 	if need > cfg.MaxBufferBytes {
-		return w.failOpen(ctx, key, st)
+		return w.failOpenWithReason(ctx, key, st, failOpenReasonStateInvalid)
 	}
 	if len(contig) < need {
 		return nil
@@ -429,14 +434,14 @@ func (w *worker) trySplitTLSHello(ctx context.Context, key flow.Key, st *flow.Fl
 		return nil
 	}
 	if result == tls.ResultMismatch {
-		return w.failOpen(ctx, key, st)
+		return w.failOpenWithReason(ctx, key, st, failOpenReasonTLSMismatch)
 	}
 	plan, resolved := w.resolveFlowPlan(st, tplMeta(st), &info, *cfg)
 	if !resolved {
 		return nil
 	}
 	if plan.Skip {
-		return w.failOpen(ctx, key, st)
+		return w.failOpenWithReason(ctx, key, st, failOpenReasonPolicySkip)
 	}
 	if plan.SplitMode == SplitModeImmediate {
 		return w.trySplitImmediate(ctx, key, st)
@@ -451,11 +456,11 @@ func (w *worker) injectWindow(ctx context.Context, key flow.Key, st *flow.FlowSt
 	}
 	plan, resolved := w.resolveFlowPlan(st, tplMeta(st), nil, *cfg)
 	if !resolved {
-		return w.failOpen(ctx, key, st)
+		return w.failOpenWithReason(ctx, key, st, failOpenReasonStateInvalid)
 	}
 
 	if windowLen < 1 {
-		return w.failOpen(ctx, key, st)
+		return w.failOpenWithReason(ctx, key, st, failOpenReasonStateInvalid)
 	}
 	contig := st.Reassembler.Contiguous()
 	if len(contig) < windowLen {
@@ -463,19 +468,19 @@ func (w *worker) injectWindow(ctx context.Context, key flow.Key, st *flow.FlowSt
 	}
 	tpl := st.Template
 	if tpl == nil {
-		return w.failOpen(ctx, key, st)
+		return w.failOpenWithReason(ctx, key, st, failOpenReasonStateInvalid)
 	}
 	// Short-term safety guard: Linux IPv6 raw reinjection cannot preserve
 	// extension headers yet, so bypass splitting rather than emitting a
 	// semantically different packet.
 	if shouldFailOpenIPv6ExtensionHeaders(tpl) {
-		return w.failOpen(ctx, key, st)
+		return w.failOpenWithReason(ctx, key, st, failOpenReasonIPv6ExtensionHeaders)
 	}
 	maxPayload := len(tpl.Payload())
 	headerLen := tpl.Meta.IPHeaderLen + tpl.Meta.TCPHeaderLen
 	maxPayload = clampSegmentPayload(maxPayload, headerLen, plan.MaxSegmentPayload)
 	if maxPayload < 1 {
-		return w.failOpen(ctx, key, st)
+		return w.failOpenWithReason(ctx, key, st, failOpenReasonStateInvalid)
 	}
 
 	window := contig[:windowLen]
@@ -483,7 +488,7 @@ func (w *worker) injectWindow(ctx context.Context, key flow.Key, st *flow.FlowSt
 
 	splitSegs := splitFirst(window, plan.SplitChunk, maxPayload)
 	if len(splitSegs) < 2 {
-		return w.failOpen(ctx, key, st)
+		return w.failOpenWithReason(ctx, key, st, failOpenReasonStateInvalid)
 	}
 
 	flags := tpl.Meta.Flags
@@ -499,22 +504,22 @@ func (w *worker) injectWindow(ctx context.Context, key flow.Key, st *flow.FlowSt
 		ipid = &nextID
 	}
 	if err := w.sendSegments(ctx, tpl, st.BaseSeq, splitSegs, flagsNoPshFin, splitLastFlags, ipid); err != nil {
-		return w.failOpen(ctx, key, st)
+		return w.failOpenWithReason(ctx, key, st, failOpenReasonInjectError)
 	}
 
 	if len(remainder) > 0 {
 		windowLen32, ok := safecast.IntToUint32(windowLen)
 		if !ok {
-			return w.failOpen(ctx, key, st)
+			return w.failOpenWithReason(ctx, key, st, failOpenReasonStateInvalid)
 		}
 		if w.canTrimRemainder(st) {
 			if err := w.reinjectTrimmed(ctx, st, windowLen32, ipid); err != nil {
-				return w.failOpen(ctx, key, st)
+				return w.failOpenWithReason(ctx, key, st, failOpenReasonInjectError)
 			}
 		} else {
 			remSegs := chunkPayload(remainder, maxPayload)
 			if err := w.sendSegments(ctx, tpl, st.BaseSeq+windowLen32, remSegs, flagsNoPshFin, flags, ipid); err != nil {
-				return w.failOpen(ctx, key, st)
+				return w.failOpenWithReason(ctx, key, st, failOpenReasonInjectError)
 			}
 		}
 	}
@@ -523,6 +528,7 @@ func (w *worker) injectWindow(ctx context.Context, key flow.Key, st *flow.FlowSt
 		return err
 	}
 
+	w.noteSplitOK()
 	st.State = flow.StateInjected
 	w.clearCollectingState(st)
 	st.Processed = true
@@ -764,6 +770,37 @@ func chunkPayload(payload []byte, maxPayload int) [][]byte {
 	return segments
 }
 
+func (w *worker) noteSplitOK() {
+	if w == nil || w.stats == nil {
+		return
+	}
+	w.stats.incSplitOK()
+}
+
+func (w *worker) notePressure(reason pressureReason) {
+	if w == nil || w.stats == nil {
+		return
+	}
+	w.stats.incPressure(reason)
+}
+
+func (w *worker) failOpenWithReason(ctx context.Context, key flow.Key, st *flow.FlowState, reason failOpenReason) error {
+	if w != nil && w.stats != nil {
+		w.stats.incFailOpen(reason)
+		switch reason {
+		case failOpenReasonHeldBytesLimit:
+			w.stats.incPressure(pressureReasonHeldBytesLimit)
+		case failOpenReasonHeldPacketsLimit:
+			w.stats.incPressure(pressureReasonHeldPacketsLimit)
+		case failOpenReasonCollectTimeout:
+			w.stats.incPressure(pressureReasonCollectTimeout)
+		case failOpenReasonReassemblyBytesLimit:
+			w.stats.incPressure(pressureReasonReassemblyBytesLimit)
+		}
+	}
+	return w.failOpen(ctx, key, st)
+}
+
 func (w *worker) failOpen(ctx context.Context, key flow.Key, st *flow.FlowState) error {
 	for _, pkt := range st.HeldPackets {
 		if err := w.adapter.Send(ctx, pkt); err != nil {
@@ -821,7 +858,7 @@ func (w *worker) gc(ctx context.Context) error {
 			return
 		}
 		if st.State == flow.StateCollecting && len(st.HeldPackets) > 0 {
-			if err := w.failOpen(ctx, key, st); err != nil {
+			if err := w.failOpenWithReason(ctx, key, st, failOpenReasonIdleGC); err != nil {
 				if firstErr == nil {
 					firstErr = err
 				}

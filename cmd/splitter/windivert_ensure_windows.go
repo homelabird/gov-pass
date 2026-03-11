@@ -5,7 +5,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,7 +37,7 @@ func ensureWinDivertFiles(ctx context.Context, wc windowsRunConfig, exeDir strin
 		return wc, driverDir, fmt.Errorf("WinDivert files not found in %s (expected WinDivert.dll and WinDivert64.sys); install them or set --auto-download-windivert=true", driverDir)
 	}
 
-	log.Printf("WinDivert files missing in %s; downloading pinned WinDivert zip", driverDir)
+	logInfo("windivert_download_start", "WinDivert files missing; downloading pinned WinDivert zip", "dir", driverDir)
 	if err := driver.DownloadWinDivertX64(ctx, driverDir); err == nil {
 		return wc, driverDir, nil
 	} else if requested == "" && os.IsPermission(err) {
@@ -52,7 +51,7 @@ func ensureWinDivertFiles(ctx context.Context, wc windowsRunConfig, exeDir strin
 		if err := ensureSecureWindowsDir(fallback); err != nil {
 			return wc, fallback, fmt.Errorf("secure windivert dir failed: %w", err)
 		}
-		log.Printf("WinDivert download to %s failed (permission); retrying in %s", driverDir, fallback)
+		logWarn("windivert_download_retry", "WinDivert download failed (permission); retrying in fallback dir", "dir", driverDir, "fallback", fallback)
 		if err2 := driver.DownloadWinDivertX64(ctx, fallback); err2 != nil {
 			return wc, fallback, err2
 		}

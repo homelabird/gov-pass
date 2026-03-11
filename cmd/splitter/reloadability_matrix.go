@@ -16,18 +16,15 @@ var windowsReloadableSettings = []string{
 	"engine.shutdown_fail_open_max_packets",
 	"engine.adapter_flush_timeout",
 	"engine.policies",
-	"windivert.queue_len (non-zero values)",
-	"windivert.queue_time_ms (non-zero values)",
-	"windivert.queue_size_bytes (non-zero values)",
+	"windivert.filter (via handle reopen)",
+	"windivert.queue_len (including 0/default via handle reopen)",
+	"windivert.queue_time_ms (including 0/default via handle reopen)",
+	"windivert.queue_size_bytes (including 0/default via handle reopen)",
 }
 
 var windowsRestartRequiredSettings = []string{
 	"engine.workers",
 	"engine.worker_queue_size",
-	"windivert.filter",
 	"windivert_dir",
 	"windivert_sys",
-	"windivert.queue_len=0 (revert to driver default)",
-	"windivert.queue_time_ms=0 (revert to driver default)",
-	"windivert.queue_size_bytes=0 (revert to driver default)",
 }

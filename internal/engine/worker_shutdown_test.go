@@ -49,7 +49,7 @@ func TestWorkerShutdownFailOpen_OrderAndDrain(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.ShutdownFailOpenMaxPackets = 10
 	ad := &recordingAdapter{}
-	w := newWorker(0, cfg, ad)
+	w := newWorker(0, cfg, ad, newStats())
 
 	key := flow.Key{SrcPort: 1234, DstPort: 443, Proto: 6}
 	st := w.flows.GetOrCreate(key, time.Now())
@@ -77,7 +77,7 @@ func TestWorkerShutdownFailOpen_Limit(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.ShutdownFailOpenMaxPackets = 2
 	ad := &recordingAdapter{}
-	w := newWorker(0, cfg, ad)
+	w := newWorker(0, cfg, ad, newStats())
 
 	key := flow.Key{SrcPort: 1234, DstPort: 443, Proto: 6}
 	st := w.flows.GetOrCreate(key, time.Now())
@@ -104,7 +104,7 @@ func TestWorkerShutdownFailOpen_CanceledContext(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.ShutdownFailOpenMaxPackets = 10
 	ad := &recordingAdapter{}
-	w := newWorker(0, cfg, ad)
+	w := newWorker(0, cfg, ad, newStats())
 
 	key := flow.Key{SrcPort: 1234, DstPort: 443, Proto: 6}
 	st := w.flows.GetOrCreate(key, time.Now())
@@ -125,4 +125,3 @@ func TestWorkerShutdownFailOpen_CanceledContext(t *testing.T) {
 		t.Fatalf("send count: got %d, want %d", got, want)
 	}
 }
-

@@ -47,7 +47,7 @@ if command -v nft >/dev/null 2>&1; then
 
   if nft list chain inet "$TABLE" "$CHAIN" >/dev/null 2>&1; then
     nft -a list chain inet "$TABLE" "$CHAIN" 2>/dev/null | \
-      awk -v tag="comment \\\"$TAG\\\"" '$0 ~ tag { for (i=1;i<=NF;i++) if ($i==\"handle\") print $(i+1) }' | \
+      awk -v tag="comment \"$TAG\"" '$0 ~ tag { for (i=1;i<=NF;i++) if ($i=="handle") print $(i+1) }' | \
       while read -r h; do
         [ -n "$h" ] || continue
         nft delete rule inet "$TABLE" "$CHAIN" handle "$h" 2>/dev/null || true
@@ -56,16 +56,28 @@ if command -v nft >/dev/null 2>&1; then
   exit 0
 fi
 
-if ! command -v iptables >/dev/null 2>&1; then
-  echo "iptables or nft is required"
+uninstall_family() {
+  TOOL="$1"
+  CHAIN="$2"
+
+  while "$TOOL" -t mangle -D OUTPUT -j "$CHAIN" 2>/dev/null; do
+    :
+  done
+
+  "$TOOL" -t mangle -F "$CHAIN" 2>/dev/null || true
+  "$TOOL" -t mangle -X "$CHAIN" 2>/dev/null || true
+}
+
+FOUND=0
+if command -v iptables >/dev/null 2>&1; then
+  FOUND=1
+  uninstall_family iptables GOVPASS_OUTPUT
+fi
+if command -v ip6tables >/dev/null 2>&1; then
+  FOUND=1
+  uninstall_family ip6tables GOVPASS_OUTPUT6
+fi
+if [ "$FOUND" -eq 0 ]; then
+  echo "iptables/ip6tables or nft is required"
   exit 1
 fi
-
-CHAIN="GOVPASS_OUTPUT"
-
-while iptables -t mangle -D OUTPUT -j "$CHAIN" 2>/dev/null; do
-  :
-done
-
-iptables -t mangle -F "$CHAIN" 2>/dev/null || true
-iptables -t mangle -X "$CHAIN" 2>/dev/null || true
