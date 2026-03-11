@@ -166,10 +166,8 @@ func runWindows(ctx context.Context, cfg engine.Config, wc windowsRunConfig) err
 		return err
 	}
 
-	if driverDir != "" {
-		if err := driver.PrependPath(driverDir); err != nil {
-			return fmt.Errorf("set PATH failed: %w", err)
-		}
+	if err := adapter.ConfigureWinDivertDLL(filepath.Join(driverDir, "WinDivert.dll")); err != nil {
+		return fmt.Errorf("configure WinDivert.dll failed: %w", err)
 	}
 
 	report, cleanup, err := driver.EnsureWithReport(ctx, driver.Config{
@@ -225,10 +223,8 @@ func runWindowsService(ctx context.Context, args windowsCLIArgs, setFlags map[st
 		return err
 	}
 
-	if driverDir != "" {
-		if err := driver.PrependPath(driverDir); err != nil {
-			return fmt.Errorf("set PATH failed: %w", err)
-		}
+	if err := adapter.ConfigureWinDivertDLL(filepath.Join(driverDir, "WinDivert.dll")); err != nil {
+		return fmt.Errorf("configure WinDivert.dll failed: %w", err)
 	}
 
 	// Service mode: do not stop/uninstall the global WinDivert driver on shutdown.

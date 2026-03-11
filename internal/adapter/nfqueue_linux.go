@@ -33,6 +33,7 @@ type NFQueueAdapter struct {
 	mark   uint32
 
 	closeOnce sync.Once
+	bufPool   sync.Pool
 
 	flushing atomic.Bool
 	inFlight atomic.Int32
@@ -53,6 +54,9 @@ func NewNFQueue(opts NFQueueOptions) (*NFQueueAdapter, error) {
 		rawFD4: -1,
 		rawFD6: -1,
 		mark:   opts.Mark,
+	}
+	ad.bufPool.New = func() any {
+		return make([]byte, copyRange)
 	}
 
 	var err error
@@ -102,9 +106,17 @@ func (n *NFQueueAdapter) Send(ctx context.Context, pkt *packet.Packet) error {
 		return nil
 	}
 	if pkt.Source == packet.SourceCaptured {
-		return n.setVerdict(pkt, nfqueue.NfAccept)
+		err := n.setVerdict(pkt, nfqueue.NfAccept)
+		if err == nil {
+			pkt.Release()
+		}
+		return err
 	}
-	return n.inject(pkt)
+	err := n.inject(pkt)
+	if err == nil {
+		pkt.Release()
+	}
+	return err
 }
 
 func (n *NFQueueAdapter) Drop(ctx context.Context, pkt *packet.Packet) error {
@@ -114,7 +126,11 @@ func (n *NFQueueAdapter) Drop(ctx context.Context, pkt *packet.Packet) error {
 	if pkt.Source != packet.SourceCaptured {
 		return nil
 	}
-	return n.setVerdict(pkt, nfqueue.NfDrop)
+	err := n.setVerdict(pkt, nfqueue.NfDrop)
+	if err == nil {
+		pkt.Release()
+	}
+	return err
 }
 
 func (n *NFQueueAdapter) CalcChecksums(pkt *packet.Packet) error {
@@ -177,6 +193,8 @@ func (n *NFQueueAdapter) Flush(ctx context.Context) error {
 			}
 			if err := n.setVerdict(pkt, nfqueue.NfAccept); err != nil {
 				errs = append(errs, err)
+			} else {
+				pkt.Release()
 			}
 		default:
 			if len(errs) > 0 {
@@ -239,7 +257,7 @@ func (n *NFQueueAdapter) onPacket(version uint8) nfqueue.HookFunc {
 			return 0
 		}
 
-		payload := append([]byte(nil), (*a.Payload)...)
+		payload, backing := copyIntoPoolBuffer(&n.bufPool, *a.Payload)
 		pkt := &packet.Packet{
 			Data:    payload,
 			Source:  packet.SourceCaptured,
@@ -247,12 +265,14 @@ func (n *NFQueueAdapter) onPacket(version uint8) nfqueue.HookFunc {
 			IfIndex: nfqueueIfIndex(a),
 		}
 		pkt.Meta.IPVersion = version
+		pkt.SetDataPool(&n.bufPool, backing)
 
 		select {
 		case n.recv <- pkt:
 			return 0
 		default:
 			_ = n.setVerdictByVersion(version, id, nfqueue.NfAccept)
+			pkt.Release()
 			return 0
 		}
 	}

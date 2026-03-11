@@ -84,7 +84,8 @@ func setupServiceLogging(cfg serviceLogConfig) (*os.File, error) {
 	// Service runs as LocalSystem. Lock down ProgramData state to prevent
 	// unprivileged users from tampering with config/log/driver files.
 	programDataRoot := filepath.Join(defaultProgramDataDir(), "gov-pass")
-	if isUnderDir(path, programDataRoot) {
+	managedProgramDataPath := validateManagedWindowsPath(path, programDataRoot) == nil
+	if managedProgramDataPath {
 		if err := ensureSecureWindowsDir(programDataRoot); err != nil {
 			return nil, fmt.Errorf("secure ProgramData dir failed: %w", err)
 		}
@@ -101,7 +102,7 @@ func setupServiceLogging(cfg serviceLogConfig) (*os.File, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open log file failed: %w", err)
 	}
-	if isUnderDir(path, programDataRoot) {
+	if managedProgramDataPath {
 		if err := hardenWindowsFileACL(path); err != nil {
 			_ = f.Close()
 			return nil, fmt.Errorf("secure log file failed: %w", err)

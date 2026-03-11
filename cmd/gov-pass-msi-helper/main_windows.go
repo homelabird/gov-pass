@@ -90,6 +90,7 @@ func purgeProgramDataBestEffort() error {
 	if base == "" {
 		base = `C:\ProgramData`
 	}
+	base = filepath.Clean(base)
 	dir := filepath.Join(base, "gov-pass")
 
 	// Safety guard: never remove the entire ProgramData root.
@@ -100,8 +101,12 @@ func purgeProgramDataBestEffort() error {
 		return errors.New("refusing to remove unexpected directory")
 	}
 
-	_ = os.RemoveAll(dir)
-	return nil
+	if unsafe, err := windowsPathHasReparsePoint(base); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	} else if unsafe {
+		return errors.New("refusing to purge under ProgramData reparse point")
+	}
+	return safeRemoveAllWindows(dir)
 }
 
 func stopServiceBestEffort(name string, timeout time.Duration) error {

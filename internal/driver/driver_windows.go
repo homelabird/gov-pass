@@ -6,11 +6,14 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
+
+	"golang.org/x/sys/windows"
 )
 
 var ErrAdminRequired = errors.New("administrator privileges required")
@@ -260,9 +263,33 @@ func deleteService(ctx context.Context, name string) error {
 }
 
 func runSC(ctx context.Context, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "sc.exe", args...)
+	scPath, err := system32Command("sc.exe")
+	if err != nil {
+		return "", err
+	}
+	cmd := exec.CommandContext(ctx, scPath, args...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
+}
+
+func system32Command(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", fmt.Errorf("command name is empty")
+	}
+	sysDir, err := windows.GetSystemDirectory()
+	if err != nil {
+		root := strings.TrimSpace(os.Getenv("SystemRoot"))
+		if root == "" {
+			root = `C:\Windows`
+		}
+		sysDir = filepath.Join(root, "System32")
+	}
+	path := filepath.Join(strings.TrimSpace(sysDir), name)
+	if _, err := os.Stat(path); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 func queryServiceBinPath(ctx context.Context, name string) (string, error) {

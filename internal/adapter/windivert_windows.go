@@ -4,7 +4,10 @@ package adapter
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -35,22 +38,64 @@ type WinDivertAdapter struct {
 
 	recvLoopCancel context.CancelFunc
 	recvLoopDone   chan struct{}
+	bufPool        sync.Pool
 
 	closeOnce sync.Once
 }
 
 var (
-	winDivertDLL  = syscall.NewLazyDLL("WinDivert.dll")
-	procOpen      = winDivertDLL.NewProc("WinDivertOpen")
-	procRecv      = winDivertDLL.NewProc("WinDivertRecv")
-	procSend      = winDivertDLL.NewProc("WinDivertSend")
-	procShutdown  = winDivertDLL.NewProc("WinDivertShutdown")
-	procClose     = winDivertDLL.NewProc("WinDivertClose")
-	procChecksums = winDivertDLL.NewProc("WinDivertHelperCalcChecksums")
-	procSetParam  = winDivertDLL.NewProc("WinDivertSetParam")
+	winDivertDLLMu   sync.Mutex
+	winDivertDLLPath string
+	winDivertDLL     *syscall.LazyDLL
+	procOpen         *syscall.LazyProc
+	procRecv         *syscall.LazyProc
+	procSend         *syscall.LazyProc
+	procShutdown     *syscall.LazyProc
+	procClose        *syscall.LazyProc
+	procChecksums    *syscall.LazyProc
+	procSetParam     *syscall.LazyProc
 )
 
+func ConfigureWinDivertDLL(path string) error {
+	abs, err := filepath.Abs(strings.TrimSpace(path))
+	if err != nil {
+		return err
+	}
+	if abs == "" {
+		return fmt.Errorf("WinDivert.dll path is empty")
+	}
+	if _, err := os.Stat(abs); err != nil {
+		return err
+	}
+
+	winDivertDLLMu.Lock()
+	defer winDivertDLLMu.Unlock()
+	if strings.EqualFold(winDivertDLLPath, abs) && procOpen != nil {
+		return nil
+	}
+
+	dll := syscall.NewLazyDLL(abs)
+	openProc := dll.NewProc("WinDivertOpen")
+	if err := openProc.Find(); err != nil {
+		return err
+	}
+
+	winDivertDLLPath = abs
+	winDivertDLL = dll
+	procOpen = openProc
+	procRecv = dll.NewProc("WinDivertRecv")
+	procSend = dll.NewProc("WinDivertSend")
+	procShutdown = dll.NewProc("WinDivertShutdown")
+	procClose = dll.NewProc("WinDivertClose")
+	procChecksums = dll.NewProc("WinDivertHelperCalcChecksums")
+	procSetParam = dll.NewProc("WinDivertSetParam")
+	return nil
+}
+
 func NewWinDivert(filter string, opts WinDivertOptions) (*WinDivertAdapter, error) {
+	if procOpen == nil {
+		return nil, fmt.Errorf("WinDivert.dll is not configured")
+	}
 	handle, err := openWinDivertHandle(filter)
 	if err != nil {
 		return nil, err
@@ -63,6 +108,9 @@ func NewWinDivert(filter string, opts WinDivertOptions) (*WinDivertAdapter, erro
 		errs:   make(chan error, 1),
 		ctx:    ctx,
 		stop:   cancel,
+	}
+	ad.bufPool.New = func() any {
+		return make([]byte, maxPacketSize)
 	}
 	if err := ad.applyOptionsToHandle(syscall.Handle(handle), opts); err != nil {
 		_ = ad.Close()
@@ -107,10 +155,14 @@ func (w *WinDivertAdapter) Send(ctx context.Context, pkt *packet.Packet) error {
 	if r1 == 0 {
 		return os.NewSyscallError("WinDivertSend", err)
 	}
+	pkt.Release()
 	return nil
 }
 
 func (w *WinDivertAdapter) Drop(ctx context.Context, pkt *packet.Packet) error {
+	if pkt != nil {
+		pkt.Release()
+	}
 	return nil
 }
 
@@ -397,13 +449,13 @@ func (w *WinDivertAdapter) recvLoop(loopCtx context.Context, loopDone chan struc
 			continue
 		}
 
-		payload := make([]byte, recvLen)
-		copy(payload, buf[:recvLen])
+		payload, backing := copyIntoPoolBuffer(&w.bufPool, buf[:recvLen])
 		pkt := &packet.Packet{
 			Data:   payload,
 			Addr:   addr,
 			Source: packet.SourceCaptured,
 		}
+		pkt.SetDataPool(&w.bufPool, backing)
 
 		select {
 		case w.recv <- pkt:
@@ -418,8 +470,10 @@ func (w *WinDivertAdapter) recvLoop(loopCtx context.Context, loopDone chan struc
 				uintptr(unsafe.Pointer(&addr)),
 			)
 			if r2 == 0 {
+				pkt.Release()
 				return
 			}
+			pkt.Release()
 			return
 		default:
 			// Channel filled after the check above; fail-open by reinjecting.
@@ -432,6 +486,7 @@ func (w *WinDivertAdapter) recvLoop(loopCtx context.Context, loopDone chan struc
 				uintptr(unsafe.Pointer(&addr)),
 			)
 			if r2 == 0 {
+				pkt.Release()
 				if loopCtx.Err() != nil || w.ctx.Err() != nil {
 					return
 				}
@@ -441,6 +496,7 @@ func (w *WinDivertAdapter) recvLoop(loopCtx context.Context, loopDone chan struc
 				}
 				return
 			}
+			pkt.Release()
 		}
 	}
 }

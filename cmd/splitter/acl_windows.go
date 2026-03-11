@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"golang.org/x/sys/windows"
 )
 
 const (
@@ -30,7 +32,7 @@ func ensureSecureWindowsDir(dir string) error {
 }
 
 func hardenWindowsDirACL(dir string) error {
-	icacls, err := exec.LookPath("icacls.exe")
+	icacls, err := resolveSystem32WindowsCommand("icacls.exe")
 	if err != nil {
 		return err
 	}
@@ -62,7 +64,7 @@ func hardenWindowsFileACL(path string) error {
 	if path == "" {
 		return fmt.Errorf("path is empty")
 	}
-	icacls, err := exec.LookPath("icacls.exe")
+	icacls, err := resolveSystem32WindowsCommand("icacls.exe")
 	if err != nil {
 		return err
 	}
@@ -87,23 +89,22 @@ func hardenWindowsFileACL(path string) error {
 	return nil
 }
 
-func isUnderDir(path string, dir string) bool {
-	p, err := filepath.Abs(filepath.Clean(path))
+func resolveSystem32WindowsCommand(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", fmt.Errorf("command name is empty")
+	}
+	sysDir, err := windows.GetSystemDirectory()
 	if err != nil {
-		p = filepath.Clean(path)
+		root := strings.TrimSpace(os.Getenv("SystemRoot"))
+		if root == "" {
+			root = `C:\Windows`
+		}
+		sysDir = filepath.Join(root, "System32")
 	}
-	d, err := filepath.Abs(filepath.Clean(dir))
-	if err != nil {
-		d = filepath.Clean(dir)
+	path := filepath.Join(strings.TrimSpace(sysDir), name)
+	if _, err := os.Stat(path); err != nil {
+		return "", err
 	}
-
-	p = strings.ToLower(p)
-	d = strings.ToLower(d)
-	if p == d {
-		return true
-	}
-	if !strings.HasSuffix(d, string(os.PathSeparator)) {
-		d += string(os.PathSeparator)
-	}
-	return strings.HasPrefix(p, d)
+	return path, nil
 }

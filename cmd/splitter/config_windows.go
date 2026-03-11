@@ -117,16 +117,10 @@ func validateWindowsServiceManagedPath(label string, path string, allowedRoots .
 	if !filepath.IsAbs(path) {
 		return fmt.Errorf("%s path must be absolute in service mode", label)
 	}
-	for _, root := range allowedRoots {
-		root = strings.TrimSpace(root)
-		if root == "" {
-			continue
-		}
-		if isUnderDir(path, root) {
-			return nil
-		}
+	if err := validateManagedWindowsPath(path, allowedRoots...); err != nil {
+		return fmt.Errorf("%s %w", label, err)
 	}
-	return fmt.Errorf("%s path must stay under one of: %s", label, strings.Join(allowedRoots, ", "))
+	return nil
 }
 
 func validateWindowsServiceConfigPath(path string) error {
@@ -451,12 +445,14 @@ func effectiveWindowsConfig(args windowsCLIArgs, setFlags map[string]bool, asSer
 	}
 
 	programDataRoot := filepath.Join(defaultProgramDataDir(), "gov-pass")
+	managedProgramDataPath := false
 	if asService && configPath != "" {
 		if err := validateWindowsServiceConfigPath(configPath); err != nil {
 			return engine.Config{}, windowsRunConfig{}, err
 		}
+		managedProgramDataPath = validateManagedWindowsPath(configPath, programDataRoot) == nil
 	}
-	if asService && configPath != "" && isUnderDir(configPath, programDataRoot) {
+	if asService && configPath != "" && managedProgramDataPath {
 		// Ensure ProgramData state is not user-writable. This prevents config
 		// tampering and DLL hijacking via windivert_dir in service mode.
 		if err := ensureSecureWindowsDir(programDataRoot); err != nil {
@@ -478,7 +474,7 @@ func effectiveWindowsConfig(args windowsCLIArgs, setFlags map[string]bool, asSer
 				if err := writeWindowsJSONConfigIfMissing(configPath, tpl); err != nil {
 					return engine.Config{}, windowsRunConfig{}, fmt.Errorf("create default config failed: %w", err)
 				}
-				if asService && isUnderDir(configPath, programDataRoot) {
+				if asService && managedProgramDataPath {
 					if err := hardenWindowsFileACL(configPath); err != nil {
 						return engine.Config{}, windowsRunConfig{}, fmt.Errorf("secure config file failed: %w", err)
 					}

@@ -26,8 +26,10 @@ type DivertOptions struct {
 
 // DivertAdapter handles pf divert recv/send.
 type DivertAdapter struct {
-	fd   int
-	port uint16
+	fd      int
+	port    uint16
+	recvBuf []byte
+	bufPool sync.Pool
 
 	closeOnce sync.Once
 }
@@ -43,8 +45,12 @@ func NewDivert(opts DivertOptions) (*DivertAdapter, error) {
 	}
 
 	ad := &DivertAdapter{
-		fd:   fd,
-		port: opts.Port,
+		fd:      fd,
+		port:    opts.Port,
+		recvBuf: make([]byte, divertMaxPacket),
+	}
+	ad.bufPool.New = func() any {
+		return make([]byte, divertMaxPacket)
 	}
 	if err := ad.bind(opts.Port); err != nil {
 		_ = ad.Close()
@@ -62,9 +68,8 @@ func (d *DivertAdapter) Recv(ctx context.Context) (*packet.Packet, error) {
 		return nil, ErrNotImplemented
 	}
 
-	buf := make([]byte, divertMaxPacket)
 	for {
-		n, from, err := unix.Recvfrom(d.fd, buf, 0)
+		n, from, err := unix.Recvfrom(d.fd, d.recvBuf, 0)
 		if err != nil {
 			if err == unix.EINTR {
 				continue
@@ -83,17 +88,19 @@ func (d *DivertAdapter) Recv(ctx context.Context) (*packet.Packet, error) {
 
 		addr, err := encodeDivertAddr(from)
 		if err != nil {
-			if sendErr := unix.Sendto(d.fd, buf[:n], 0, from); sendErr != nil {
+			if sendErr := unix.Sendto(d.fd, d.recvBuf[:n], 0, from); sendErr != nil {
 				return nil, sendErr
 			}
 			continue
 		}
-		payload := append([]byte(nil), buf[:n]...)
-		return &packet.Packet{
+		payload, backing := copyIntoPoolBuffer(&d.bufPool, d.recvBuf[:n])
+		pkt := &packet.Packet{
 			Data:   payload,
 			Addr:   addr,
 			Source: packet.SourceCaptured,
-		}, nil
+		}
+		pkt.SetDataPool(&d.bufPool, backing)
+		return pkt, nil
 	}
 }
 
@@ -108,10 +115,17 @@ func (d *DivertAdapter) Send(ctx context.Context, pkt *packet.Packet) error {
 	if err != nil {
 		return err
 	}
-	return unix.Sendto(d.fd, pkt.Data, 0, to)
+	err = unix.Sendto(d.fd, pkt.Data, 0, to)
+	if err == nil {
+		pkt.Release()
+	}
+	return err
 }
 
 func (d *DivertAdapter) Drop(ctx context.Context, pkt *packet.Packet) error {
+	if pkt != nil {
+		pkt.Release()
+	}
 	return nil
 }
 

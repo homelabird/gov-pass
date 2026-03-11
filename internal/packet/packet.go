@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"net/netip"
+	"sync"
 )
 
 var (
@@ -44,6 +45,9 @@ type Packet struct {
 	Source  Source
 	NFQID   uint32
 	IfIndex uint32
+
+	dataPool    *sync.Pool
+	dataBacking []byte
 }
 
 // Address holds raw WinDivert address bytes for send/recv.
@@ -99,6 +103,31 @@ func (p *Packet) Payload() []byte {
 
 func (p *Packet) HasFlag(flag uint8) bool {
 	return (p.Meta.Flags & flag) != 0
+}
+
+// SetDataPool registers the backing buffer with a pool so the packet can
+// return it once the adapter has accepted/dropped/reinjected the packet.
+func (p *Packet) SetDataPool(pool *sync.Pool, backing []byte) {
+	if p == nil || pool == nil || backing == nil {
+		return
+	}
+	p.dataPool = pool
+	p.dataBacking = backing
+}
+
+// Release returns the packet's backing buffer to its pool, if any.
+//
+// It intentionally leaves the packet's visible fields intact because callers
+// may still need metadata such as len(Data) during later cleanup/accounting
+// after the adapter has already accepted or dropped the packet.
+func (p *Packet) Release() {
+	if p == nil || p.dataPool == nil || p.dataBacking == nil {
+		return
+	}
+	backing := p.dataBacking[:cap(p.dataBacking)]
+	p.dataPool.Put(backing)
+	p.dataBacking = nil
+	p.dataPool = nil
 }
 
 // DecodeTCP fills Meta for IPv4/TCP or IPv6/TCP packets.
