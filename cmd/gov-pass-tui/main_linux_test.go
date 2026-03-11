@@ -19,21 +19,25 @@ mode="${1:-}"
 shift || true
 case "$mode" in
   systemctl)
-    case "${1:-}" in
-      is-active)
-        if [ "${2:-}" = "--quiet" ]; then
-          exit 1
-        fi
-        printf '%s\n' "inactive"
-        exit 0
-        ;;
-      is-enabled)
-        exit 1
-        ;;
-      start|stop|restart|reload|enable|disable)
-        exit 0
-        ;;
-    esac
+	    case "${1:-}" in
+	      is-active)
+	        if [ "${2:-}" = "--quiet" ]; then
+	          exit 1
+	        fi
+	        printf '%s\n' "inactive"
+	        exit 0
+	        ;;
+	      is-enabled)
+	        exit 1
+	        ;;
+	      show)
+	        printf '%s\n' "${FAKE_SYSTEMCTL_CAN_RELOAD_OUTPUT:-yes}"
+	        exit 0
+	        ;;
+	      start|stop|restart|reload|enable|disable)
+	        exit 0
+	        ;;
+	    esac
     ;;
   sudo-systemctl|pkexec-systemctl)
     exit 0
@@ -100,6 +104,19 @@ func TestRunAction_ValidActions(t *testing.T) {
 		if err != nil && err.Error() == "unknown action: "+action {
 			t.Errorf("action %q should be recognized", action)
 		}
+	}
+}
+
+func TestRunAction_ReloadRejectedWhenUnsupported(t *testing.T) {
+	stubLinuxTUICommands(t)
+	t.Setenv("FAKE_SYSTEMCTL_CAN_RELOAD_OUTPUT", "no")
+
+	err := runAction("gov-pass", "reload")
+	if err == nil {
+		t.Fatal("expected reload to be rejected when CanReload=no")
+	}
+	if got := err.Error(); got != "reload is not available for gov-pass" {
+		t.Fatalf("unexpected error message: %s", got)
 	}
 }
 

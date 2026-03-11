@@ -12,12 +12,14 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"golang.org/x/sys/windows"
 )
 
 var ErrAdminRequired = errors.New("administrator privileges required")
 var ErrDriverNotFound = errors.New("WinDivert driver sys not found")
+var ErrServiceTakeoverDisabled = errors.New("existing WinDivert service points to another driver path; set allow-service-takeover to reconfigure it")
 
 var (
 	shell32           = syscall.NewLazyDLL("shell32.dll")
@@ -45,6 +47,7 @@ func EnsureWithReport(ctx context.Context, cfg Config) (Report, func() error, er
 
 	created := false
 	started := false
+	restoreBinPath := ""
 
 	if !report.ServiceExists {
 		if !isAdmin() {
@@ -62,8 +65,14 @@ func EnsureWithReport(ctx context.Context, cfg Config) (Report, func() error, er
 		report.ServiceNeedsConfigRepair = false
 	} else {
 		if report.ServiceNeedsConfigRepair {
+			if serviceTakeoverRequired(report) && !cfg.AllowServiceTakeover {
+				return report, nil, ErrServiceTakeoverDisabled
+			}
 			if !isAdmin() {
 				return report, nil, ErrAdminRequired
+			}
+			if serviceTakeoverRequired(report) {
+				restoreBinPath = report.ServiceBinPath
 			}
 			if err := configService(ctx, report.ServiceName, report.ResolvedSysPath); err != nil {
 				return report, nil, err
@@ -89,17 +98,25 @@ func EnsureWithReport(ctx context.Context, cfg Config) (Report, func() error, er
 	}
 
 	cleanup := func() error {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+
 		if created && cfg.AutoUninstall {
-			if err := stopService(ctx, report.ServiceName); err != nil {
+			if err := stopService(cleanupCtx, report.ServiceName); err != nil {
 				return err
 			}
-			if err := deleteService(ctx, report.ServiceName); err != nil {
+			if err := deleteService(cleanupCtx, report.ServiceName); err != nil {
 				return err
 			}
 			return nil
 		}
 		if started && cfg.AutoStop {
-			if err := stopService(ctx, report.ServiceName); err != nil {
+			if err := stopService(cleanupCtx, report.ServiceName); err != nil {
+				return err
+			}
+		}
+		if restoreBinPath != "" {
+			if err := configService(cleanupCtx, report.ServiceName, restoreBinPath); err != nil {
 				return err
 			}
 		}
@@ -312,18 +329,41 @@ func queryServiceBinPath(ctx context.Context, name string) (string, error) {
 
 func normalizeServicePath(raw string) string {
 	path := strings.TrimSpace(raw)
-	path = strings.Trim(path, "\"")
 	if strings.HasPrefix(path, "\\??\\") {
 		path = path[4:]
 	}
-	lower := strings.ToLower(path)
-	if idx := strings.Index(lower, ".sys"); idx != -1 {
-		return path[:idx+4]
+	if path == "" {
+		return ""
 	}
-	if idx := strings.Index(path, " "); idx != -1 {
-		return path[:idx]
+	if strings.HasPrefix(path, "\"") {
+		path = path[1:]
+		if idx := strings.Index(path, "\""); idx != -1 {
+			return strings.TrimSpace(path[:idx])
+		}
+		return strings.TrimSpace(path)
 	}
-	return path
+	fields := strings.Fields(path)
+	if len(fields) == 0 {
+		return ""
+	}
+	candidate := fields[0]
+	for _, field := range fields[1:] {
+		if strings.EqualFold(filepath.Ext(candidate), ".sys") {
+			break
+		}
+		candidate += " " + field
+	}
+	if strings.HasPrefix(candidate, "\\??\\") {
+		candidate = candidate[4:]
+	}
+	return candidate
+}
+
+func serviceTakeoverRequired(report Report) bool {
+	return report.ServiceExists &&
+		report.ServiceBinPath != "" &&
+		report.ServiceBinPathExists &&
+		!report.ServiceBinPathMatchesDesired
 }
 
 func sameServicePath(a, b string) bool {

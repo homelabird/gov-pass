@@ -106,17 +106,9 @@ func (n *NFQueueAdapter) Send(ctx context.Context, pkt *packet.Packet) error {
 		return nil
 	}
 	if pkt.Source == packet.SourceCaptured {
-		err := n.setVerdict(pkt, nfqueue.NfAccept)
-		if err == nil {
-			pkt.Release()
-		}
-		return err
+		return n.setVerdict(pkt, nfqueue.NfAccept)
 	}
-	err := n.inject(pkt)
-	if err == nil {
-		pkt.Release()
-	}
-	return err
+	return n.inject(pkt)
 }
 
 func (n *NFQueueAdapter) Drop(ctx context.Context, pkt *packet.Packet) error {
@@ -126,11 +118,7 @@ func (n *NFQueueAdapter) Drop(ctx context.Context, pkt *packet.Packet) error {
 	if pkt.Source != packet.SourceCaptured {
 		return nil
 	}
-	err := n.setVerdict(pkt, nfqueue.NfDrop)
-	if err == nil {
-		pkt.Release()
-	}
-	return err
+	return n.setVerdict(pkt, nfqueue.NfDrop)
 }
 
 func (n *NFQueueAdapter) CalcChecksums(pkt *packet.Packet) error {

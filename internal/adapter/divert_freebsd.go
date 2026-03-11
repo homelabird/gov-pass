@@ -115,17 +115,10 @@ func (d *DivertAdapter) Send(ctx context.Context, pkt *packet.Packet) error {
 	if err != nil {
 		return err
 	}
-	err = unix.Sendto(d.fd, pkt.Data, 0, to)
-	if err == nil {
-		pkt.Release()
-	}
-	return err
+	return unix.Sendto(d.fd, pkt.Data, 0, to)
 }
 
 func (d *DivertAdapter) Drop(ctx context.Context, pkt *packet.Packet) error {
-	if pkt != nil {
-		pkt.Release()
-	}
 	return nil
 }
 

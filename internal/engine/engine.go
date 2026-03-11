@@ -195,14 +195,14 @@ func (e *Engine) recvLoop(ctx context.Context) error {
 		}
 
 		if err := packet.DecodeTCP(pkt); err != nil {
-			if sendErr := e.adapter.Send(ctx, pkt); sendErr != nil {
+			if sendErr := sendPacket(ctx, e.adapter, pkt); sendErr != nil {
 				return sendErr
 			}
 			continue
 		}
 
 		if pkt.Meta.DstPort != 443 {
-			if sendErr := e.adapter.Send(ctx, pkt); sendErr != nil {
+			if sendErr := sendPacket(ctx, e.adapter, pkt); sendErr != nil {
 				return sendErr
 			}
 			continue
@@ -217,7 +217,7 @@ func (e *Engine) recvLoop(ctx context.Context) error {
 				idx := e.sharder.Index(key)
 				if err := e.workers[idx].enqueue(ctx, pkt); err != nil {
 					if errors.Is(err, context.Canceled) {
-						if sendErr := e.adapter.Send(context.Background(), pkt); sendErr != nil {
+						if sendErr := sendPacket(context.Background(), e.adapter, pkt); sendErr != nil {
 							return sendErr
 						}
 						continue
@@ -232,7 +232,7 @@ func (e *Engine) recvLoop(ctx context.Context) error {
 			// not evict active connections and accidentally re-process them later.
 			idx := e.sharder.Index(key)
 			e.workers[idx].touchFlow(key)
-			if sendErr := e.adapter.Send(ctx, pkt); sendErr != nil {
+			if sendErr := sendPacket(ctx, e.adapter, pkt); sendErr != nil {
 				return sendErr
 			}
 			continue
@@ -243,7 +243,7 @@ func (e *Engine) recvLoop(ctx context.Context) error {
 			if errors.Is(err, context.Canceled) {
 				// During shutdown, fail-open by passing through any packets we
 				// already captured instead of leaving them held.
-				if sendErr := e.adapter.Send(context.Background(), pkt); sendErr != nil {
+				if sendErr := sendPacket(context.Background(), e.adapter, pkt); sendErr != nil {
 					return sendErr
 				}
 				continue

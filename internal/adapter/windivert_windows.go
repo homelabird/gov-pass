@@ -155,14 +155,10 @@ func (w *WinDivertAdapter) Send(ctx context.Context, pkt *packet.Packet) error {
 	if r1 == 0 {
 		return os.NewSyscallError("WinDivertSend", err)
 	}
-	pkt.Release()
 	return nil
 }
 
 func (w *WinDivertAdapter) Drop(ctx context.Context, pkt *packet.Packet) error {
-	if pkt != nil {
-		pkt.Release()
-	}
 	return nil
 }
 
@@ -306,13 +302,17 @@ func (w *WinDivertAdapter) Flush(ctx context.Context) error {
 	var firstErr error
 	for {
 		select {
-		case pkt := <-w.recv:
-			if pkt == nil {
-				continue
-			}
-			if err := w.Send(context.Background(), pkt); err != nil && firstErr == nil {
-				firstErr = err
-			}
+			case pkt := <-w.recv:
+				if pkt == nil {
+					continue
+				}
+				if err := w.Send(context.Background(), pkt); err != nil {
+					if firstErr == nil {
+						firstErr = err
+					}
+				} else {
+					pkt.Release()
+				}
 		default:
 			if firstErr == nil && ctx.Err() != nil {
 				return ctx.Err()

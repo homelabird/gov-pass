@@ -157,7 +157,7 @@ func (w *worker) handlePacket(ctx context.Context, pkt *packet.Packet) error {
 					return err
 				}
 			}
-			if err := w.adapter.Send(ctx, pkt); err != nil {
+			if err := sendPacket(ctx, w.adapter, pkt); err != nil {
 				return err
 			}
 			w.flows.Delete(key)
@@ -165,10 +165,10 @@ func (w *worker) handlePacket(ctx context.Context, pkt *packet.Packet) error {
 		}
 
 		if st.State == flow.StateInjected || st.State == flow.StatePassThrough {
-			return w.adapter.Send(ctx, pkt)
+			return sendPacket(ctx, w.adapter, pkt)
 		}
 		if len(payload) == 0 {
-			return w.adapter.Send(ctx, pkt)
+			return sendPacket(ctx, w.adapter, pkt)
 		}
 		if resolved && plan.Skip {
 			if st.State == flow.StateCollecting && len(st.HeldPackets) > 0 {
@@ -177,7 +177,7 @@ func (w *worker) handlePacket(ctx context.Context, pkt *packet.Packet) error {
 				}
 			}
 			st.State = flow.StatePassThrough
-			return w.adapter.Send(ctx, pkt)
+			return sendPacket(ctx, w.adapter, pkt)
 		}
 
 		if st.State == flow.StateNew {
@@ -202,7 +202,7 @@ func (w *worker) handlePacket(ctx context.Context, pkt *packet.Packet) error {
 				if err := w.failOpenWithReason(ctx, key, st, failOpenReasonHeldBytesLimit); err != nil {
 					return err
 				}
-				return w.adapter.Send(ctx, pkt)
+				return sendPacket(ctx, w.adapter, pkt)
 			}
 		}
 		st.HeldPackets = append(st.HeldPackets, pkt)
@@ -267,13 +267,13 @@ func (w *worker) handlePacket(ctx context.Context, pkt *packet.Packet) error {
 
 	// No existing state: fail-open for payloadless packets (no flow creation).
 	if len(payload) == 0 {
-		return w.adapter.Send(ctx, pkt)
+		return sendPacket(ctx, w.adapter, pkt)
 	}
 
 	// DoS guard: bound the number of tracked flows per worker.
 	if cfg.MaxFlowsPerWorker > 0 && w.flows.Len() >= cfg.MaxFlowsPerWorker {
 		w.notePressure(pressureReasonFlowLimit)
-		return w.adapter.Send(ctx, pkt)
+		return sendPacket(ctx, w.adapter, pkt)
 	}
 
 	plan, resolved := cfg.resolvePlan(pkt.Meta, nil)
@@ -282,7 +282,7 @@ func (w *worker) handlePacket(ctx context.Context, pkt *packet.Packet) error {
 		st.LastActive = now
 		w.storeFlowPlan(st, plan)
 		st.State = flow.StatePassThrough
-		return w.adapter.Send(ctx, pkt)
+		return sendPacket(ctx, w.adapter, pkt)
 	}
 
 	// Best-effort budget checks before creating per-flow state.
@@ -291,7 +291,7 @@ func (w *worker) handlePacket(ctx context.Context, pkt *packet.Packet) error {
 		limit := int64(cfg.MaxHeldBytesPerWorker)
 		if w.heldBytes+need > limit {
 			w.notePressure(pressureReasonHeldBytesLimit)
-			return w.adapter.Send(ctx, pkt)
+			return sendPacket(ctx, w.adapter, pkt)
 		}
 	}
 	if cfg.MaxReassemblyBytesPerWorker > 0 {
@@ -299,7 +299,7 @@ func (w *worker) handlePacket(ctx context.Context, pkt *packet.Packet) error {
 		limit := int64(cfg.MaxReassemblyBytesPerWorker)
 		if w.reassemblyBytes+need > limit {
 			w.notePressure(pressureReasonReassemblyBytesLimit)
-			return w.adapter.Send(ctx, pkt)
+			return sendPacket(ctx, w.adapter, pkt)
 		}
 	}
 
@@ -331,7 +331,7 @@ func (w *worker) handlePacket(ctx context.Context, pkt *packet.Packet) error {
 			if err := w.failOpenWithReason(ctx, key, st, failOpenReasonHeldBytesLimit); err != nil {
 				return err
 			}
-			return w.adapter.Send(ctx, pkt)
+			return sendPacket(ctx, w.adapter, pkt)
 		}
 	}
 	st.HeldPackets = append(st.HeldPackets, pkt)
@@ -590,7 +590,7 @@ func (w *worker) sendSegments(ctx context.Context, tpl *packet.Packet, baseSeq u
 		if err := w.adapter.CalcChecksums(newPkt); err != nil {
 			return err
 		}
-		if err := w.adapter.Send(ctx, newPkt); err != nil {
+		if err := sendPacket(ctx, w.adapter, newPkt); err != nil {
 			return err
 		}
 		offset += len(segPayload)
@@ -697,7 +697,7 @@ func (w *worker) reinjectTrimmed(ctx context.Context, st *flow.FlowState, window
 		if err := w.adapter.CalcChecksums(newPkt); err != nil {
 			return err
 		}
-		if err := w.adapter.Send(ctx, newPkt); err != nil {
+		if err := sendPacket(ctx, w.adapter, newPkt); err != nil {
 			return err
 		}
 	}
@@ -802,10 +802,15 @@ func (w *worker) failOpenWithReason(ctx context.Context, key flow.Key, st *flow.
 }
 
 func (w *worker) failOpen(ctx context.Context, key flow.Key, st *flow.FlowState) error {
-	for _, pkt := range st.HeldPackets {
-		if err := w.adapter.Send(ctx, pkt); err != nil {
+	for i, pkt := range st.HeldPackets {
+		if pkt == nil {
+			continue
+		}
+		if err := sendPacket(ctx, w.adapter, pkt); err != nil {
+			w.compactHeldPackets(st)
 			return err
 		}
+		w.consumeHeldPacket(st, i)
 	}
 	st.State = flow.StatePassThrough
 	w.clearCollectingState(st)
@@ -813,12 +818,51 @@ func (w *worker) failOpen(ctx context.Context, key flow.Key, st *flow.FlowState)
 }
 
 func (w *worker) dropHeld(ctx context.Context, st *flow.FlowState) error {
-	for _, pkt := range st.HeldPackets {
-		if err := w.adapter.Drop(ctx, pkt); err != nil {
+	for i, pkt := range st.HeldPackets {
+		if pkt == nil {
+			continue
+		}
+		if err := dropPacket(ctx, w.adapter, pkt); err != nil {
+			w.compactHeldPackets(st)
 			return err
 		}
+		w.consumeHeldPacket(st, i)
 	}
 	return nil
+}
+
+func (w *worker) consumeHeldPacket(st *flow.FlowState, idx int) {
+	if st == nil || idx < 0 || idx >= len(st.HeldPackets) {
+		return
+	}
+	pkt := st.HeldPackets[idx]
+	if pkt == nil {
+		return
+	}
+	w.heldBytes -= int64(len(pkt.Data))
+	if w.heldBytes < 0 {
+		w.heldBytes = 0
+	}
+	st.HeldPackets[idx] = nil
+	if st.Template == pkt {
+		st.Template = nil
+	}
+}
+
+func (w *worker) compactHeldPackets(st *flow.FlowState) {
+	if st == nil || len(st.HeldPackets) == 0 {
+		return
+	}
+	kept := st.HeldPackets[:0]
+	for _, pkt := range st.HeldPackets {
+		if pkt != nil {
+			kept = append(kept, pkt)
+		}
+	}
+	st.HeldPackets = kept
+	if st.Template == nil && len(kept) > 0 {
+		st.Template = kept[len(kept)-1]
+	}
 }
 
 func (w *worker) clearCollectingState(st *flow.FlowState) {
@@ -888,7 +932,7 @@ func (w *worker) shutdownFailOpen(ctx context.Context) error {
 		if maxPackets > 0 && flushed >= maxPackets {
 			return ErrShutdownFailOpenLimitReached
 		}
-		if err := w.adapter.Send(ctx, pkt); err != nil {
+		if err := sendPacket(ctx, w.adapter, pkt); err != nil {
 			return err
 		}
 		flushed++
@@ -906,8 +950,12 @@ func (w *worker) shutdownFailOpen(ctx context.Context) error {
 		if st == nil || len(st.HeldPackets) == 0 {
 			return
 		}
-		for _, pkt := range st.HeldPackets {
+		for i, pkt := range st.HeldPackets {
+			if pkt == nil {
+				continue
+			}
 			if err := reinject(pkt); err != nil {
+				w.compactHeldPackets(st)
 				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrShutdownFailOpenLimitReached) {
 					stop = true
 					stopErr = err
@@ -916,7 +964,12 @@ func (w *worker) shutdownFailOpen(ctx context.Context) error {
 				if firstErr == nil {
 					firstErr = err
 				}
+				return
 			}
+			w.consumeHeldPacket(st, i)
+		}
+		if len(st.HeldPackets) == 0 {
+			w.clearCollectingState(st)
 		}
 	})
 	if stopErr != nil {

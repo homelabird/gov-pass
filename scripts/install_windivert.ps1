@@ -47,22 +47,33 @@ $sysPath = (Resolve-Path $sysPath).Path
 
 function Normalize-BinPath([string]$Path) {
   $p = $Path.Trim()
-  if ($p.StartsWith('"') -and $p.EndsWith('"')) {
-    $p = $p.Trim('"')
-  }
   if ($p.StartsWith('\??\')) {
     $p = $p.Substring(4)
   }
-  $lower = $p.ToLowerInvariant()
-  $idx = $lower.IndexOf('.sys')
-  if ($idx -ge 0) {
-    return $p.Substring(0, $idx + 4)
+  if ([string]::IsNullOrWhiteSpace($p)) {
+    return ""
   }
-  $space = $p.IndexOf(' ')
-  if ($space -gt 0) {
-    return $p.Substring(0, $space)
+  if ($p.StartsWith('"')) {
+    $trimmed = $p.Substring(1)
+    $quote = $trimmed.IndexOf('"')
+    if ($quote -ge 0) {
+      return $trimmed.Substring(0, $quote).Trim()
+    }
+    return $trimmed.Trim()
   }
-  return $p
+
+  $parts = $p -split '\s+'
+  if ($parts.Count -eq 0) {
+    return ""
+  }
+  $candidate = $parts[0]
+  for ($i = 1; $i -lt $parts.Count; $i++) {
+    if ([string]::Equals([System.IO.Path]::GetExtension($candidate), ".sys", [System.StringComparison]::OrdinalIgnoreCase)) {
+      break
+    }
+    $candidate = "$candidate $($parts[$i])"
+  }
+  return $candidate
 }
 
 sc.exe query $ServiceName > $null 2>&1

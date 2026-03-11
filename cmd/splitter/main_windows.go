@@ -58,6 +58,7 @@ func run() error {
 	queueSize := flag.Uint("queue-size", uint(defaultQueueSize), "WinDivert queue size in bytes (0=driver default)")
 	driverDir := flag.String("windivert-dir", "", "directory containing WinDivert.dll/.sys/.cat (default: exe dir)")
 	driverSys := flag.String("windivert-sys", "", "driver sys filename (default: WinDivert64.sys or WinDivert.sys)")
+	allowServiceTakeover := flag.Bool("allow-service-takeover", false, "allow reconfiguring an existing WinDivert service that points to another valid driver path")
 	autoInstall := flag.Bool("auto-install", true, "auto install/start WinDivert driver")
 	autoUninstall := flag.Bool("auto-uninstall", true, "auto uninstall if installed by this run")
 	autoDownload := flag.Bool("auto-download-windivert", true, "auto download pinned WinDivert zip if required files are missing")
@@ -113,10 +114,11 @@ func run() error {
 		WinDivertDir: strings.TrimSpace(*driverDir),
 		WinDivertSys: strings.TrimSpace(*driverSys),
 
-		AutoInstall:   *autoInstall,
-		AutoUninstall: *autoUninstall,
-		AutoDownload:  *autoDownload,
-		ConfigPath:    strings.TrimSpace(*configPath),
+		AllowServiceTakeover: *allowServiceTakeover,
+		AutoInstall:          *autoInstall,
+		AutoUninstall:        *autoUninstall,
+		AutoDownload:         *autoDownload,
+		ConfigPath:           strings.TrimSpace(*configPath),
 	}
 
 	if *asService {
@@ -171,12 +173,13 @@ func runWindows(ctx context.Context, cfg engine.Config, wc windowsRunConfig) err
 	}
 
 	report, cleanup, err := driver.EnsureWithReport(ctx, driver.Config{
-		Dir:           driverDir,
-		SysName:       wc.WinDivertSys,
-		ServiceName:   wc.WinDivertSvcName,
-		AutoInstall:   wc.AutoInstallDriver,
-		AutoUninstall: wc.AutoUninstallDriver,
-		AutoStop:      true,
+		Dir:                  driverDir,
+		SysName:              wc.WinDivertSys,
+		ServiceName:          wc.WinDivertSvcName,
+		AllowServiceTakeover: wc.AllowServiceTakeover,
+		AutoInstall:          wc.AutoInstallDriver,
+		AutoUninstall:        wc.AutoUninstallDriver,
+		AutoStop:             true,
 	})
 	if err != nil {
 		logWinDivertReport(report)
@@ -229,12 +232,13 @@ func runWindowsService(ctx context.Context, args windowsCLIArgs, setFlags map[st
 
 	// Service mode: do not stop/uninstall the global WinDivert driver on shutdown.
 	report, cleanup, err := driver.EnsureWithReport(ctx, driver.Config{
-		Dir:           driverDir,
-		SysName:       wc.WinDivertSys,
-		ServiceName:   wc.WinDivertSvcName,
-		AutoInstall:   wc.AutoInstallDriver,
-		AutoUninstall: wc.AutoUninstallDriver,
-		AutoStop:      false,
+		Dir:                  driverDir,
+		SysName:              wc.WinDivertSys,
+		ServiceName:          wc.WinDivertSvcName,
+		AllowServiceTakeover: wc.AllowServiceTakeover,
+		AutoInstall:          wc.AutoInstallDriver,
+		AutoUninstall:        wc.AutoUninstallDriver,
+		AutoStop:             false,
 	})
 	if err != nil {
 		logWinDivertReport(report)

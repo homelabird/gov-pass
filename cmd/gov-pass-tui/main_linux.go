@@ -203,6 +203,7 @@ func clearTerminalScreen() {
 func collectTUIStatus(serviceName string) tuiStatus {
 	stateText, stateErr := serviceStatusText(serviceName)
 	enabled, enabledErr := isServiceEnabled(serviceName)
+	canReload, reloadErr := serviceCanReload(serviceName)
 	return newTUIStatus(tuiStatusInput{
 		Platform:     "Linux",
 		ServiceName:  serviceName,
@@ -211,10 +212,11 @@ func collectTUIStatus(serviceName string) tuiStatus {
 		ActiveKnown:  stateErr == nil && !strings.EqualFold(strings.TrimSpace(stateText), "unknown"),
 		Enabled:      enabled,
 		EnabledKnown: enabledErr == nil,
-		Capabilities: tuiCapabilities{Reload: true},
+		Capabilities: tuiCapabilities{Reload: canReload},
 	},
 		statusIssue{Label: "service", Err: stateErr},
 		statusIssue{Label: "boot", Err: enabledErr},
+		statusIssue{Label: "reload", Err: reloadErr},
 	)
 }
 
@@ -230,6 +232,15 @@ func runAction(serviceName string, action string) error {
 
 	switch normalized {
 	case "start", "stop", "restart", "reload", "enable", "disable":
+		if normalized == "reload" {
+			canReload, err := serviceCanReload(serviceName)
+			if err != nil {
+				return err
+			}
+			if !canReload {
+				return fmt.Errorf("reload is not available for %s", serviceName)
+			}
+		}
 		return elevatedSystemctl(normalized, serviceName)
 	case "toggle":
 		active, err := isServiceActive(serviceName)
@@ -278,6 +289,28 @@ func isServiceEnabled(serviceName string) (bool, error) {
 		return false, fmt.Errorf("systemctl is-enabled %s returned empty output", serviceName)
 	}
 	return false, fmt.Errorf("systemctl is-enabled %s returned unrecognized state: %s", serviceName, text)
+}
+
+func serviceCanReload(serviceName string) (bool, error) {
+	cmd, err := linuxSystemctlCmd("show", "--property=CanReload", "--value", serviceName)
+	if err != nil {
+		return false, err
+	}
+	out, err := cmd.CombinedOutput()
+	text := firstStatusLine(string(out))
+	switch text {
+	case "yes", "true", "1":
+		return true, nil
+	case "no", "false", "0":
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("systemctl show %s -p CanReload failed: %s", serviceName, nonEmpty(strings.TrimSpace(string(out)), err.Error()))
+	}
+	if text == "" {
+		return false, fmt.Errorf("systemctl show %s -p CanReload returned empty output", serviceName)
+	}
+	return false, fmt.Errorf("systemctl show %s -p CanReload returned unrecognized state: %s", serviceName, text)
 }
 
 func serviceStatusText(serviceName string) (string, error) {
