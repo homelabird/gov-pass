@@ -21,6 +21,12 @@ Core behavior:
 - while the split decision is pending, original packets are held
 - on split success, originals are dropped and split segments are emitted
 - on failure, held originals are released in order and the flow stays pass-through
+- ACK-only liveness updates fall back to the worker path when the lightweight
+  touch channel is full, so active flows do not age out spuriously
+- collect timeouts are enforced during worker GC even if a flow stops producing
+  new packets mid-collection
+- after split emission commits, held originals are detached before drop so
+  shutdown and fail-open recovery cannot re-emit them after a partial split
 - shutdown is bounded so stop paths cannot hang indefinitely under load
 
 The TLS decision requires a contiguous 5-byte record header plus the first

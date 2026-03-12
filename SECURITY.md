@@ -10,11 +10,23 @@ implemented in the repo.
 
 In scope:
 - Local machine threat model (unprivileged user trying to tamper with service state).
+- Untrusted outbound TCP/443 packet input, including malformed headers, partial
+  TLS records, and resource-pressure cases that must fail open instead of
+  wedging the host.
 - Operational safety: fail-open behavior, bounded shutdown, and rules cleanup.
 
 Out of scope:
 - Using this project as a security boundary or malware sandbox.
 - Protection against a fully privileged local attacker.
+
+Operational safety notes:
+- Active pass-through flows stay live even when the lightweight ACK touch path is
+  saturated; the engine falls back to a durable worker-queue update.
+- Collect timeouts are enforced during worker GC, so partially collected flows do
+  not linger indefinitely without fresh packets.
+- Once split emission commits, held originals are detached before drop so
+  shutdown or fail-open recovery cannot reinject them after partial split
+  success.
 
 ## Windows (WinDivert + Service)
 
@@ -51,6 +63,9 @@ Release integrity:
   `GOV_PASS_RELEASE_PUBKEY_PEM_B64`) before it will install a release artifact.
 - Published checksum manifests are shipped with detached signatures and the
   installer verifies the manifest signature before trusting any asset checksum.
+- The release bootstrap is still an operator-run shell script; treat it
+  separately from the steady-state privileged runtime and keep the signed-manifest
+  verification step in place.
 
 Operational guidance:
 - Treat `C:\ProgramData\gov-pass\config.json` as an admin-managed file.
@@ -81,6 +96,9 @@ External tool installation:
   dependency changes do not happen during steady-state service restarts.
 - Package-manager installs run with a minimal inherited environment to reduce
   unexpected influence from caller-controlled variables.
+- The trusted absolute-path lookup model applies to privileged runtime and TUI
+  helpers. Bootstrap installers remain operator-run setup scripts, not part of
+  the steady-state service path.
 
 Operational guidance:
 - Prefer `nftables`; use `iptables`/`ip6tables` fallback only where `nft` is not available.
