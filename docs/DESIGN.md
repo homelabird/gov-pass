@@ -1,67 +1,75 @@
-# Windows Design
+# Design
 
-This document covers the Windows-specific path. Shared engine behavior lives in
-[`DESIGN_COMMON.md`](DESIGN_COMMON.md).
+This document is the short architecture reference for `gov-pass`.
 
-## Data Path
+## Scope
 
-`WinDivert -> decoder -> flow shard -> reassembly -> TLS check -> split plan -> WinDivert send`
+- target: outbound TCP/443
+- strategy: split only the first TLS ClientHello record
+- fallback: fail open on parse error, timeout, malformed input, or resource pressure
 
-Non-target traffic bypasses reassembly immediately. ACK-only packets are
-fast-pathed. FIN and RST packets still go through workers so flow state is
-cleaned up promptly.
+## Shared Engine
 
-## Platform Defaults
+Data path:
 
-- filter: `outbound and (ip or ipv6) and tcp.DstPort == 443`
-- split mode: `tls-hello`
-- split chunk: `5`
-- queue length, time, and size are tuned for low-latency interception
+`adapter -> decoder -> flow shard -> reassembly -> TLS check -> split plan -> reinject or pass through`
 
-## Flow Handling
+Core behavior:
 
-- Packets are hashed to sharded workers by flow key.
-- Each worker owns reassembly state and held packets for its shard.
-- While collecting, original packets are held until the first TLS record is
-  either accepted for split or failed open.
+- flows are sharded by flow key so each worker owns its own reassembly state
+- only the first TLS record is inspected
+- while the split decision is pending, original packets are held
+- on split success, originals are dropped and split segments are emitted
+- on failure, held originals are released in order and the flow stays pass-through
+- shutdown is bounded so stop paths cannot hang indefinitely under load
 
-## Split And Reinjection
+The TLS decision requires a contiguous 5-byte record header plus the first
+handshake byte. The engine accepts only a valid TLS handshake record, waits for
+the full first record, then splits that record once. Everything after the first
+decision is pass-through.
 
-- Split only the first TLS record.
-- Preserve the original headers, ACK/window state, and TCP options.
-- Recompute lengths and checksums before `WinDivertSend`.
-- After a successful split, the flow moves to pass-through mode.
+## Windows
 
-## Fail-Open Rules
+Path:
 
-Fail open on:
+`WinDivert -> decoder -> engine -> WinDivert send`
 
-- invalid TLS header
-- timeout while collecting
-- buffer or held-packet limits
-- decode errors
-- malformed TCP/IP input
+Windows uses WinDivert for interception and reinjection. Interactive mode can
+install and remove WinDivert automatically. Service mode keeps config, logs,
+and driver state under `C:\ProgramData\gov-pass\`.
 
-Fail-open means the held originals are reinjected in order and the rest of the
-flow continues unchanged.
+Service reload uses `sc.exe control gov-pass paramchange`. Most `engine.*`
+settings reload in place. `engine.workers`, `engine.worker_queue_size`,
+`windivert_dir`, and `windivert_sys` remain restart-only. WinDivert filter and
+queue parameters reload by reopening or updating the active handle.
 
-## Service And Shutdown
+## Linux
 
-- Interactive mode can auto-install and auto-remove WinDivert.
-- Service mode keeps WinDivert and runtime state stable under
-  `C:\ProgramData\gov-pass\`.
-- Shutdown drains held work with explicit bounds and flushes adapter-level
-  pending packets best-effort before the handle closes.
+Path:
 
-## Reload Model
+`NFQUEUE -> decoder -> engine -> raw socket send`
 
-- `sc.exe control gov-pass paramchange` triggers config reload in service mode.
-- Most `engine.*` settings reload in place.
-- `engine.workers`, `engine.worker_queue_size`, `windivert_dir`, and
-  `windivert_sys` remain restart-only.
-- `windivert.filter` now reloads by reopening the WinDivert handle.
-- `windivert.queue_len`, `windivert.queue_time_ms`, and
-  `windivert.queue_size_bytes` reload in place for non-zero values and fall
-  back to driver defaults through the same handle reopen path when set to `0`.
+Linux binds outbound TCP/443 traffic to a dedicated NFQUEUE and tags reinjected
+packets so they bypass interception on the return path. Runtime helpers manage
+only `gov-pass` firewall rules and can disable offload features on the selected
+egress interface when needed.
 
-Use [`PACKAGING.md`](PACKAGING.md) for the current operator-facing matrix.
+The Linux service surface is systemd-based. Reload is supported only when the
+installed unit exposes a real reload action.
+
+## FreeBSD
+
+Status: usable, but still narrower than Linux and Windows.
+
+Path:
+
+`pf divert-to -> divert socket -> decoder -> engine -> reinject`
+
+FreeBSD relies on a dedicated `pf` anchor and helper scripts under
+[`pf/`](pf/). Operators still control when anchor rules are applied.
+
+Current limits:
+
+- reload is not supported; use restart flows
+- IPv6 divert handling is not a supported deployment target yet
+- `splitter --check` verifies prerequisites, not live `pf` policy correctness

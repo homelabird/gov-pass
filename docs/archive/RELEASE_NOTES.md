@@ -16,7 +16,7 @@ Highlights:
 - DoS guards: per-worker caps for flows/held/reassembly bytes (fail-open on pressure).
 - Windows service/MSI: auto-start service + Start Menu admin shortcuts + ProgramData config/log.
 - Windows UX: terminal TUI controller (`gov-pass-tui.exe`) to manage the `gov-pass` service.
-- Windows release signing: Authenticode-signed EXE/MSI in CI (see `docs/CODESIGNING.md`).
+- Windows release signing: Authenticode-signed EXE/MSI in CI (see `docs/MAINTAINERS.md`).
 - MSI uninstall cleanup options:
   - `GOVPASS_PURGE_PROGRAMDATA=1` to delete `C:\ProgramData\gov-pass\`
   - `GOVPASS_REMOVE_WINDIVERT=1` to stop/delete the global `WinDivert` service

@@ -44,7 +44,7 @@ go build -o dist\\gov-pass-tui.exe .\\cmd\\gov-pass-tui
 
 ### Windows (MSI)
 
-For MSI packaging details (CI and local WiX v6 build), see `docs/PACKAGING.md`.
+For MSI packaging details (CI, WiX, and signing), see `docs/MAINTAINERS.md`.
 
 ### Linux (NFQUEUE)
 

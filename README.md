@@ -89,9 +89,8 @@ sc.exe control gov-pass paramchange
 ```
 
 Use [`docs/examples/splitter.windows.json`](docs/examples/splitter.windows.json) as
-the service config template and `splitter.exe --print-reloadability` to see
-which settings are reloadable vs restart-only. [`docs/PACKAGING.md`](docs/PACKAGING.md)
-also carries the current reloadability matrix as an operator reference.
+the service config template and `splitter.exe --print-reloadability` to inspect
+restart-required settings on the current build.
 
 ### FreeBSD
 
@@ -108,10 +107,10 @@ sudo sysrc gov_pass_enable=YES
 sudo service gov-pass start
 ```
 
-Use [`docs/pf/`](docs/pf/) for anchor examples and
-[`docs/DESIGN_BSD.md`](docs/DESIGN_BSD.md) for the divert model. Current scope:
-reload is restart-only, `pf` policy remains operator-managed, and the current
-divert socket path should be treated as IPv4-only.
+Use [`docs/pf/`](docs/pf/) for anchor examples and [`docs/DESIGN.md`](docs/DESIGN.md)
+for the current FreeBSD caveats. Current scope: reload is restart-only, `pf`
+policy remains operator-managed, and the current divert socket path should be
+treated as IPv4-only.
 
 ## Manual Build
 
@@ -209,13 +208,10 @@ Run `splitter --help` for the full flag list on the current platform.
 
 ## Docs
 
-- [`docs/INDEX.md`](docs/INDEX.md): documentation map
 - [`SECURITY.md`](SECURITY.md): privilege model and hardening
-- [`docs/PACKAGING.md`](docs/PACKAGING.md): package and service layout
-- [`docs/DESIGN_COMMON.md`](docs/DESIGN_COMMON.md): shared engine behavior
-- [`docs/DESIGN.md`](docs/DESIGN.md): Windows design
-- [`docs/DESIGN_LINUX.md`](docs/DESIGN_LINUX.md): Linux design
-- [`docs/DESIGN_BSD.md`](docs/DESIGN_BSD.md): FreeBSD / pf design
+- [`CONTRIBUTING.md`](CONTRIBUTING.md): local build, test, and CI workflow
+- [`docs/DESIGN.md`](docs/DESIGN.md): runtime architecture and platform caveats
+- [`docs/MAINTAINERS.md`](docs/MAINTAINERS.md): release, packaging, and signing notes
 
 ## Development
 

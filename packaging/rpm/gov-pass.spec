@@ -68,7 +68,7 @@ fi
 
 %files
 %license LICENSE
-%doc README.md docs/PACKAGING.md docs/THIRD_PARTY_NOTICES.md
+%doc README.md docs/DESIGN.md docs/THIRD_PARTY_NOTICES.md
 %config(noreplace) %{_sysconfdir}/sysconfig/gov-pass
 %{_unitdir}/gov-pass.service
 %{_libexecdir}/%{name}/splitter
