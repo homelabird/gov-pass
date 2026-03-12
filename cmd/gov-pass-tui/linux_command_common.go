@@ -29,20 +29,22 @@ func lookTrustedLinuxTUICommand(name string) (string, bool) {
 		return "", false
 	}
 	if filepath.IsAbs(name) {
-		if isTrustedLinuxTUICommandPath(name) {
-			return filepath.Clean(name), true
+		if path, ok := canonicalTrustedCommandPath(name, trustedLinuxTUICommandDirs, isExecutableLinuxTUICommandFile); ok {
+			return path, true
 		}
 		return "", false
 	}
 	for _, dir := range trustedLinuxTUICommandDirs {
 		candidate := filepath.Join(dir, name)
-		if isExecutableLinuxTUICommandFile(candidate) {
-			return candidate, true
+		if path, ok := canonicalTrustedCommandPath(candidate, trustedLinuxTUICommandDirs, isExecutableLinuxTUICommandFile); ok {
+			return path, true
 		}
 	}
 	path, err := exec.LookPath(name)
-	if err == nil && isTrustedLinuxTUICommandPath(path) {
-		return filepath.Clean(path), true
+	if err == nil {
+		if trustedPath, ok := canonicalTrustedCommandPath(path, trustedLinuxTUICommandDirs, isExecutableLinuxTUICommandFile); ok {
+			return trustedPath, true
+		}
 	}
 	return "", false
 }
@@ -55,16 +57,8 @@ func resolveTrustedLinuxTUICommand(name string) (string, error) {
 }
 
 func isTrustedLinuxTUICommandPath(path string) bool {
-	clean := filepath.Clean(strings.TrimSpace(path))
-	if !filepath.IsAbs(clean) {
-		return false
-	}
-	for _, dir := range trustedLinuxTUICommandDirs {
-		if filepath.Dir(clean) == filepath.Clean(dir) && isExecutableLinuxTUICommandFile(clean) {
-			return true
-		}
-	}
-	return false
+	_, ok := canonicalTrustedCommandPath(path, trustedLinuxTUICommandDirs, isExecutableLinuxTUICommandFile)
+	return ok
 }
 
 func isExecutableLinuxTUICommandFile(path string) bool {

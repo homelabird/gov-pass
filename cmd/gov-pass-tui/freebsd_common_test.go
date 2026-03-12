@@ -67,3 +67,26 @@ func TestLookTrustedFreeBSDCommand_UsesTrustedAbsoluteDir(t *testing.T) {
 		t.Fatalf("lookTrustedFreeBSDCommand returned %q, want %q", got, cmd)
 	}
 }
+
+func TestLookTrustedFreeBSDCommand_RejectsSymlinkOutsideTrustedDir(t *testing.T) {
+	trustedDir := t.TempDir()
+	outsideDir := t.TempDir()
+	target := filepath.Join(outsideDir, "service")
+	if err := os.WriteFile(target, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write target command: %v", err)
+	}
+	link := filepath.Join(trustedDir, "service")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatalf("create symlink: %v", err)
+	}
+
+	origDirs := trustedFreeBSDCommandDirs
+	trustedFreeBSDCommandDirs = []string{trustedDir}
+	defer func() {
+		trustedFreeBSDCommandDirs = origDirs
+	}()
+
+	if got, ok := lookTrustedFreeBSDCommand("service"); ok {
+		t.Fatalf("expected symlink target outside trusted dir to be rejected, got %q", got)
+	}
+}

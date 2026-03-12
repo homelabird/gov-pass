@@ -125,3 +125,29 @@ func TestWorkerShutdownFailOpen_CanceledContext(t *testing.T) {
 		t.Fatalf("send count: got %d, want %d", got, want)
 	}
 }
+
+func TestWorkerShutdownFailOpen_StopsOnQueuedSendError(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.ShutdownFailOpenMaxPackets = 10
+	ad := &failOnSendAdapter{failAt: 1}
+	w := newWorker(0, cfg, ad, newStats())
+
+	p1 := &packet.Packet{Data: []byte{1}}
+	p2 := &packet.Packet{Data: []byte{2}}
+	w.in <- p1
+	w.in <- p2
+
+	err := w.shutdownFailOpen(context.Background())
+	if err == nil || err.Error() != "send failed" {
+		t.Fatalf("shutdownFailOpen error = %v, want send failed", err)
+	}
+	if got, want := ad.sendCount, 1; got != want {
+		t.Fatalf("send count = %d, want %d", got, want)
+	}
+	if got, want := len(w.in), 1; got != want {
+		t.Fatalf("remaining queue len = %d, want %d", got, want)
+	}
+	if got := <-w.in; got != p2 {
+		t.Fatalf("remaining queued packet = %p, want %p", got, p2)
+	}
+}

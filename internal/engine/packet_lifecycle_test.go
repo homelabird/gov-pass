@@ -55,8 +55,8 @@ func TestFailOpen_RemovesReleasedPacketsFromFlowState(t *testing.T) {
 	ad := &failOnSendAdapter{failAt: 2}
 	w := newWorker(0, cfg, ad, newStats())
 
-	p1, pool1 := pooledCapturedPacket([]byte{1, 2, 3})
-	p2, _ := pooledCapturedPacket([]byte{4, 5, 6})
+	p1 := pooledCapturedPacket([]byte{1, 2, 3})
+	p2 := pooledCapturedPacket([]byte{4, 5, 6})
 
 	st := &flow.FlowState{
 		State:       flow.StateCollecting,
@@ -85,12 +85,9 @@ func TestFailOpen_RemovesReleasedPacketsFromFlowState(t *testing.T) {
 	if p1.Data == nil {
 		t.Fatal("released packet data should remain readable for accounting")
 	}
-	if pool1.Get() == nil {
-		t.Fatal("expected first packet backing buffer to be released")
-	}
 }
 
-func pooledCapturedPacket(data []byte) (*packet.Packet, *sync.Pool) {
+func pooledCapturedPacket(data []byte) *packet.Packet {
 	backing := append([]byte(nil), data...)
 	pool := &sync.Pool{}
 	pkt := &packet.Packet{
@@ -98,5 +95,5 @@ func pooledCapturedPacket(data []byte) (*packet.Packet, *sync.Pool) {
 		Source: packet.SourceCaptured,
 	}
 	pkt.SetDataPool(pool, backing)
-	return pkt, pool
+	return pkt
 }

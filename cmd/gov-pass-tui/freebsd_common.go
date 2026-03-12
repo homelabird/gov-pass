@@ -49,20 +49,22 @@ func lookTrustedFreeBSDCommand(name string) (string, bool) {
 		return "", false
 	}
 	if filepath.IsAbs(name) {
-		if isTrustedFreeBSDCommandPath(name) {
-			return filepath.Clean(name), true
+		if path, ok := canonicalTrustedCommandPath(name, trustedFreeBSDCommandDirs, isExecutableFreeBSDCommandFile); ok {
+			return path, true
 		}
 		return "", false
 	}
 	for _, dir := range trustedFreeBSDCommandDirs {
 		candidate := filepath.Join(dir, name)
-		if isExecutableFreeBSDCommandFile(candidate) {
-			return candidate, true
+		if path, ok := canonicalTrustedCommandPath(candidate, trustedFreeBSDCommandDirs, isExecutableFreeBSDCommandFile); ok {
+			return path, true
 		}
 	}
 	path, err := exec.LookPath(name)
-	if err == nil && isTrustedFreeBSDCommandPath(path) {
-		return filepath.Clean(path), true
+	if err == nil {
+		if trustedPath, ok := canonicalTrustedCommandPath(path, trustedFreeBSDCommandDirs, isExecutableFreeBSDCommandFile); ok {
+			return trustedPath, true
+		}
 	}
 	return "", false
 }
@@ -75,16 +77,8 @@ func resolveTrustedFreeBSDCommand(name string) (string, error) {
 }
 
 func isTrustedFreeBSDCommandPath(path string) bool {
-	clean := filepath.Clean(strings.TrimSpace(path))
-	if !filepath.IsAbs(clean) {
-		return false
-	}
-	for _, dir := range trustedFreeBSDCommandDirs {
-		if filepath.Dir(clean) == filepath.Clean(dir) && isExecutableFreeBSDCommandFile(clean) {
-			return true
-		}
-	}
-	return false
+	_, ok := canonicalTrustedCommandPath(path, trustedFreeBSDCommandDirs, isExecutableFreeBSDCommandFile)
+	return ok
 }
 
 func isExecutableFreeBSDCommandFile(path string) bool {

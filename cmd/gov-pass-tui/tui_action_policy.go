@@ -25,16 +25,7 @@ type tuiAction struct {
 }
 
 func tuiActionsForStatus(status tuiStatus) []tuiAction {
-	serviceLabel := "Toggle service"
-	serviceDetail := "Query the current state and start or stop the service."
-	if status.ActiveKnown {
-		serviceLabel = "Start service"
-		serviceDetail = "Start the service without changing boot mode."
-		if status.Active {
-			serviceLabel = "Stop service"
-			serviceDetail = "Stop the service without changing boot mode."
-		}
-	}
+	serviceLabel, serviceDetail := serviceTogglePresentation(status)
 
 	bootLabel := "Toggle boot"
 	bootDetail := "Query the current boot setting and enable or disable startup."
@@ -168,6 +159,12 @@ func resolveTUIAction(status tuiStatus, choice string) (tuiAction, error) {
 }
 
 func resolveServiceToggleAction(serviceName string, status tuiStatus) (string, error) {
+	if serviceStateBusy(status.RawState) {
+		return "", fmt.Errorf("service is %s; refresh and retry", strings.ToLower(humanizeStateLabel(status.RawState)))
+	}
+	if action, ok := knownServiceToggleAction(status.RawState); ok {
+		return action, nil
+	}
 	if status.ActiveKnown {
 		if status.Active {
 			return "stop", nil
@@ -183,6 +180,45 @@ func resolveServiceToggleAction(serviceName string, status tuiStatus) (string, e
 		return "stop", nil
 	}
 	return "start", nil
+}
+
+func serviceTogglePresentation(status tuiStatus) (string, string) {
+	if serviceStateBusy(status.RawState) {
+		return "Service busy", "Wait for the current service transition to finish before toggling."
+	}
+	if action, ok := knownServiceToggleAction(status.RawState); ok {
+		if action == "stop" {
+			return "Stop service", "Stop the service without changing boot mode."
+		}
+		return "Start service", "Start the service without changing boot mode."
+	}
+	if status.ActiveKnown {
+		if status.Active {
+			return "Stop service", "Stop the service without changing boot mode."
+		}
+		return "Start service", "Start the service without changing boot mode."
+	}
+	return "Toggle service", "Query the current state and start or stop the service."
+}
+
+func knownServiceToggleAction(rawState string) (string, bool) {
+	switch normalizeStatusState(rawState) {
+	case "active", "running":
+		return "stop", true
+	case "inactive", "stopped", "failed":
+		return "start", true
+	default:
+		return "", false
+	}
+}
+
+func serviceStateBusy(rawState string) bool {
+	switch normalizeStatusState(rawState) {
+	case "activating", "deactivating", "reloading", "refreshing", "start-pending", "stop-pending", "continue-pending", "pause-pending", "paused", "maintenance":
+		return true
+	default:
+		return false
+	}
 }
 
 func resolveBootToggleAction(serviceName string, status tuiStatus) (string, error) {

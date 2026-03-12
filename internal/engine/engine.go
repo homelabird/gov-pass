@@ -227,13 +227,24 @@ func (e *Engine) recvLoop(ctx context.Context) error {
 				continue
 			}
 
-			// Avoid enqueueing ACK-only packets through the worker queue. Instead,
-			// pass-through immediately and best-effort "touch" the flow so GC does
-			// not evict active connections and accidentally re-process them later.
+			// Avoid enqueueing ACK-only packets through the worker queue when the
+			// touch side-channel has capacity. If it is saturated, fall back to the
+			// worker queue so active pass-through flows still refresh LastActive.
 			idx := e.sharder.Index(key)
-			e.workers[idx].touchFlow(key)
-			if sendErr := sendPacket(ctx, e.adapter, pkt); sendErr != nil {
-				return sendErr
+			if e.workers[idx].touchFlow(key) {
+				if sendErr := sendPacket(ctx, e.adapter, pkt); sendErr != nil {
+					return sendErr
+				}
+				continue
+			}
+			if err := e.workers[idx].enqueue(ctx, pkt); err != nil {
+				if errors.Is(err, context.Canceled) {
+					if sendErr := sendPacket(context.Background(), e.adapter, pkt); sendErr != nil {
+						return sendErr
+					}
+					continue
+				}
+				return err
 			}
 			continue
 		}
