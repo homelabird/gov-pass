@@ -15,22 +15,27 @@ func applyEngineJSONConfig(dst *engine.Config, cfg *engineJSONConfig) error {
 	if dst == nil || cfg == nil {
 		return nil
 	}
-	if cfg.SplitMode != nil && strings.TrimSpace(*cfg.SplitMode) != "" {
-		mode, err := parseSplitMode(*cfg.SplitMode)
-		if err != nil {
-			return fmt.Errorf("engine.split_mode: %w", err)
+	if cfg.SplitMode != nil {
+		value := strings.TrimSpace(*cfg.SplitMode)
+		if value != "" {
+			mode, err := parseSplitMode(value)
+			if err != nil {
+				return fmt.Errorf("engine.split_mode: %w", err)
+			}
+			dst.SplitMode = mode
 		}
-		dst.SplitMode = mode
 	}
 	if cfg.SplitChunk != nil {
 		dst.SplitChunk = *cfg.SplitChunk
 	}
-	if cfg.CollectTimeout != nil && strings.TrimSpace(*cfg.CollectTimeout) != "" {
-		d, err := time.ParseDuration(*cfg.CollectTimeout)
+	if cfg.CollectTimeout != nil {
+		d, err := parseOptionalDuration("engine.collect_timeout", *cfg.CollectTimeout)
 		if err != nil {
-			return fmt.Errorf("engine.collect_timeout: %w", err)
+			return err
 		}
-		dst.CollectTimeout = d
+		if d != nil {
+			dst.CollectTimeout = *d
+		}
 	}
 	if cfg.MaxBufferBytes != nil {
 		dst.MaxBufferBytes = *cfg.MaxBufferBytes
@@ -44,19 +49,23 @@ func applyEngineJSONConfig(dst *engine.Config, cfg *engineJSONConfig) error {
 	if cfg.Workers != nil {
 		dst.WorkerCount = *cfg.Workers
 	}
-	if cfg.FlowIdleTimeout != nil && strings.TrimSpace(*cfg.FlowIdleTimeout) != "" {
-		d, err := time.ParseDuration(*cfg.FlowIdleTimeout)
+	if cfg.FlowIdleTimeout != nil {
+		d, err := parseOptionalDuration("engine.flow_idle_timeout", *cfg.FlowIdleTimeout)
 		if err != nil {
-			return fmt.Errorf("engine.flow_idle_timeout: %w", err)
+			return err
 		}
-		dst.FlowIdleTimeout = d
+		if d != nil {
+			dst.FlowIdleTimeout = *d
+		}
 	}
-	if cfg.GCInterval != nil && strings.TrimSpace(*cfg.GCInterval) != "" {
-		d, err := time.ParseDuration(*cfg.GCInterval)
+	if cfg.GCInterval != nil {
+		d, err := parseOptionalDuration("engine.gc_interval", *cfg.GCInterval)
 		if err != nil {
-			return fmt.Errorf("engine.gc_interval: %w", err)
+			return err
 		}
-		dst.GCInterval = d
+		if d != nil {
+			dst.GCInterval = *d
+		}
 	}
 	if cfg.MaxFlowsPerWorker != nil {
 		dst.MaxFlowsPerWorker = *cfg.MaxFlowsPerWorker
@@ -67,22 +76,26 @@ func applyEngineJSONConfig(dst *engine.Config, cfg *engineJSONConfig) error {
 	if cfg.MaxHeldBytesPerWorker != nil {
 		dst.MaxHeldBytesPerWorker = *cfg.MaxHeldBytesPerWorker
 	}
-	if cfg.ShutdownFailOpenTimeout != nil && strings.TrimSpace(*cfg.ShutdownFailOpenTimeout) != "" {
-		d, err := time.ParseDuration(*cfg.ShutdownFailOpenTimeout)
+	if cfg.ShutdownFailOpenTimeout != nil {
+		d, err := parseOptionalDuration("engine.shutdown_fail_open_timeout", *cfg.ShutdownFailOpenTimeout)
 		if err != nil {
-			return fmt.Errorf("engine.shutdown_fail_open_timeout: %w", err)
+			return err
 		}
-		dst.ShutdownFailOpenTimeout = d
+		if d != nil {
+			dst.ShutdownFailOpenTimeout = *d
+		}
 	}
 	if cfg.ShutdownFailOpenMaxPackets != nil {
 		dst.ShutdownFailOpenMaxPackets = *cfg.ShutdownFailOpenMaxPackets
 	}
-	if cfg.AdapterFlushTimeout != nil && strings.TrimSpace(*cfg.AdapterFlushTimeout) != "" {
-		d, err := time.ParseDuration(*cfg.AdapterFlushTimeout)
+	if cfg.AdapterFlushTimeout != nil {
+		d, err := parseOptionalDuration("engine.adapter_flush_timeout", *cfg.AdapterFlushTimeout)
 		if err != nil {
-			return fmt.Errorf("engine.adapter_flush_timeout: %w", err)
+			return err
 		}
-		dst.AdapterFlushTimeout = d
+		if d != nil {
+			dst.AdapterFlushTimeout = *d
+		}
 	}
 	if cfg.Policies != nil {
 		policies, err := parseEnginePolicies(cfg.Policies)

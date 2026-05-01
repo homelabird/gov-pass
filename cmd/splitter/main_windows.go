@@ -422,17 +422,6 @@ func logWinDivertReport(report driver.Report) {
 	)
 }
 
-func parseSplitMode(value string) (engine.SplitMode, error) {
-	switch strings.ToLower(value) {
-	case "immediate":
-		return engine.SplitModeImmediate, nil
-	case "tls-hello":
-		return engine.SplitModeTLSHello, nil
-	default:
-		return engine.SplitModeTLSHello, errors.New("expected tls-hello or immediate")
-	}
-}
-
 func printWindowsReloadability(w io.Writer) {
 	if w == nil {
 		return

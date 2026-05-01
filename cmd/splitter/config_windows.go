@@ -207,8 +207,11 @@ func applyWindowsJSONConfig(dstEngine *engine.Config, dstWin *windowsRunConfig, 
 	}
 
 	if cfg.WinDivert != nil {
-		if cfg.WinDivert.Filter != nil && strings.TrimSpace(*cfg.WinDivert.Filter) != "" {
-			dstWin.Filter = upgradeLegacyWinDivertFilter(*cfg.WinDivert.Filter)
+		if cfg.WinDivert.Filter != nil {
+			filter := strings.TrimSpace(*cfg.WinDivert.Filter)
+			if filter != "" {
+				dstWin.Filter = upgradeLegacyWinDivertFilter(filter)
+			}
 		}
 		if cfg.WinDivert.QueueLen != nil {
 			dstWin.AdapterOpts.QueueLen = *cfg.WinDivert.QueueLen
@@ -472,7 +475,7 @@ func effectiveWindowsConfig(args windowsCLIArgs, setFlags map[string]bool, asSer
 		wc.StatsInterval = args.StatsInterval
 	}
 	if setFlags["filter"] {
-		wc.Filter = args.Filter
+		wc.Filter = strings.TrimSpace(args.Filter)
 	}
 	if setFlags["queue-len"] {
 		wc.AdapterOpts.QueueLen = args.QueueLen

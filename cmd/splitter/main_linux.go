@@ -624,17 +624,6 @@ func runLinuxPreflight(autoInstall bool, needs linuxToolNeeds, requireRoot bool,
 	return nil
 }
 
-func parseSplitMode(value string) (engine.SplitMode, error) {
-	switch strings.ToLower(value) {
-	case "immediate":
-		return engine.SplitModeImmediate, nil
-	case "tls-hello":
-		return engine.SplitModeTLSHello, nil
-	default:
-		return engine.SplitModeTLSHello, errors.New("expected tls-hello or immediate")
-	}
-}
-
 type ruleOptions struct {
 	QueueNum        uint16
 	Mark            uint32

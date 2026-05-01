@@ -42,6 +42,9 @@ func readJSONConfigFile(path string) ([]byte, error) {
 }
 
 func decodeStrictJSONConfig(data []byte, dst any) error {
+	if err := rejectDuplicateJSONFields(data); err != nil {
+		return err
+	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
@@ -54,6 +57,90 @@ func decodeStrictJSONConfig(data []byte, dst any) error {
 		return err
 	}
 	return nil
+}
+
+func rejectDuplicateJSONFields(data []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	if err := scanJSONValueForDuplicateFields(dec, "$"); err != nil {
+		return err
+	}
+	if tok, err := dec.Token(); err != io.EOF {
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("unexpected trailing JSON value after %v", tok)
+	}
+	return nil
+}
+
+func scanJSONValueForDuplicateFields(dec *json.Decoder, path string) error {
+	tok, err := dec.Token()
+	if err != nil {
+		return err
+	}
+	delim, ok := tok.(json.Delim)
+	if !ok {
+		return nil
+	}
+
+	switch delim {
+	case '{':
+		keys := make(map[string]struct{})
+		for dec.More() {
+			keyTok, err := dec.Token()
+			if err != nil {
+				return err
+			}
+			key, ok := keyTok.(string)
+			if !ok {
+				return fmt.Errorf("%s: expected object key, got %T", path, keyTok)
+			}
+			if _, exists := keys[key]; exists {
+				return fmt.Errorf("%s: duplicate field %q", path, key)
+			}
+			keys[key] = struct{}{}
+			if err := scanJSONValueForDuplicateFields(dec, jsonChildPath(path, key)); err != nil {
+				return err
+			}
+		}
+		endTok, err := dec.Token()
+		if err != nil {
+			return err
+		}
+		if endTok != json.Delim('}') {
+			return fmt.Errorf("%s: expected object end, got %v", path, endTok)
+		}
+	case '[':
+		for i := 0; dec.More(); i++ {
+			if err := scanJSONValueForDuplicateFields(dec, fmt.Sprintf("%s[%d]", path, i)); err != nil {
+				return err
+			}
+		}
+		endTok, err := dec.Token()
+		if err != nil {
+			return err
+		}
+		if endTok != json.Delim(']') {
+			return fmt.Errorf("%s: expected array end, got %v", path, endTok)
+		}
+	default:
+		return fmt.Errorf("%s: unexpected JSON delimiter %q", path, delim)
+	}
+	return nil
+}
+
+func jsonChildPath(path string, key string) string {
+	if path == "" {
+		return key
+	}
+	if key == "" {
+		return path + `[""]`
+	}
+	if strings.ContainsAny(key, ".[]") {
+		return fmt.Sprintf("%s[%q]", path, key)
+	}
+	return path + "." + key
 }
 
 type engineJSONConfig struct {

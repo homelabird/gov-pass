@@ -8,9 +8,11 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestConfigSchemasValidateExamples(t *testing.T) {
@@ -53,6 +55,40 @@ func TestConfigSchemasValidateExamples(t *testing.T) {
 		if !seenExamples[platform] {
 			t.Fatalf("%s has no matching example config", schemaPath)
 		}
+	}
+}
+
+func TestValidateJSONSchemaSubsetEnforcesStringConstraints(t *testing.T) {
+	schema := map[string]any{
+		"type":      "string",
+		"minLength": json.Number("2"),
+		"maxLength": json.Number("3"),
+		"pattern":   "^[a-z]+$",
+	}
+
+	if err := validateJSONSchemaSubset("abc", schema, "schema.json", nil, "$"); err != nil {
+		t.Fatalf("expected valid constrained string: %v", err)
+	}
+	if err := validateJSONSchemaSubset("a", schema, "schema.json", nil, "$"); err == nil || !strings.Contains(err.Error(), "minLength") {
+		t.Fatalf("expected minLength error, got %v", err)
+	}
+	if err := validateJSONSchemaSubset("abcd", schema, "schema.json", nil, "$"); err == nil || !strings.Contains(err.Error(), "maxLength") {
+		t.Fatalf("expected maxLength error, got %v", err)
+	}
+	if err := validateJSONSchemaSubset("ABC", schema, "schema.json", nil, "$"); err == nil || !strings.Contains(err.Error(), "pattern") {
+		t.Fatalf("expected pattern error, got %v", err)
+	}
+}
+
+func TestDecodeJSONDocumentRejectsDuplicateFields(t *testing.T) {
+	_, err := decodeJSONDocument([]byte(`{
+		"engine": {
+			"split_mode": "tls-hello",
+			"split_mode": "immediate"
+		}
+	}`))
+	if err == nil || !strings.Contains(err.Error(), `$.engine: duplicate field "split_mode"`) {
+		t.Fatalf("expected duplicate field error, got %v", err)
 	}
 }
 
@@ -151,16 +187,27 @@ func decodeJSONFile(t *testing.T, path string) any {
 		t.Fatalf("read %s: %v", path, err)
 	}
 
-	dec := json.NewDecoder(bytes.NewReader(b))
+	value, err := decodeJSONDocument(b)
+	if err != nil {
+		t.Fatalf("decode %s: %v", path, err)
+	}
+	return value
+}
+
+func decodeJSONDocument(data []byte) (any, error) {
+	if err := rejectDuplicateJSONFields(data); err != nil {
+		return nil, err
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.UseNumber()
 	var value any
 	if err := dec.Decode(&value); err != nil {
-		t.Fatalf("decode %s: %v", path, err)
+		return nil, err
 	}
 	if err := dec.Decode(&struct{}{}); err != io.EOF {
-		t.Fatalf("decode %s: unexpected trailing JSON", path)
+		return nil, fmt.Errorf("unexpected trailing JSON")
 	}
-	return value
+	return value, nil
 }
 
 func validateJSONSchemaSubset(value any, schema any, schemaPath string, schemas map[string]any, instancePath string) error {
@@ -222,10 +269,11 @@ func validateJSONSchemaSubset(value any, schema any, schemaPath string, schemas 
 		}
 		return validateNumberBounds(num, schemaObj, instancePath)
 	case "string":
-		if _, ok := value.(string); !ok {
+		text, ok := value.(string)
+		if !ok {
 			return fmt.Errorf("%s: expected string, got %T", instancePath, value)
 		}
-		return nil
+		return validateStringConstraints(text, schemaObj, instancePath)
 	default:
 		return fmt.Errorf("%s: unsupported schema type %q", instancePath, typeName)
 	}
@@ -364,6 +412,37 @@ func validateNumberBounds(num json.Number, schemaObj map[string]any, instancePat
 	return nil
 }
 
+func validateStringConstraints(value string, schemaObj map[string]any, instancePath string) error {
+	length := utf8.RuneCountInString(value)
+	if minimum, ok, err := schemaInteger(schemaObj, "minLength"); err != nil {
+		return fmt.Errorf("%s: %w", instancePath, err)
+	} else if ok && length < minimum {
+		return fmt.Errorf("%s: string length %d is less than minLength %d", instancePath, length, minimum)
+	}
+	if maximum, ok, err := schemaInteger(schemaObj, "maxLength"); err != nil {
+		return fmt.Errorf("%s: %w", instancePath, err)
+	} else if ok && length > maximum {
+		return fmt.Errorf("%s: string length %d is greater than maxLength %d", instancePath, length, maximum)
+	}
+
+	rawPattern, ok := schemaObj["pattern"]
+	if !ok {
+		return nil
+	}
+	pattern, ok := rawPattern.(string)
+	if !ok {
+		return fmt.Errorf("%s: pattern must be a string", instancePath)
+	}
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return fmt.Errorf("%s: invalid pattern %q: %w", instancePath, pattern, err)
+	}
+	if !re.MatchString(value) {
+		return fmt.Errorf("%s: string does not match pattern %q", instancePath, pattern)
+	}
+	return nil
+}
+
 func schemaNumber(schemaObj map[string]any, key string) (float64, bool, error) {
 	raw, ok := schemaObj[key]
 	if !ok {
@@ -378,6 +457,28 @@ func schemaNumber(schemaObj map[string]any, key string) (float64, bool, error) {
 		return 0, false, fmt.Errorf("%s is invalid: %w", key, err)
 	}
 	return value, true, nil
+}
+
+func schemaInteger(schemaObj map[string]any, key string) (int, bool, error) {
+	raw, ok := schemaObj[key]
+	if !ok {
+		return 0, false, nil
+	}
+	num, ok := raw.(json.Number)
+	if !ok {
+		return 0, false, fmt.Errorf("%s is not numeric", key)
+	}
+	value, err := strconv.ParseInt(num.String(), 10, 64)
+	if err != nil {
+		return 0, false, fmt.Errorf("%s is invalid: %w", key, err)
+	}
+	if value < 0 {
+		return 0, false, fmt.Errorf("%s must be non-negative", key)
+	}
+	if int64(int(value)) != value {
+		return 0, false, fmt.Errorf("%s is too large", key)
+	}
+	return int(value), true, nil
 }
 
 func jsonNumberIsInteger(num json.Number) bool {
