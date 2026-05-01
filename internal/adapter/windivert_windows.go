@@ -14,6 +14,7 @@ import (
 	"unsafe"
 
 	"fk-gov/internal/packet"
+	"golang.org/x/sys/windows"
 )
 
 const (
@@ -64,8 +65,23 @@ func ConfigureWinDivertDLL(path string) error {
 	if abs == "" {
 		return fmt.Errorf("WinDivert.dll path is empty")
 	}
-	if _, err := os.Stat(abs); err != nil {
+	info, err := os.Lstat(abs)
+	if err != nil {
 		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("WinDivert.dll path must not be a symlink: %s", abs)
+	}
+	if unsafePath, err := winDivertDLLPathHasReparsePoint(abs); err != nil {
+		return err
+	} else if unsafePath {
+		return fmt.Errorf("WinDivert.dll path must not be a reparse point: %s", abs)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("WinDivert.dll path must be a regular file: %s", abs)
+	}
+	if !strings.EqualFold(filepath.Base(abs), "WinDivert.dll") {
+		return fmt.Errorf("WinDivert.dll path must end with WinDivert.dll: %s", abs)
 	}
 
 	winDivertDLLMu.Lock()
@@ -90,6 +106,18 @@ func ConfigureWinDivertDLL(path string) error {
 	procChecksums = dll.NewProc("WinDivertHelperCalcChecksums")
 	procSetParam = dll.NewProc("WinDivertSetParam")
 	return nil
+}
+
+func winDivertDLLPathHasReparsePoint(path string) (bool, error) {
+	ptr, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return false, err
+	}
+	attrs, err := windows.GetFileAttributes(ptr)
+	if err != nil {
+		return false, err
+	}
+	return attrs&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0, nil
 }
 
 func NewWinDivert(filter string, opts WinDivertOptions) (*WinDivertAdapter, error) {
@@ -293,26 +321,28 @@ func (w *WinDivertAdapter) Flush(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	select {
-	case <-loopDone:
-	case <-ctx.Done():
-		// Continue draining what we already have, but surface timeout/cancel.
+	if loopDone != nil {
+		select {
+		case <-loopDone:
+		case <-ctx.Done():
+			// Continue draining what we already have, but surface timeout/cancel.
+		}
 	}
 
 	var firstErr error
 	for {
 		select {
-			case pkt := <-w.recv:
-				if pkt == nil {
-					continue
+		case pkt := <-w.recv:
+			if pkt == nil {
+				continue
+			}
+			if err := w.Send(context.Background(), pkt); err != nil {
+				if firstErr == nil {
+					firstErr = err
 				}
-				if err := w.Send(context.Background(), pkt); err != nil {
-					if firstErr == nil {
-						firstErr = err
-					}
-				} else {
-					pkt.Release()
-				}
+			} else {
+				pkt.Release()
+			}
 		default:
 			if firstErr == nil && ctx.Err() != nil {
 				return ctx.Err()

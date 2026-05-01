@@ -3,35 +3,40 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"golang.org/x/sys/windows"
 )
 
 var (
-	windowsCommandLookPath    = exec.LookPath
-	windowsCommandStat        = os.Stat
-	windowsSystemRootProvider = defaultWindowsSystemRoot
+	windowsCommandStat              = os.Stat
+	windowsCommandGetFileAttributes = windows.GetFileAttributes
+	windowsCommandDirsProvider      = defaultWindowsCommandDirs
 )
 
-func defaultWindowsSystemRoot() string {
-	if root := strings.TrimSpace(os.Getenv("SystemRoot")); root != "" {
-		return root
+func defaultWindowsCommandDirs() []string {
+	sysDir, err := windows.GetSystemDirectory()
+	if err != nil {
+		return nil
 	}
-	return strings.TrimSpace(os.Getenv("windir"))
+	sysDir = filepath.Clean(strings.TrimSpace(sysDir))
+	if sysDir == "" || sysDir == "." {
+		return nil
+	}
+	dirs := []string{sysDir}
+	root := filepath.Dir(sysDir)
+	if root != "" && root != "." {
+		dirs = append(dirs, filepath.Clean(filepath.Join(root, "Sysnative")))
+	}
+	return dirs
 }
 
 func trustedWindowsCommandDirs() []string {
-	root := windowsSystemRootProvider()
-	if root == "" {
-		return nil
-	}
-	return []string{
-		filepath.Clean(filepath.Join(root, "System32")),
-		filepath.Clean(filepath.Join(root, "Sysnative")),
-	}
+	return windowsCommandDirsProvider()
 }
 
 func resolveTrustedWindowsCommand(name string) (string, error) {
@@ -45,24 +50,27 @@ func resolveTrustedWindowsCommand(name string) (string, error) {
 		}
 		return "", fmt.Errorf("%s is outside trusted command directories", name)
 	}
+	if !isBareTrustedCommandName(name) {
+		return "", fmt.Errorf("command name must be a bare filename: %s", name)
+	}
 	for _, dir := range trustedWindowsCommandDirs() {
 		if dir == "" {
 			continue
 		}
 		candidate := filepath.Join(dir, name)
-		if isExecutableWindowsCommandFile(candidate) {
+		if ok, err := isSafeExecutableWindowsCommandFile(candidate); err != nil {
+			return "", err
+		} else if ok {
 			return candidate, nil
 		}
 		if filepath.Ext(candidate) == "" {
 			exeCandidate := candidate + ".exe"
-			if isExecutableWindowsCommandFile(exeCandidate) {
+			if ok, err := isSafeExecutableWindowsCommandFile(exeCandidate); err != nil {
+				return "", err
+			} else if ok {
 				return exeCandidate, nil
 			}
 		}
-	}
-	path, err := windowsCommandLookPath(name)
-	if err == nil && isTrustedWindowsCommandPath(path) {
-		return filepath.Clean(path), nil
 	}
 	return "", fmt.Errorf("%s not found in trusted command directories", name)
 }
@@ -85,9 +93,39 @@ func isTrustedWindowsCommandPath(path string) bool {
 }
 
 func isExecutableWindowsCommandFile(path string) bool {
+	ok, _ := isSafeExecutableWindowsCommandFile(path)
+	return ok
+}
+
+func isSafeExecutableWindowsCommandFile(path string) (bool, error) {
+	unsafe, err := windowsCommandPathHasReparsePoint(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	if unsafe {
+		return false, fmt.Errorf("Windows command must not be a reparse point: %s", path)
+	}
 	info, err := windowsCommandStat(path)
 	if err != nil || info.IsDir() {
-		return false
+		return false, nil
 	}
-	return true
+	return true, nil
+}
+
+func windowsCommandPathHasReparsePoint(path string) (bool, error) {
+	ptr, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return false, err
+	}
+	attrs, err := windowsCommandGetFileAttributes(ptr)
+	if err != nil {
+		if errors.Is(err, windows.ERROR_FILE_NOT_FOUND) || errors.Is(err, windows.ERROR_PATH_NOT_FOUND) {
+			return false, os.ErrNotExist
+		}
+		return false, err
+	}
+	return attrs&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0, nil
 }

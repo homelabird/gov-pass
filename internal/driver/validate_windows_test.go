@@ -45,6 +45,13 @@ func TestValidateDriverFileName(t *testing.T) {
 		{`..\WinDivert64.sys`, true},
 		{"WinDivert64", true},
 		{"WinDivert64.dll", true},
+		{".sys", true},
+		{"name .sys", true},
+		{"CON.sys", true},
+		{"nul.SYS", true},
+		{"COM1.sys", true},
+		{"LPT9.sys", true},
+		{"CONOUT$.sys", true},
 	}
 	for _, tt := range tests {
 		err := ValidateDriverFileName(tt.name)

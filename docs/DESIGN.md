@@ -45,9 +45,9 @@ install and remove WinDivert automatically. Service mode keeps config, logs,
 and driver state under `C:\ProgramData\gov-pass\`.
 
 Service reload uses `sc.exe control gov-pass paramchange`. Most `engine.*`
-settings reload in place. `engine.workers`, `engine.worker_queue_size`,
-`windivert_dir`, and `windivert_sys` remain restart-only. WinDivert filter and
-queue parameters reload by reopening or updating the active handle.
+settings reload in place. `engine.workers`, `windivert_dir`, and
+`windivert_sys` remain restart-only. WinDivert filter and queue parameters
+reload by reopening or updating the active handle.
 
 ## Linux
 
@@ -78,4 +78,6 @@ Current limits:
 
 - reload is not supported; use restart flows
 - IPv6 divert handling is not a supported deployment target yet
-- `splitter --check` verifies prerequisites, not live `pf` policy correctness
+- `splitter --check` verifies prerequisites, `pf` enabled state, and whether
+  the `gov-pass` live anchor has rules; operators still verify interface
+  selectors for their topology

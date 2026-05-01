@@ -236,6 +236,83 @@ func TestInjectWindow_FirstSendFailureFailOpensOriginals(t *testing.T) {
 	}
 }
 
+func TestInjectWindow_PartialSendFailureDropsHeldOriginals(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.SplitChunk = 3
+	ad := &injectScriptAdapter{injectedSendFail: 2}
+	w := newWorker(0, cfg, ad, newStats())
+
+	payload := []byte("abcdefghij")
+	tpl := buildTestIPv4Packet(t, 12345, 0x01020304, packet.TCPFlagPSH|packet.TCPFlagACK, payload)
+	st := &flow.FlowState{
+		State:             flow.StateCollecting,
+		BaseSeq:           tpl.Meta.Seq,
+		LastActive:        time.Now(),
+		Template:          tpl,
+		HeldPackets:       []*packet.Packet{tpl},
+		Reassembler:       reassembly.New(tpl.Meta.Seq, 4096),
+		PolicyResolved:    true,
+		SplitModeValue:    uint8(SplitModeImmediate),
+		SplitChunk:        cfg.SplitChunk,
+		MaxSegmentPayload: cfg.MaxSegmentPayload,
+	}
+	if err := st.Reassembler.Push(tpl.Meta.Seq, tpl.Payload()); err != nil {
+		t.Fatalf("Push failed: %v", err)
+	}
+	w.heldBytes = int64(len(tpl.Data))
+	w.reassemblyBytes = int64(st.Reassembler.TotalBytes())
+
+	if err := w.injectWindow(context.Background(), flow.Key{}, st, len(payload)); err != nil {
+		t.Fatalf("injectWindow failed: %v", err)
+	}
+	if st.State != flow.StatePassThrough {
+		t.Fatalf("state = %v, want pass-through", st.State)
+	}
+	if got := len(ad.sends); got != 1 {
+		t.Fatalf("expected exactly one injected segment before failure, got %d sends", got)
+	}
+	if ad.sends[0] == tpl {
+		t.Fatal("partial split failure must not reinject original after a split segment was sent")
+	}
+	if len(ad.drops) != 1 || ad.drops[0] != tpl {
+		t.Fatalf("expected held original to be dropped after partial split failure, got %#v", ad.drops)
+	}
+	if len(st.HeldPackets) != 0 || st.Template != nil || st.Reassembler != nil {
+		t.Fatalf("expected collecting state cleared, got %+v", st)
+	}
+}
+
+func TestReinjectTrimmed_UsesWideEndArithmetic(t *testing.T) {
+	cfg := DefaultConfig()
+	ad := &injectScriptAdapter{}
+	w := newWorker(0, cfg, ad, newStats())
+
+	payload := []byte("abcdefghijklmnopqrstuvwxyz012345")
+	baseSeq := uint32(0)
+	pkt := buildTestIPv4Packet(t, 12345, 0xfffffff0, packet.TCPFlagPSH|packet.TCPFlagACK, payload)
+
+	sent, err := w.reinjectTrimmed(context.Background(), []*packet.Packet{pkt}, baseSeq, 20, nil)
+	if err != nil {
+		t.Fatalf("reinjectTrimmed failed: %v", err)
+	}
+	if sent != 1 {
+		t.Fatalf("expected one reinjected packet, got %d", sent)
+	}
+	if len(ad.sends) != 1 {
+		t.Fatalf("expected one send, got %d", len(ad.sends))
+	}
+	gotPkt := ad.sends[0]
+	if err := packet.DecodeTCP(gotPkt); err != nil {
+		t.Fatalf("DecodeTCP reinjected packet failed: %v", err)
+	}
+	if got := gotPkt.Meta.Seq; got != pkt.Meta.Seq {
+		t.Fatalf("reinjected seq = %#x, want %#x", got, pkt.Meta.Seq)
+	}
+	if got := string(gotPkt.Payload()); got != string(payload) {
+		t.Fatalf("reinjected payload = %q, want %q", got, payload)
+	}
+}
+
 func testIPv6PacketWithPayload(withDestOptions bool, payload []byte) []byte {
 	ipHeaderLen := 40
 	nextHeader := byte(6)

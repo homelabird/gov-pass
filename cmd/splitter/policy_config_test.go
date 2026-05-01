@@ -3,13 +3,11 @@ package main
 import "testing"
 
 func TestParseEnginePolicies(t *testing.T) {
-	skip := true
 	splitChunk := 7
 	policies, err := parseEnginePolicies([]enginePolicyJSONConfig{
 		{
 			Name:       "google",
 			DstCIDRs:   []string{"8.8.8.0/24"},
-			Skip:       &skip,
 			SplitChunk: &splitChunk,
 		},
 	})
@@ -25,8 +23,8 @@ func TestParseEnginePolicies(t *testing.T) {
 	if len(policies[0].DstPrefixes) != 1 {
 		t.Fatalf("expected 1 prefix, got %d", len(policies[0].DstPrefixes))
 	}
-	if !policies[0].Skip {
-		t.Fatal("expected skip policy")
+	if policies[0].Skip {
+		t.Fatal("did not expect skip policy")
 	}
 	if !policies[0].HasSplitChunk || policies[0].SplitChunk != splitChunk {
 		t.Fatalf("unexpected split_chunk: %+v", policies[0])
@@ -49,6 +47,17 @@ func TestParseEnginePolicies_RejectsNoOpPolicy(t *testing.T) {
 	}})
 	if err == nil {
 		t.Fatal("expected no-op policy error")
+	}
+}
+
+func TestParseEnginePolicies_RejectsSkipWithSplitOverrides(t *testing.T) {
+	_, err := parseEnginePolicies([]enginePolicyJSONConfig{{
+		DstCIDRs:   []string{"1.1.1.0/24"},
+		Skip:       boolPtr(true),
+		SplitChunk: intPtr(7),
+	}})
+	if err == nil {
+		t.Fatal("expected skip/split override validation error")
 	}
 }
 
@@ -77,6 +86,16 @@ func TestParseEnginePolicies_SNIRejectsImmediateSplitMode(t *testing.T) {
 	}})
 	if err == nil {
 		t.Fatal("expected validation error")
+	}
+}
+
+func TestParseEnginePolicies_RejectsInvalidSNISuffix(t *testing.T) {
+	_, err := parseEnginePolicies([]enginePolicyJSONConfig{{
+		SNISuffixes: []string{"bad_suffix.example"},
+		Skip:        boolPtr(true),
+	}})
+	if err == nil {
+		t.Fatal("expected invalid SNI suffix error")
 	}
 }
 

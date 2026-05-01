@@ -2,6 +2,7 @@ package tls
 
 import (
 	"encoding/binary"
+	"strings"
 	"testing"
 )
 
@@ -57,13 +58,72 @@ func TestDetectClientHello_ZeroRecordLen(t *testing.T) {
 }
 
 func TestParseClientHello_ServerName(t *testing.T) {
-	buf := buildClientHelloRecord("WWW.Example.COM")
+	buf := buildClientHelloRecord("WWW.Example.COM.")
 	info, result := ParseClientHello(buf)
 	if result != ResultMatch {
 		t.Fatalf("expected Match, got %v", result)
 	}
 	if info.ServerName != "www.example.com" {
 		t.Fatalf("unexpected server name: %q", info.ServerName)
+	}
+}
+
+func TestParseClientHello_RejectsInvalidServerName(t *testing.T) {
+	longLabel := strings.Repeat("a", 64) + ".example"
+	longName := strings.Repeat("a.", 127) + "a"
+	tests := []string{
+		" example.com",
+		".example.com",
+		"example..com",
+		"-example.com",
+		"example-.com",
+		"bad_name.example",
+		"*.example.com",
+		"example.com/",
+		"192.0.2.1",
+		"2001:db8::1",
+		"example\x00.com",
+		"\xff.example.com",
+		longLabel,
+		longName,
+	}
+
+	for _, serverName := range tests {
+		t.Run(serverName, func(t *testing.T) {
+			_, result := ParseClientHello(buildClientHelloRecord(serverName))
+			if result != ResultMismatch {
+				t.Fatalf("expected Mismatch, got %v", result)
+			}
+		})
+	}
+}
+
+func TestParseClientHello_RejectsMalformedServerNameExtension(t *testing.T) {
+	tests := []struct {
+		name string
+		body []byte
+	}{
+		{
+			name: "empty list",
+			body: []byte{0x00, 0x00},
+		},
+		{
+			name: "unknown name type only",
+			body: []byte{0x00, 0x03, 0x01, 0x00, 0x00},
+		},
+		{
+			name: "duplicate host name",
+			body: buildServerNameList("a.example", "b.example"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, result := ParseClientHello(buildClientHelloRecordWithServerNameExtension(tt.body))
+			if result != ResultMismatch {
+				t.Fatalf("expected Mismatch, got %v", result)
+			}
+		})
 	}
 }
 
@@ -86,23 +146,69 @@ func TestParseClientHello_NeedMore(t *testing.T) {
 	}
 }
 
+func TestParseClientHello_RejectsTrailingBytesAfterExtensions(t *testing.T) {
+	buf := appendClientHelloBodyByte(buildClientHelloRecord("example.com"), 0)
+	_, result := ParseClientHello(buf)
+	if result != ResultMismatch {
+		t.Fatalf("expected Mismatch, got %v", result)
+	}
+}
+
+func TestParseClientHello_RejectsTrailingBytesAfterHandshake(t *testing.T) {
+	buf := appendTLSRecordByte(buildClientHelloRecord("example.com"), 0)
+	_, result := ParseClientHello(buf)
+	if result != ResultMismatch {
+		t.Fatalf("expected Mismatch, got %v", result)
+	}
+}
+
+func TestParseClientHello_RejectsOddCipherSuiteLength(t *testing.T) {
+	buf := buildClientHelloRecord("example.com")
+	// Cipher suite length follows legacy version, random, and session ID length.
+	cipherSuitesLenOffset := recordHeaderLen + handshakeHeaderLen + 2 + 32 + 1
+	binary.BigEndian.PutUint16(buf[cipherSuitesLenOffset:cipherSuitesLenOffset+2], 1)
+	_, result := ParseClientHello(buf)
+	if result != ResultMismatch {
+		t.Fatalf("expected Mismatch, got %v", result)
+	}
+}
+
+func appendClientHelloBodyByte(record []byte, b byte) []byte {
+	out := append([]byte(nil), record...)
+	recordLen := int(binary.BigEndian.Uint16(out[3:5]))
+	handshakeLen := int(out[6])<<16 | int(out[7])<<8 | int(out[8])
+	out = append(out, b)
+	recordLen++
+	handshakeLen++
+	binary.BigEndian.PutUint16(out[3:5], uint16(recordLen))
+	out[6] = byte(handshakeLen >> 16)
+	out[7] = byte(handshakeLen >> 8)
+	out[8] = byte(handshakeLen)
+	return out
+}
+
+func appendTLSRecordByte(record []byte, b byte) []byte {
+	out := append([]byte(nil), record...)
+	recordLen := int(binary.BigEndian.Uint16(out[3:5]))
+	out = append(out, b)
+	recordLen++
+	binary.BigEndian.PutUint16(out[3:5], uint16(recordLen))
+	return out
+}
+
 func buildClientHelloRecord(serverName string) []byte {
 	extensions := []byte{}
 	if serverName != "" {
-		name := []byte(serverName)
-		serverNameData := make([]byte, 2+1+2+len(name))
-		binary.BigEndian.PutUint16(serverNameData[0:2], uint16(3+len(name)))
-		serverNameData[2] = 0
-		binary.BigEndian.PutUint16(serverNameData[3:5], uint16(len(name)))
-		copy(serverNameData[5:], name)
-
-		ext := make([]byte, 4+len(serverNameData))
-		binary.BigEndian.PutUint16(ext[0:2], 0)
-		binary.BigEndian.PutUint16(ext[2:4], uint16(len(serverNameData)))
-		copy(ext[4:], serverNameData)
-		extensions = append(extensions, ext...)
+		extensions = append(extensions, buildServerNameExtension(buildServerNameList(serverName))...)
 	}
+	return buildClientHelloRecordWithExtensions(extensions)
+}
 
+func buildClientHelloRecordWithServerNameExtension(body []byte) []byte {
+	return buildClientHelloRecordWithExtensions(buildServerNameExtension(body))
+}
+
+func buildClientHelloRecordWithExtensions(extensions []byte) []byte {
 	body := make([]byte, 0, 64+len(extensions))
 	body = append(body, 0x03, 0x03)
 	body = append(body, make([]byte, 32)...)
@@ -126,4 +232,27 @@ func buildClientHelloRecord(serverName string) []byte {
 	binary.BigEndian.PutUint16(record[3:5], uint16(len(handshake)))
 	copy(record[5:], handshake)
 	return record
+}
+
+func buildServerNameExtension(body []byte) []byte {
+	ext := make([]byte, 4+len(body))
+	binary.BigEndian.PutUint16(ext[0:2], 0)
+	binary.BigEndian.PutUint16(ext[2:4], uint16(len(body)))
+	copy(ext[4:], body)
+	return ext
+}
+
+func buildServerNameList(names ...string) []byte {
+	listLen := 0
+	for _, name := range names {
+		listLen += 3 + len(name)
+	}
+	out := make([]byte, 2, 2+listLen)
+	binary.BigEndian.PutUint16(out[0:2], uint16(listLen))
+	for _, name := range names {
+		out = append(out, serverNameTypeHostName)
+		out = append(out, byte(len(name)>>8), byte(len(name)))
+		out = append(out, name...)
+	}
+	return out
 }

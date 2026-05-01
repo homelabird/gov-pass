@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -49,6 +50,7 @@ func run() error {
 		defaultQueueNum    = 100
 		defaultQueueMaxLen = 4096
 		defaultCopyRange   = 0xffff
+		defaultRecvBuffer  = 0
 		defaultMark        = 1
 	)
 
@@ -67,9 +69,11 @@ func run() error {
 	shutdownFailOpenTimeout := flag.Duration("shutdown-fail-open-timeout", cfg.ShutdownFailOpenTimeout, "shutdown fail-open drain timeout per worker (0=use default)")
 	shutdownFailOpenMaxPkts := flag.Int("shutdown-fail-open-max-pkts", cfg.ShutdownFailOpenMaxPackets, "shutdown fail-open max packets per worker (0=use default)")
 	adapterFlushTimeout := flag.Duration("adapter-flush-timeout", cfg.AdapterFlushTimeout, "adapter flush timeout on shutdown (0=use default)")
+	statsInterval := flag.Duration("stats-interval", defaultStatsInterval, "periodic engine stats log interval (0=disabled)")
 	queueNum := flag.Int("queue-num", defaultQueueNum, "NFQUEUE number")
 	queueMaxLen := flag.Int("queue-maxlen", defaultQueueMaxLen, "NFQUEUE maxlen (0=kernel default)")
 	copyRange := flag.Int("copy-range", defaultCopyRange, "NFQUEUE copy range in bytes (0=full packet)")
+	recvBuffer := flag.Int("recv-buffer", defaultRecvBuffer, "internal NFQUEUE recv buffer capacity (0=derive from queue-maxlen)")
 	mark := flag.Int("mark", defaultMark, "SO_MARK for reinjected packets")
 	autoRules := flag.Bool("auto-rules", true, "auto install/uninstall NFQUEUE rules (nft or iptables)")
 	autoOffload := flag.Bool("auto-offload", true, "auto disable GRO/GSO/TSO (ethtool)")
@@ -108,10 +112,12 @@ func run() error {
 			ShutdownFailOpenTimeout:    shutdownFailOpenTimeout,
 			ShutdownFailOpenMaxPackets: shutdownFailOpenMaxPkts,
 			AdapterFlushTimeout:        adapterFlushTimeout,
+			StatsInterval:              statsInterval,
 			Policies:                   &policies,
 			QueueNum:                   queueNum,
 			QueueMaxLen:                queueMaxLen,
 			CopyRange:                  copyRange,
+			RecvBuffer:                 recvBuffer,
 			Mark:                       mark,
 			AutoRules:                  autoRules,
 			AutoOffload:                autoOffload,
@@ -171,6 +177,9 @@ func run() error {
 	if *adapterFlushTimeout < 0 {
 		return errors.New("adapter-flush-timeout must be >= 0")
 	}
+	if *statsInterval < 0 {
+		return errors.New("stats-interval must be >= 0")
+	}
 	if *queueNum < 0 || *queueNum > 65535 {
 		return errors.New("queue-num must be in 0..65535")
 	}
@@ -186,6 +195,12 @@ func run() error {
 	if int64(*copyRange) > maxUint32Value {
 		return errors.New("copy-range must be <= 4294967295")
 	}
+	if *recvBuffer < 0 {
+		return errors.New("recv-buffer must be >= 0")
+	}
+	if *recvBuffer > adapter.MaxNFQueueRecvBuffer {
+		return fmt.Errorf("recv-buffer must be <= %d", adapter.MaxNFQueueRecvBuffer)
+	}
 	if *mark < 0 {
 		return errors.New("mark must be >= 0")
 	}
@@ -194,6 +209,13 @@ func run() error {
 	}
 	if *autoRules && *mark == 0 {
 		return errors.New("auto-rules requires mark > 0 for reinjection bypass; set --mark or disable --auto-rules")
+	}
+	if *autoOffload && strings.TrimSpace(*iface) != "" {
+		normalizedIface, err := normalizeLinuxIfaceName(*iface)
+		if err != nil {
+			return err
+		}
+		*iface = normalizedIface
 	}
 
 	cfg.SplitMode = mode
@@ -309,18 +331,35 @@ func run() error {
 	}
 
 	opts := adapter.NFQueueOptions{
-		QueueNum:    uint16(*queueNum),
-		QueueMaxLen: uint32(*queueMaxLen),
-		CopyRange:   uint32(*copyRange),
-		Mark:        uint32(*mark),
+		QueueNum:       uint16(*queueNum),
+		QueueMaxLen:    uint32(*queueMaxLen),
+		CopyRange:      uint32(*copyRange),
+		RecvBufferSize: uint32(*recvBuffer),
+		Mark:           uint32(*mark),
 	}
 	ad, err := adapter.NewNFQueue(opts)
 	if err != nil {
 		return fmt.Errorf("NFQUEUE open failed: %w", err)
 	}
-	eng := engine.New(cfg, ad)
+	eng, err := engine.NewChecked(cfg, ad)
+	if err != nil {
+		return fmt.Errorf("invalid engine config: %w", err)
+	}
 
-	logInfo("engine_started", "engine started", "workers", cfg.WorkerCount, "split_mode", cfg.SplitMode, "split_chunk", cfg.SplitChunk)
+	logInfo("engine_started", "engine started",
+		"workers", cfg.WorkerCount,
+		"split_mode", cfg.SplitMode,
+		"split_chunk", cfg.SplitChunk,
+		"stats_interval", *statsInterval,
+		"queue_num", opts.QueueNum,
+		"queue_maxlen", opts.QueueMaxLen,
+		"copy_range", opts.CopyRange,
+		"recv_buffer", opts.RecvBufferSize,
+		"effective_recv_buffer", adapter.NFQueueRecvBufferCapacity(opts),
+		"mark", opts.Mark,
+	)
+	stopStats := startEngineStatsLogger(ctx, eng, *statsInterval)
+	defer stopStats()
 	err = eng.Run(ctx)
 	logInfo("engine_stats", "engine stats", "stats", eng.Stats())
 	if err != nil && !errors.Is(err, context.Canceled) {
@@ -334,29 +373,13 @@ type linuxJSONConfig struct {
 	Linux  *linuxRuntimeJSONConfig `json:"linux,omitempty"`
 }
 
-type linuxEngineJSONConfig struct {
-	SplitMode                   *string                  `json:"split_mode,omitempty"`
-	SplitChunk                  *int                     `json:"split_chunk,omitempty"`
-	CollectTimeout              *string                  `json:"collect_timeout,omitempty"`
-	MaxBufferBytes              *int                     `json:"max_buffer_bytes,omitempty"`
-	MaxHeldPackets              *int                     `json:"max_held_packets,omitempty"`
-	MaxSegmentPayload           *int                     `json:"max_segment_payload,omitempty"`
-	Workers                     *int                     `json:"workers,omitempty"`
-	FlowIdleTimeout             *string                  `json:"flow_idle_timeout,omitempty"`
-	GCInterval                  *string                  `json:"gc_interval,omitempty"`
-	MaxFlowsPerWorker           *int                     `json:"max_flows_per_worker,omitempty"`
-	MaxReassemblyBytesPerWorker *int                     `json:"max_reassembly_bytes_per_worker,omitempty"`
-	MaxHeldBytesPerWorker       *int                     `json:"max_held_bytes_per_worker,omitempty"`
-	ShutdownFailOpenTimeout     *string                  `json:"shutdown_fail_open_timeout,omitempty"`
-	ShutdownFailOpenMaxPackets  *int                     `json:"shutdown_fail_open_max_packets,omitempty"`
-	AdapterFlushTimeout         *string                  `json:"adapter_flush_timeout,omitempty"`
-	Policies                    []enginePolicyJSONConfig `json:"policies,omitempty"`
-}
+type linuxEngineJSONConfig = engineJSONConfig
 
 type linuxRuntimeJSONConfig struct {
 	QueueNum        *int    `json:"queue_num,omitempty"`
 	QueueMaxLen     *int    `json:"queue_maxlen,omitempty"`
 	CopyRange       *int    `json:"copy_range,omitempty"`
+	RecvBuffer      *int    `json:"recv_buffer,omitempty"`
 	Mark            *int    `json:"mark,omitempty"`
 	AutoRules       *bool   `json:"auto_rules,omitempty"`
 	AutoOffload     *bool   `json:"auto_offload,omitempty"`
@@ -382,11 +405,13 @@ type linuxFlagRefs struct {
 	ShutdownFailOpenTimeout    *time.Duration
 	ShutdownFailOpenMaxPackets *int
 	AdapterFlushTimeout        *time.Duration
+	StatsInterval              *time.Duration
 	Policies                   *[]engine.Policy
 
 	QueueNum           *int
 	QueueMaxLen        *int
 	CopyRange          *int
+	RecvBuffer         *int
 	Mark               *int
 	AutoRules          *bool
 	AutoOffload        *bool
@@ -394,6 +419,31 @@ type linuxFlagRefs struct {
 	AutoInstallTools   *bool
 	Iface              *string
 	NoLoopback         *bool
+}
+
+func linuxEngineFlagRefs(refs *linuxFlagRefs) engineFlagRefs {
+	if refs == nil {
+		return engineFlagRefs{}
+	}
+	return engineFlagRefs{
+		SplitMode:                  refs.SplitMode,
+		SplitChunk:                 refs.SplitChunk,
+		CollectTimeout:             refs.CollectTimeout,
+		MaxBuffer:                  refs.MaxBuffer,
+		MaxHeld:                    refs.MaxHeld,
+		MaxSegPayload:              refs.MaxSegPayload,
+		Workers:                    refs.Workers,
+		FlowTimeout:                refs.FlowTimeout,
+		GCInterval:                 refs.GCInterval,
+		MaxFlows:                   refs.MaxFlows,
+		MaxReassembly:              refs.MaxReassembly,
+		MaxHeldBytes:               refs.MaxHeldBytes,
+		ShutdownFailOpenTimeout:    refs.ShutdownFailOpenTimeout,
+		ShutdownFailOpenMaxPackets: refs.ShutdownFailOpenMaxPackets,
+		AdapterFlushTimeout:        refs.AdapterFlushTimeout,
+		StatsInterval:              refs.StatsInterval,
+		Policies:                   refs.Policies,
+	}
 }
 
 func applyLinuxJSONConfig(path string, setFlags map[string]bool, refs *linuxFlagRefs) error {
@@ -407,101 +457,12 @@ func applyLinuxJSONConfig(path string, setFlags map[string]bool, refs *linuxFlag
 	}
 
 	var cfg linuxJSONConfig
-	if err := json.Unmarshal(b, &cfg); err != nil {
+	if err := decodeStrictJSONConfig(b, &cfg); err != nil {
 		return err
 	}
 
-	if cfg.Engine != nil {
-		if cfg.Engine.SplitMode != nil && !setFlags["split-mode"] {
-			v := strings.TrimSpace(*cfg.Engine.SplitMode)
-			if v != "" {
-				*refs.SplitMode = v
-			}
-		}
-		if cfg.Engine.SplitChunk != nil && !setFlags["split-chunk"] {
-			*refs.SplitChunk = *cfg.Engine.SplitChunk
-		}
-		if cfg.Engine.CollectTimeout != nil && !setFlags["collect-timeout"] {
-			v := strings.TrimSpace(*cfg.Engine.CollectTimeout)
-			if v != "" {
-				d, err := time.ParseDuration(v)
-				if err != nil {
-					return fmt.Errorf("engine.collect_timeout: %w", err)
-				}
-				*refs.CollectTimeout = d
-			}
-		}
-		if cfg.Engine.MaxBufferBytes != nil && !setFlags["max-buffer"] {
-			*refs.MaxBuffer = *cfg.Engine.MaxBufferBytes
-		}
-		if cfg.Engine.MaxHeldPackets != nil && !setFlags["max-held-pkts"] {
-			*refs.MaxHeld = *cfg.Engine.MaxHeldPackets
-		}
-		if cfg.Engine.MaxSegmentPayload != nil && !setFlags["max-seg-payload"] {
-			*refs.MaxSegPayload = *cfg.Engine.MaxSegmentPayload
-		}
-		if cfg.Engine.Workers != nil && !setFlags["workers"] {
-			*refs.Workers = *cfg.Engine.Workers
-		}
-		if cfg.Engine.FlowIdleTimeout != nil && !setFlags["flow-timeout"] {
-			v := strings.TrimSpace(*cfg.Engine.FlowIdleTimeout)
-			if v != "" {
-				d, err := time.ParseDuration(v)
-				if err != nil {
-					return fmt.Errorf("engine.flow_idle_timeout: %w", err)
-				}
-				*refs.FlowTimeout = d
-			}
-		}
-		if cfg.Engine.GCInterval != nil && !setFlags["gc-interval"] {
-			v := strings.TrimSpace(*cfg.Engine.GCInterval)
-			if v != "" {
-				d, err := time.ParseDuration(v)
-				if err != nil {
-					return fmt.Errorf("engine.gc_interval: %w", err)
-				}
-				*refs.GCInterval = d
-			}
-		}
-		if cfg.Engine.MaxFlowsPerWorker != nil && !setFlags["max-flows-per-worker"] {
-			*refs.MaxFlows = *cfg.Engine.MaxFlowsPerWorker
-		}
-		if cfg.Engine.MaxReassemblyBytesPerWorker != nil && !setFlags["max-reassembly-bytes-per-worker"] {
-			*refs.MaxReassembly = *cfg.Engine.MaxReassemblyBytesPerWorker
-		}
-		if cfg.Engine.MaxHeldBytesPerWorker != nil && !setFlags["max-held-bytes-per-worker"] {
-			*refs.MaxHeldBytes = *cfg.Engine.MaxHeldBytesPerWorker
-		}
-		if cfg.Engine.ShutdownFailOpenTimeout != nil && !setFlags["shutdown-fail-open-timeout"] {
-			v := strings.TrimSpace(*cfg.Engine.ShutdownFailOpenTimeout)
-			if v != "" {
-				d, err := time.ParseDuration(v)
-				if err != nil {
-					return fmt.Errorf("engine.shutdown_fail_open_timeout: %w", err)
-				}
-				*refs.ShutdownFailOpenTimeout = d
-			}
-		}
-		if cfg.Engine.ShutdownFailOpenMaxPackets != nil && !setFlags["shutdown-fail-open-max-pkts"] {
-			*refs.ShutdownFailOpenMaxPackets = *cfg.Engine.ShutdownFailOpenMaxPackets
-		}
-		if cfg.Engine.AdapterFlushTimeout != nil && !setFlags["adapter-flush-timeout"] {
-			v := strings.TrimSpace(*cfg.Engine.AdapterFlushTimeout)
-			if v != "" {
-				d, err := time.ParseDuration(v)
-				if err != nil {
-					return fmt.Errorf("engine.adapter_flush_timeout: %w", err)
-				}
-				*refs.AdapterFlushTimeout = d
-			}
-		}
-		if cfg.Engine.Policies != nil && refs.Policies != nil {
-			policies, err := parseEnginePolicies(cfg.Engine.Policies)
-			if err != nil {
-				return err
-			}
-			*refs.Policies = policies
-		}
+	if err := applyEngineJSONConfigToFlags(cfg.Engine, setFlags, linuxEngineFlagRefs(refs)); err != nil {
+		return err
 	}
 
 	if cfg.Linux != nil {
@@ -513,6 +474,9 @@ func applyLinuxJSONConfig(path string, setFlags map[string]bool, refs *linuxFlag
 		}
 		if cfg.Linux.CopyRange != nil && !setFlags["copy-range"] {
 			*refs.CopyRange = *cfg.Linux.CopyRange
+		}
+		if cfg.Linux.RecvBuffer != nil && !setFlags["recv-buffer"] {
+			*refs.RecvBuffer = *cfg.Linux.RecvBuffer
 		}
 		if cfg.Linux.Mark != nil && !setFlags["mark"] {
 			*refs.Mark = *cfg.Linux.Mark
@@ -571,7 +535,7 @@ func runLinuxPreflight(autoInstall bool, needs linuxToolNeeds, requireRoot bool,
 		_, hasIpt := linuxLookPath("iptables")
 		_, hasIpt6 := linuxLookPath("ip6tables")
 		ok := hasNft || (hasIpt && hasIpt6)
-		detail := "nft or iptables+ip6tables"
+		var detail string
 		if hasNft {
 			detail = "nft found"
 		} else if hasIpt && hasIpt6 {
@@ -592,7 +556,7 @@ func runLinuxPreflight(autoInstall bool, needs linuxToolNeeds, requireRoot bool,
 	if needs.AutoOffload {
 		_, hasEthtool := linuxLookPath("ethtool")
 		ok := hasEthtool
-		detail := "ethtool"
+		var detail string
 		if hasEthtool {
 			detail = "ethtool found"
 		} else if autoInstall {
@@ -610,7 +574,7 @@ func runLinuxPreflight(autoInstall bool, needs linuxToolNeeds, requireRoot bool,
 		if needs.NeedIP {
 			_, hasIP := linuxLookPath("ip")
 			okIP := hasIP
-			detailIP := "ip command"
+			var detailIP string
 			if hasIP {
 				detailIP = "ip found"
 			} else if autoInstall {
@@ -804,6 +768,9 @@ func parseNftHandle(line string) (int, bool) {
 			if err != nil {
 				return 0, false
 			}
+			if v <= 0 {
+				return 0, false
+			}
 			return v, true
 		}
 	}
@@ -891,12 +858,8 @@ func uninstallOneIptablesFamily(path string, chain string, opts ruleOptions) err
 		}
 	}
 
-	if _, err := runCommand(path, "-t", table, "-F", chain); err != nil {
-		// ignore
-	}
-	if _, err := runCommand(path, "-t", table, "-X", chain); err != nil {
-		// ignore
-	}
+	_, _ = runCommand(path, "-t", table, "-F", chain)
+	_, _ = runCommand(path, "-t", table, "-X", chain)
 	return nil
 }
 
@@ -928,9 +891,9 @@ type offloadState struct {
 }
 
 func readOffloadState(iface string) (offloadState, error) {
-	iface = strings.TrimSpace(iface)
-	if iface == "" {
-		return offloadState{}, errors.New("iface is empty")
+	iface, err := normalizeLinuxIfaceName(iface)
+	if err != nil {
+		return offloadState{}, err
 	}
 	path, ok := linuxLookPath("ethtool")
 	if !ok {
@@ -997,9 +960,9 @@ func parseEthtoolOnOff(line string) (bool, bool) {
 }
 
 func applyOffloadState(iface string, st offloadState) error {
-	iface = strings.TrimSpace(iface)
-	if iface == "" {
-		return errors.New("iface is empty")
+	iface, err := normalizeLinuxIfaceName(iface)
+	if err != nil {
+		return err
 	}
 	path, ok := linuxLookPath("ethtool")
 	if !ok {
@@ -1026,9 +989,9 @@ func applyOffloadState(iface string, st offloadState) error {
 }
 
 func disableOffload(iface string) error {
-	iface = strings.TrimSpace(iface)
-	if iface == "" {
-		return errors.New("iface is empty")
+	iface, err := normalizeLinuxIfaceName(iface)
+	if err != nil {
+		return err
 	}
 	path, ok := linuxLookPath("ethtool")
 	if !ok {
@@ -1105,7 +1068,7 @@ func parseRouteDevs(output string) []string {
 				continue
 			}
 			iface := fields[i+1]
-			if iface == "" {
+			if _, err := normalizeLinuxIfaceName(iface); err != nil {
 				break
 			}
 			if _, ok := seen[iface]; ok {
@@ -1119,12 +1082,33 @@ func parseRouteDevs(output string) []string {
 	return devs
 }
 
+func normalizeLinuxIfaceName(iface string) (string, error) {
+	iface = strings.TrimSpace(iface)
+	if iface == "" {
+		return "", errors.New("iface is empty")
+	}
+	if len(iface) > 15 {
+		return "", fmt.Errorf("iface %q exceeds 15 characters", iface)
+	}
+	if strings.HasPrefix(iface, "-") || strings.ContainsAny(iface, `/\`) {
+		return "", fmt.Errorf("iface %q contains unsupported characters", iface)
+	}
+	for _, r := range iface {
+		if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' || r == '.' || r == ':' || r == '@' || r == '-' {
+			continue
+		}
+		return "", fmt.Errorf("iface %q contains unsupported characters", iface)
+	}
+	return iface, nil
+}
+
 func runCommand(name string, args ...string) (string, error) {
 	if !filepath.IsAbs(name) {
 		return "", fmt.Errorf("command path must be absolute: %s", name)
 	}
 	// #nosec G204,G702 -- name is restricted to trusted absolute system paths and exec does not invoke a shell.
 	cmd := exec.Command(name, args...)
+	cmd.Env = sanitizedLinuxCommandEnv(nil)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		trimmed := strings.TrimSpace(string(out))
@@ -1142,20 +1126,19 @@ func lookPath(name string) (string, bool) {
 		return "", false
 	}
 	if filepath.IsAbs(name) {
-		if isTrustedLinuxCommandPath(name) {
-			return filepath.Clean(name), true
+		if path, ok := canonicalTrustedLinuxCommandPath(name); ok {
+			return path, true
 		}
+		return "", false
+	}
+	if !isBareTrustedCommandName(name) {
 		return "", false
 	}
 	for _, dir := range trustedLinuxCommandDirs {
 		candidate := filepath.Join(dir, name)
-		if isExecutableFile(candidate) {
-			return candidate, true
+		if path, ok := canonicalTrustedLinuxCommandPath(candidate); ok {
+			return path, true
 		}
-	}
-	path, err := exec.LookPath(name)
-	if err == nil && isTrustedLinuxCommandPath(path) {
-		return filepath.Clean(path), true
 	}
 	return "", false
 }
@@ -1164,16 +1147,38 @@ var linuxLookPath = lookPath
 var linuxDetectPackageManager = detectLinuxPackageManager
 
 func isTrustedLinuxCommandPath(path string) bool {
+	_, ok := canonicalTrustedLinuxCommandPath(path)
+	return ok
+}
+
+func canonicalTrustedLinuxCommandPath(path string) (string, bool) {
 	clean := filepath.Clean(strings.TrimSpace(path))
 	if !filepath.IsAbs(clean) {
-		return false
+		return "", false
 	}
+
+	resolved, err := filepath.EvalSymlinks(clean)
+	if err != nil {
+		return "", false
+	}
+	resolved = filepath.Clean(resolved)
+	if !filepath.IsAbs(resolved) || !isExecutableFile(resolved) {
+		return "", false
+	}
+
 	for _, dir := range trustedLinuxCommandDirs {
-		if filepath.Dir(clean) == filepath.Clean(dir) && isExecutableFile(clean) {
-			return true
+		trustedDir := filepath.Clean(strings.TrimSpace(dir))
+		if trustedDir == "" {
+			continue
+		}
+		if canonicalDir, err := filepath.EvalSymlinks(trustedDir); err == nil {
+			trustedDir = filepath.Clean(canonicalDir)
+		}
+		if filepath.Dir(resolved) == trustedDir {
+			return resolved, true
 		}
 	}
-	return false
+	return "", false
 }
 
 func isExecutableFile(path string) bool {
@@ -1233,7 +1238,7 @@ func ensureLinuxExternalTools(autoInstall bool, needs linuxToolNeeds) error {
 		return fmt.Errorf("missing required external tools: %s (install them or set --auto-install-tools=true)", strings.Join(missing, ", "))
 	}
 
-	mgrKind, mgrPath, ok := detectLinuxPackageManager()
+	mgrKind, mgrPath, ok := linuxDetectPackageManager()
 	if !ok {
 		return fmt.Errorf("missing required external tools: %s (no supported package manager found; install tools manually)", strings.Join(missing, ", "))
 	}
@@ -1246,6 +1251,7 @@ func ensureLinuxExternalTools(autoInstall bool, needs linuxToolNeeds) error {
 		}
 		pkgs = append(pkgs, p)
 	}
+	sort.Strings(pkgs)
 	if len(pkgs) == 0 {
 		return fmt.Errorf("missing required external tools: %s", strings.Join(missing, ", "))
 	}
@@ -1309,23 +1315,23 @@ func installLinuxPackages(mgrKind string, mgrPath string, pkgs []string) error {
 		return err
 	case "dnf":
 		args := append([]string{"install", "-y"}, pkgs...)
-		_, err := runCommand(mgrPath, args...)
+		_, err := runCommandEnv(nil, mgrPath, args...)
 		return err
 	case "yum":
 		args := append([]string{"install", "-y"}, pkgs...)
-		_, err := runCommand(mgrPath, args...)
+		_, err := runCommandEnv(nil, mgrPath, args...)
 		return err
 	case "pacman":
 		args := append([]string{"-Sy", "--noconfirm", "--needed"}, pkgs...)
-		_, err := runCommand(mgrPath, args...)
+		_, err := runCommandEnv(nil, mgrPath, args...)
 		return err
 	case "apk":
 		args := append([]string{"add", "--no-cache"}, pkgs...)
-		_, err := runCommand(mgrPath, args...)
+		_, err := runCommandEnv(nil, mgrPath, args...)
 		return err
 	case "zypper":
 		args := append([]string{"--non-interactive", "install", "-y"}, pkgs...)
-		_, err := runCommand(mgrPath, args...)
+		_, err := runCommandEnv(nil, mgrPath, args...)
 		return err
 	default:
 		return fmt.Errorf("unsupported package manager: %s", mgrKind)
@@ -1338,9 +1344,7 @@ func runCommandEnv(env []string, name string, args ...string) (string, error) {
 	}
 	// #nosec G204 -- name is restricted to trusted absolute system paths and exec does not invoke a shell.
 	cmd := exec.Command(name, args...)
-	if len(env) > 0 {
-		cmd.Env = append(os.Environ(), env...)
-	}
+	cmd.Env = sanitizedLinuxCommandEnv(env)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		trimmed := strings.TrimSpace(string(out))
@@ -1352,11 +1356,16 @@ func runCommandEnv(env []string, name string, args ...string) (string, error) {
 	return string(out), nil
 }
 
-func readLinuxConfigFile(path string) ([]byte, error) {
-	clean := filepath.Clean(strings.TrimSpace(path))
-	if clean == "" || clean == "." {
-		return nil, errors.New("config path must not be empty")
+func sanitizedLinuxCommandEnv(extra []string) []string {
+	env := []string{
+		"PATH=" + strings.Join(trustedLinuxCommandDirs, string(os.PathListSeparator)),
+		"HOME=/root",
+		"LANG=C",
+		"LC_ALL=C",
 	}
-	// #nosec G304 -- config path is explicitly provided by the operator and is not used across a privilege boundary.
-	return os.ReadFile(clean)
+	return append(env, extra...)
+}
+
+func readLinuxConfigFile(path string) ([]byte, error) {
+	return readJSONConfigFile(path)
 }

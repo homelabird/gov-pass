@@ -15,6 +15,7 @@ var windowsReloadableSettings = []string{
 	"engine.shutdown_fail_open_timeout",
 	"engine.shutdown_fail_open_max_packets",
 	"engine.adapter_flush_timeout",
+	"engine.stats_interval",
 	"engine.policies",
 	"windivert.filter (via handle reopen)",
 	"windivert.queue_len (including 0/default via handle reopen)",
@@ -24,7 +25,6 @@ var windowsReloadableSettings = []string{
 
 var windowsRestartRequiredSettings = []string{
 	"engine.workers",
-	"engine.worker_queue_size",
 	"windivert_dir",
 	"windivert_sys",
 }

@@ -33,7 +33,8 @@ func BenchmarkCopyIntoPoolBuffer(b *testing.B) {
 		if len(data) != len(src) {
 			b.Fatalf("unexpected payload length: %d", len(data))
 		}
-		pool.Put(backing[:cap(backing)])
+		backing = backing[:cap(backing)]
+		pool.Put(&backing)
 	}
 }
 

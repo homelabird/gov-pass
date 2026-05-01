@@ -53,7 +53,27 @@ install -D -m 0644 %{SOURCE1} %{buildroot}%{_unitdir}/gov-pass.service
 install -D -m 0644 %{SOURCE2} %{buildroot}%{_sysconfdir}/sysconfig/gov-pass
 
 %pre
-if ! command -v nft >/dev/null 2>&1 && ! command -v iptables >/dev/null 2>&1; then
+TRUSTED_PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+PATH="$TRUSTED_PATH"
+export PATH
+lookup_optional_trusted_command() {
+  name="$1"
+  candidate="$(PATH="$TRUSTED_PATH" command -v "$name" 2>/dev/null || true)"
+  if [ -z "$candidate" ]; then
+    return 1
+  fi
+  case "$candidate" in
+    */*) ;;
+    *) return 1 ;;
+  esac
+  if [ ! -x "$candidate" ] || [ -d "$candidate" ]; then
+    return 1
+  fi
+  printf '%s\n' "$candidate"
+}
+NFT_BIN="$(lookup_optional_trusted_command nft || true)"
+IPTABLES_BIN="$(lookup_optional_trusted_command iptables || true)"
+if [ -z "$NFT_BIN" ] && [ -z "$IPTABLES_BIN" ]; then
   echo "Warning: neither nft nor iptables found; gov-pass requires one of them." >&2
 fi
 
@@ -68,7 +88,7 @@ fi
 
 %files
 %license LICENSE
-%doc README.md docs/DESIGN.md docs/THIRD_PARTY_NOTICES.md
+%doc README.md SECURITY.md docs/DESIGN.md docs/THIRD_PARTY_NOTICES.md docs/examples docs/schema
 %config(noreplace) %{_sysconfdir}/sysconfig/gov-pass
 %{_unitdir}/gov-pass.service
 %{_libexecdir}/%{name}/splitter

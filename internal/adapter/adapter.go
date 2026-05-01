@@ -31,10 +31,11 @@ type WinDivertOptions struct {
 
 // NFQueueOptions holds NFQUEUE parameters for Linux.
 type NFQueueOptions struct {
-	QueueNum    uint16
-	QueueMaxLen uint32
-	CopyRange   uint32
-	Mark        uint32
+	QueueNum       uint16
+	QueueMaxLen    uint32
+	CopyRange      uint32
+	RecvBufferSize uint32
+	Mark           uint32
 }
 
 // StubAdapter is a placeholder until WinDivert integration lands.

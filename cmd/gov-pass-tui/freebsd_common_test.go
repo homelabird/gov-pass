@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -68,6 +69,31 @@ func TestLookTrustedFreeBSDCommand_UsesTrustedAbsoluteDir(t *testing.T) {
 	}
 }
 
+func TestResolveTrustedFreeBSDCommandAndPathCheck(t *testing.T) {
+	dir := t.TempDir()
+	cmd := filepath.Join(dir, "service")
+	if err := os.WriteFile(cmd, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write fake command: %v", err)
+	}
+
+	origDirs := trustedFreeBSDCommandDirs
+	trustedFreeBSDCommandDirs = []string{dir}
+	defer func() {
+		trustedFreeBSDCommandDirs = origDirs
+	}()
+
+	got, err := resolveTrustedFreeBSDCommand("service")
+	if err != nil {
+		t.Fatalf("resolveTrustedFreeBSDCommand: %v", err)
+	}
+	if filepath.Clean(got) != filepath.Clean(cmd) {
+		t.Fatalf("resolveTrustedFreeBSDCommand returned %q, want %q", got, cmd)
+	}
+	if !isTrustedFreeBSDCommandPath(cmd) {
+		t.Fatalf("isTrustedFreeBSDCommandPath(%q) = false, want true", cmd)
+	}
+}
+
 func TestLookTrustedFreeBSDCommand_RejectsSymlinkOutsideTrustedDir(t *testing.T) {
 	trustedDir := t.TempDir()
 	outsideDir := t.TempDir()
@@ -88,5 +114,43 @@ func TestLookTrustedFreeBSDCommand_RejectsSymlinkOutsideTrustedDir(t *testing.T)
 
 	if got, ok := lookTrustedFreeBSDCommand("service"); ok {
 		t.Fatalf("expected symlink target outside trusted dir to be rejected, got %q", got)
+	}
+}
+
+func TestLookTrustedFreeBSDCommand_RejectsRelativePathName(t *testing.T) {
+	parent := t.TempDir()
+	sbin := filepath.Join(parent, "sbin")
+	bin := filepath.Join(parent, "bin")
+	if err := os.MkdirAll(sbin, 0o755); err != nil {
+		t.Fatalf("mkdir sbin: %v", err)
+	}
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+	cmd := filepath.Join(bin, "service")
+	if err := os.WriteFile(cmd, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write command: %v", err)
+	}
+
+	origDirs := trustedFreeBSDCommandDirs
+	trustedFreeBSDCommandDirs = []string{sbin, bin}
+	defer func() {
+		trustedFreeBSDCommandDirs = origDirs
+	}()
+
+	if got, ok := lookTrustedFreeBSDCommand(filepath.Join("..", "bin", "service")); ok {
+		t.Fatalf("expected relative path command name to be rejected, got %q", got)
+	}
+}
+
+func TestSanitizedFreeBSDCommandEnvDoesNotInheritCallerEnv(t *testing.T) {
+	t.Setenv("LD_PRELOAD", "bad")
+	env := sanitizedFreeBSDCommandEnv()
+	joined := strings.Join(env, "\n")
+	if strings.Contains(joined, "LD_PRELOAD=bad") {
+		t.Fatalf("sanitized env leaked caller environment: %v", env)
+	}
+	if !strings.Contains(joined, "PATH=") || !strings.Contains(joined, "HOME=/root") {
+		t.Fatalf("sanitized env missing required defaults: %v", env)
 	}
 }

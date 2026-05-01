@@ -66,6 +66,106 @@ func TestDecodeTCP_IPv6Fragmented(t *testing.T) {
 	}
 }
 
+func TestDecodeTCP_IPv4TotalLengthTrimsTrailingBytes(t *testing.T) {
+	data := append(testIPv4TCPPacket(), 0xde, 0xad, 0xbe, 0xef)
+	binary.BigEndian.PutUint16(data[2:4], uint16(len(testIPv4TCPPacket())))
+	pkt := &Packet{Data: data}
+	if err := DecodeTCP(pkt); err != nil {
+		t.Fatalf("DecodeTCP failed: %v", err)
+	}
+	if got, want := len(pkt.Data), len(testIPv4TCPPacket()); got != want {
+		t.Fatalf("decoded data length = %d, want %d", got, want)
+	}
+	if payload := pkt.Payload(); len(payload) != 0 {
+		t.Fatalf("expected trailing bytes outside IPv4 total length to be ignored, payload=%x", payload)
+	}
+}
+
+func TestDecodeTCP_IPv4RejectsInvalidTotalLength(t *testing.T) {
+	data := testIPv4TCPPacket()
+	binary.BigEndian.PutUint16(data[2:4], 39)
+	pkt := &Packet{Data: data}
+	err := DecodeTCP(pkt)
+	if !errors.Is(err, ErrTooShort) {
+		t.Fatalf("expected ErrTooShort, got %v", err)
+	}
+}
+
+func TestDecodeTCP_RestoresIPv4PacketOnNonTCPErrorAfterLengthTrim(t *testing.T) {
+	data := append(testIPv4TCPPacket(), 0xde, 0xad, 0xbe, 0xef)
+	binary.BigEndian.PutUint16(data[2:4], uint16(len(testIPv4TCPPacket())))
+	data[9] = 17
+	originalLen := len(data)
+	originalMeta := Meta{IPVersion: 99, PayloadOffset: 7}
+	pkt := &Packet{Data: data, Meta: originalMeta}
+
+	err := DecodeTCP(pkt)
+	if !errors.Is(err, ErrNotTCP) {
+		t.Fatalf("expected ErrNotTCP, got %v", err)
+	}
+	if len(pkt.Data) != originalLen {
+		t.Fatalf("DecodeTCP trimmed fail-open IPv4 packet: len=%d want=%d", len(pkt.Data), originalLen)
+	}
+	if pkt.Meta != originalMeta {
+		t.Fatalf("DecodeTCP mutated meta on error: got %+v want %+v", pkt.Meta, originalMeta)
+	}
+}
+
+func TestDecodeTCP_IPv6PayloadLengthTrimsTrailingBytes(t *testing.T) {
+	data := append(testIPv6TCPPacket(), 0xde, 0xad, 0xbe, 0xef)
+	binary.BigEndian.PutUint16(data[4:6], 20)
+	pkt := &Packet{Data: data}
+	if err := DecodeTCP(pkt); err != nil {
+		t.Fatalf("DecodeTCP failed: %v", err)
+	}
+	if got, want := len(pkt.Data), len(testIPv6TCPPacket()); got != want {
+		t.Fatalf("decoded data length = %d, want %d", got, want)
+	}
+	if payload := pkt.Payload(); len(payload) != 0 {
+		t.Fatalf("expected trailing bytes outside IPv6 payload length to be ignored, payload=%x", payload)
+	}
+}
+
+func TestDecodeTCP_RestoresIPv6PacketOnNonTCPErrorAfterLengthTrim(t *testing.T) {
+	data := append(testIPv6TCPPacket(), 0xde, 0xad, 0xbe, 0xef)
+	binary.BigEndian.PutUint16(data[4:6], 20)
+	data[6] = 17
+	originalLen := len(data)
+	originalMeta := Meta{IPVersion: 99, PayloadOffset: 7}
+	pkt := &Packet{Data: data, Meta: originalMeta}
+
+	err := DecodeTCP(pkt)
+	if !errors.Is(err, ErrNotTCP) {
+		t.Fatalf("expected ErrNotTCP, got %v", err)
+	}
+	if len(pkt.Data) != originalLen {
+		t.Fatalf("DecodeTCP trimmed fail-open IPv6 packet: len=%d want=%d", len(pkt.Data), originalLen)
+	}
+	if pkt.Meta != originalMeta {
+		t.Fatalf("DecodeTCP mutated meta on error: got %+v want %+v", pkt.Meta, originalMeta)
+	}
+}
+
+func TestDecodeTCP_IPv6RejectsTooLargePayloadLength(t *testing.T) {
+	data := testIPv6TCPPacket()
+	binary.BigEndian.PutUint16(data[4:6], 21)
+	pkt := &Packet{Data: data}
+	err := DecodeTCP(pkt)
+	if !errors.Is(err, ErrTooShort) {
+		t.Fatalf("expected ErrTooShort, got %v", err)
+	}
+}
+
+func TestDecodeTCP_IPv6RejectsUnsupportedJumboPayload(t *testing.T) {
+	data := testIPv6TCPPacket()
+	binary.BigEndian.PutUint16(data[4:6], 0)
+	pkt := &Packet{Data: data}
+	err := DecodeTCP(pkt)
+	if !errors.Is(err, ErrIPv6Jumbo) {
+		t.Fatalf("expected ErrIPv6Jumbo, got %v", err)
+	}
+}
+
 func testIPv6TCPPacket() []byte {
 	buf := make([]byte, 60)
 	buf[0] = 0x60

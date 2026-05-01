@@ -5,27 +5,72 @@ stages:
 
 variables:
   DIST_DIR: "dist/release"
+  STATICCHECK_VERSION: "2025.1.1"
+  GOLANGCI_LINT_VERSION: "v1.64.8"
 
 build_release:
   stage: build
   image: golang:1.25.8-bookworm
   rules:
     - if: $CI_COMMIT_TAG
+    - if: ($CI_COMMIT_BRANCH || $CI_MERGE_REQUEST_IID) && $WINDOWS_E2E == "1"
   before_script:
     - apt-get update
-    - apt-get install -y --no-install-recommends zip msitools osslsigncode openssl pkg-config gcc
+    - apt-get install -y --no-install-recommends zip wixl msitools osslsigncode openssl pkg-config gcc
   script:
     - set -eu
+    - |
+      validate_release_version() {
+        value="$1"
+        case "$value" in
+          ''|.*|*/*|*\\*)
+            echo "Invalid release version: $value"
+            exit 1
+            ;;
+        esac
+        if ! printf '%s\n' "$value" | grep -Eq '^v?[0-9][0-9A-Za-z._+-]*$'; then
+          echo "Invalid release version: $value"
+          exit 1
+        fi
+      }
+    - |
+      safe_remove_dir() {
+        path="$1"
+        expected_parent="$2"
+        case "$path" in
+          ""|"/"|"."|".."|*"/.."|*"/../"*)
+            echo "Refusing to remove unsafe directory: $path"
+            exit 1
+            ;;
+        esac
+        case "$path" in
+          "$expected_parent"/*) ;;
+          *)
+            echo "Refusing to remove directory outside $expected_parent: $path"
+            exit 1
+            ;;
+        esac
+        if [ -L "$path" ]; then
+          echo "Refusing to remove symlink directory: $path"
+          exit 1
+        fi
+        rm -rf "$path"
+      }
     - mkdir -p "$DIST_DIR"
-    - PKG_VERSION="$CI_COMMIT_TAG"
+    - PKG_VERSION="${CI_COMMIT_TAG:-0.0.0-ci.${CI_PIPELINE_IID:-0}}"
+    - validate_release_version "$PKG_VERSION"
     - MSI_VERSION="$(echo "$PKG_VERSION" | sed -E 's/^v?([0-9]+)(\\.([0-9]+))?(\\.([0-9]+))?.*$/\\1.\\3.\\5/' | awk -F. '{ printf \"%d.%d.%d\", $1, ($2==\"\"?0:$2), ($3==\"\"?0:$3) }')"
     - BASE_DIR="$DIST_DIR"
     - cp scripts/install_one_touch_curl.sh "$BASE_DIR/install_one_touch_curl.sh"
     - stage_common() {
         dest="$1";
-        mkdir -p "$dest/docs" "$dest/licenses";
+        mkdir -p "$dest/docs/examples" "$dest/docs/schema" "$dest/licenses";
         cp LICENSE "$dest/";
+        cp README.md SECURITY.md "$dest/";
+        cp docs/DESIGN.md "$dest/docs/";
         cp docs/THIRD_PARTY_NOTICES.md "$dest/docs/";
+        cp docs/examples/splitter.*.json "$dest/docs/examples/";
+        cp docs/schema/* "$dest/docs/schema/";
         cp third_party/windivert/WinDivert-2.2.2-A/LICENSE "$dest/licenses/WinDivert-LICENSE.txt";
         cp third_party/go-nfqueue/LICENSE "$dest/licenses/go-nfqueue-LICENSE.txt";
         cp third_party/netlink/LICENSE.md "$dest/licenses/netlink-LICENSE.txt";
@@ -41,6 +86,10 @@ build_release:
     - FREEBSD_DIR="$BASE_DIR/gov-pass-${PKG_VERSION}-freebsd-amd64"
     - mkdir -p "$FREEBSD_DIR"
     - CGO_ENABLED=0 GOOS=freebsd GOARCH=amd64 go build -o "$FREEBSD_DIR/splitter" ./cmd/splitter
+    - CGO_ENABLED=0 GOOS=freebsd GOARCH=amd64 go build -o "$FREEBSD_DIR/gov-pass-tui" ./cmd/gov-pass-tui
+    - mkdir -p "$FREEBSD_DIR/scripts/freebsd" "$FREEBSD_DIR/docs/pf"
+    - cp scripts/freebsd/gov-pass scripts/freebsd/install_pf_anchor.sh scripts/freebsd/uninstall_pf_anchor.sh scripts/freebsd/gov-pass-apply-pf.sh scripts/freebsd/gov-pass-remove-pf.sh "$FREEBSD_DIR/scripts/freebsd/"
+    - cp docs/pf/*.conf "$FREEBSD_DIR/docs/pf/"
     - stage_common "$FREEBSD_DIR"
     - tar -C "$BASE_DIR" -czf "$BASE_DIR/gov-pass-${PKG_VERSION}-freebsd-amd64.tar.gz" "gov-pass-${PKG_VERSION}-freebsd-amd64"
     - WIN_DIR="$BASE_DIR/gov-pass-${PKG_VERSION}-windows-amd64"
@@ -60,7 +109,7 @@ build_release:
     - stage_common "$WIN_DIR"
     - (cd "$BASE_DIR" && zip -r "gov-pass-${PKG_VERSION}-windows-amd64.zip" "gov-pass-${PKG_VERSION}-windows-amd64")
     - MSI_ROOT="$BASE_DIR/gov-pass-msi-root"
-    - rm -rf "$MSI_ROOT"
+    - safe_remove_dir "$MSI_ROOT" "$BASE_DIR"
     - mkdir -p "$MSI_ROOT"
     - cp -a "$WIN_DIR/." "$MSI_ROOT/"
     - WXS_OUT="$BASE_DIR/gov-pass.wxs"
@@ -71,6 +120,8 @@ build_release:
     - (cd "$BASE_DIR" && msiinfo export "gov-pass-${PKG_VERSION}-windows-amd64.msi" ServiceControl | grep -q "gov-pass")
     - (cd "$BASE_DIR" && msiinfo export "gov-pass-${PKG_VERSION}-windows-amd64.msi" Shortcut | grep -q "Reload gov-pass config")
     - (cd "$BASE_DIR" && msiinfo export "gov-pass-${PKG_VERSION}-windows-amd64.msi" Shortcut | grep -q "gov-pass TUI")
+    - (cd "$BASE_DIR" && msiinfo export "gov-pass-${PKG_VERSION}-windows-amd64.msi" File | grep -q "splitter.windows.schema.json")
+    - (cd "$BASE_DIR" && msiinfo export "gov-pass-${PKG_VERSION}-windows-amd64.msi" File | grep -q "splitter.windows.json")
     - (cd "$BASE_DIR" && sha256sum "install_one_touch_curl.sh" "gov-pass-${PKG_VERSION}-linux-amd64.tar.gz" "gov-pass-${PKG_VERSION}-freebsd-amd64.tar.gz" "gov-pass-${PKG_VERSION}-windows-amd64.zip" "gov-pass-${PKG_VERSION}-windows-amd64.msi" > SHA256SUMS)
     - bash scripts/ci/sign_release_manifests.sh "$BASE_DIR/SHA256SUMS"
   artifacts:
@@ -90,6 +141,44 @@ build_rpm_release:
     - if: $CI_COMMIT_TAG
   script:
     - set -eu
+    - |
+      validate_release_version() {
+        value="$1"
+        case "$value" in
+          ''|.*|*/*|*\\*)
+            echo "Invalid release version: $value"
+            exit 1
+            ;;
+        esac
+        if ! printf '%s\n' "$value" | grep -Eq '^v?[0-9][0-9A-Za-z._+-]*$'; then
+          echo "Invalid release version: $value"
+          exit 1
+        fi
+      }
+    - |
+      safe_remove_dir() {
+        path="$1"
+        expected_parent="$2"
+        case "$path" in
+          ""|"/"|"."|".."|*"/.."|*"/../"*)
+            echo "Refusing to remove unsafe directory: $path"
+            exit 1
+            ;;
+        esac
+        case "$path" in
+          "$expected_parent"/*) ;;
+          *)
+            echo "Refusing to remove directory outside $expected_parent: $path"
+            exit 1
+            ;;
+        esac
+        if [ -L "$path" ]; then
+          echo "Refusing to remove symlink directory: $path"
+          exit 1
+        fi
+        rm -rf "$path"
+      }
+    - validate_release_version "$CI_COMMIT_TAG"
     - dnf -y install --setopt=install_weak_deps=False rpm-build golang gcc git openssl systemd-rpm-macros rpmlint
     - mkdir -p "$DIST_DIR"
     - RAW_TAG="${CI_COMMIT_TAG#v}"
@@ -110,10 +199,11 @@ build_rpm_release:
         fi
       fi
     - RPM_TOP="$CI_PROJECT_DIR/rpmbuild"
-    - rm -rf "$RPM_TOP"
+    - safe_remove_dir "$RPM_TOP" "$CI_PROJECT_DIR"
     - mkdir -p "$RPM_TOP/BUILD" "$RPM_TOP/BUILDROOT" "$RPM_TOP/RPMS" "$RPM_TOP/SOURCES" "$RPM_TOP/SPECS" "$RPM_TOP/SRPMS"
-    - git archive --format=tar --prefix="gov-pass-${RPM_VERSION}/" "$CI_COMMIT_TAG" | gzip -n > "$RPM_TOP/SOURCES/gov-pass-${RPM_VERSION}.tar.gz"
+    - git archive --format=tar --prefix="gov-pass-${RPM_VERSION}/" HEAD | gzip -n > "$RPM_TOP/SOURCES/gov-pass-${RPM_VERSION}.tar.gz"
     - cp packaging/rpm/gov-pass.spec "$RPM_TOP/SPECS/"
+    - sed -i -E "s/(^\\* .* - )[0-9][^[:space:]]*/\\1${RPM_VERSION}-${RPM_RELEASE}/" "$RPM_TOP/SPECS/gov-pass.spec"
     - cp packaging/rpm/gov-pass.service packaging/rpm/gov-pass.sysconfig "$RPM_TOP/SOURCES/"
     - rpmbuild -ba --define "_topdir $RPM_TOP" --define "gov_pass_version $RPM_VERSION" --define "gov_pass_release $RPM_RELEASE" "$RPM_TOP/SPECS/gov-pass.spec"
     - BIN_RPM="$(ls "$RPM_TOP"/RPMS/x86_64/gov-pass-"$RPM_VERSION"-*.x86_64.rpm | head -n1)"
@@ -138,11 +228,26 @@ build_deb_release:
     - if: $CI_COMMIT_TAG
   script:
     - set -eu
+    - |
+      validate_release_version() {
+        value="$1"
+        case "$value" in
+          ''|.*|*/*|*\\*)
+            echo "Invalid release version: $value"
+            exit 1
+            ;;
+        esac
+        if ! printf '%s\n' "$value" | grep -Eq '^v?[0-9][0-9A-Za-z._+-]*$'; then
+          echo "Invalid release version: $value"
+          exit 1
+        fi
+      }
+    - validate_release_version "$CI_COMMIT_TAG"
     - apt-get update
     - apt-get install -y --no-install-recommends dpkg-dev git openssl
     - mkdir -p "$DIST_DIR"
     - RAW_TAG="${CI_COMMIT_TAG#v}"
-    - bash packaging/deb/build_deb.sh "$RAW_TAG"
+    - GOV_PASS_GO_BIN="$(command -v go)" bash packaging/deb/build_deb.sh "$RAW_TAG"
     - BIN_DEB="dist/gov-pass_${RAW_TAG}_amd64.deb"
     - test -f "$BIN_DEB"
     - cp "$BIN_DEB" "$DIST_DIR/gov-pass-${CI_COMMIT_TAG}-linux-amd64.deb"
@@ -162,14 +267,28 @@ verify_go_tests:
     - apt-get update
     - apt-get install -y --no-install-recommends pkg-config gcc
   script:
-    - bash -n scripts/install_one_touch_curl.sh
-    - bash -n scripts/linux/install_nfqueue.sh
-    - bash -n scripts/linux/uninstall_nfqueue.sh
-    - bash -n scripts/linux/netns_integration_test.sh
-    - bash -n scripts/ci/sign_release_manifests.sh
-    - bash -n scripts/ci/verify_release_manifest_signature.sh
+    - find scripts packaging -type f -name '*.sh' -print0 | sort -z | xargs -0 -r -n1 bash -n
     - go test ./... -count=1
     - go vet ./...
+
+verify_static_analysis:
+  stage: verify
+  image: golang:1.25.8-bookworm
+  script:
+    - set -eu
+    - GOBIN="$CI_PROJECT_DIR/.bin" go install "honnef.co/go/tools/cmd/staticcheck@$STATICCHECK_VERSION"
+    - GOBIN="$CI_PROJECT_DIR/.bin" go install "github.com/golangci/golangci-lint/cmd/golangci-lint@$GOLANGCI_LINT_VERSION"
+    - .bin/staticcheck ./...
+    - .bin/golangci-lint run ./...
+
+verify_race_tests:
+  stage: verify
+  image: golang:1.25.8-bookworm
+  before_script:
+    - apt-get update
+    - apt-get install -y --no-install-recommends pkg-config gcc
+  script:
+    - go test -race -count=1 ./internal/engine ./cmd/splitter ./cmd/gov-pass-tui
 
 verify_cross_builds:
   stage: verify
@@ -184,6 +303,10 @@ verify_cross_builds:
     - CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o dist/verify/splitter-windows-amd64.exe ./cmd/splitter
     - CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o dist/verify/gov-pass-tui-windows-amd64.exe ./cmd/gov-pass-tui
     - CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o dist/verify/gov-pass-msi-helper-windows-amd64.exe ./cmd/gov-pass-msi-helper
+    - CGO_ENABLED=0 GOOS=freebsd GOARCH=amd64 go test -c -o dist/verify/splitter-freebsd-amd64.test ./cmd/splitter
+    - CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go test -c -o dist/verify/splitter-windows-amd64.test.exe ./cmd/splitter
+    - CGO_ENABLED=0 GOOS=freebsd GOARCH=amd64 go test -c -o dist/verify/gov-pass-tui-freebsd-amd64.test ./cmd/gov-pass-tui
+    - CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go test -c -o dist/verify/gov-pass-tui-windows-amd64.test.exe ./cmd/gov-pass-tui
 
 verify_release_signing_helpers:
   stage: verify
@@ -216,6 +339,7 @@ verify_linux_netns_e2e:
   image: golang:1.25.8-bookworm
   rules:
     - if: $CI_COMMIT_TAG
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - if: ($CI_COMMIT_BRANCH || $CI_MERGE_REQUEST_IID) && $LINUX_NETNS_E2E == "1"
   tags:
     - linux-root
@@ -230,6 +354,7 @@ verify_windows_msi_e2e:
   stage: verify
   rules:
     - if: $CI_COMMIT_TAG && $WINDOWS_E2E == "1"
+    - if: ($CI_COMMIT_BRANCH || $CI_MERGE_REQUEST_IID) && $WINDOWS_E2E == "1"
   needs:
     - job: build_release
       artifacts: true
@@ -241,6 +366,7 @@ verify_windows_msi_e2e:
 verify_freebsd_tui_smoke:
   stage: verify
   rules:
+    - if: $CI_COMMIT_TAG && $FREEBSD_E2E == "1"
     - if: ($CI_COMMIT_BRANCH || $CI_MERGE_REQUEST_IID) && $FREEBSD_E2E == "1"
   tags:
     - freebsd-root

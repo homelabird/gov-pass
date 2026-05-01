@@ -25,6 +25,12 @@ const (
 	winDivertSvcName = "WinDivert"
 )
 
+var (
+	msiHelperKnownFolderPath = windows.KnownFolderPath
+	msiHelperSystemDirectory = windows.GetSystemDirectory
+	msiHelperStat            = os.Stat
+)
+
 func main() {
 	action := flag.String("action", "", "action: kill-tui|purge-programdata|stop-windivert|delete-windivert|verify-windivert")
 	driverDir := flag.String("windivert-dir", "", "directory containing WinDivert.dll/.sys (default: helper exe dir)")
@@ -71,12 +77,10 @@ func main() {
 }
 
 func killTuiBestEffort() error {
-	sysDir, err := windows.GetSystemDirectory()
-	taskkill := "taskkill.exe"
-	if err == nil && strings.TrimSpace(sysDir) != "" {
-		taskkill = filepath.Join(sysDir, taskkill)
+	taskkill, err := resolveMSIHelperSystem32Command("taskkill.exe")
+	if err != nil {
+		return err
 	}
-
 	cmd := exec.Command(taskkill, "/IM", tuiExeName, "/F")
 	// Suppress output: MSI logs would capture this, but we keep it quiet.
 	cmd.Stdout = nil
@@ -85,20 +89,45 @@ func killTuiBestEffort() error {
 	return nil
 }
 
-func purgeProgramDataBestEffort() error {
-	base := strings.TrimSpace(os.Getenv("ProgramData"))
-	if base == "" {
-		base = `C:\ProgramData`
+func resolveMSIHelperSystem32Command(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", errors.New("System32 command name is empty")
 	}
-	base = filepath.Clean(base)
+	if filepath.Base(name) != name || filepath.VolumeName(name) != "" {
+		return "", fmt.Errorf("System32 command name must be a bare filename: %s", name)
+	}
+	sysDir, err := msiHelperSystemDirectory()
+	if err != nil {
+		return "", fmt.Errorf("resolve System32 failed: %w", err)
+	}
+	sysDir = strings.TrimSpace(sysDir)
+	if sysDir == "" {
+		return "", errors.New("resolve System32 failed: empty path")
+	}
+	path := filepath.Join(sysDir, name)
+	if unsafe, err := windowsPathHasReparsePoint(path); err != nil {
+		return "", err
+	} else if unsafe {
+		return "", fmt.Errorf("System32 command must not be a reparse point: %s", path)
+	}
+	info, err := msiHelperStat(path)
+	if err != nil {
+		return "", err
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("System32 command is a directory: %s", path)
+	}
+	return path, nil
+}
+
+func purgeProgramDataBestEffort() error {
+	base := defaultMSIHelperProgramDataDir()
 	dir := filepath.Join(base, "gov-pass")
 
 	// Safety guard: never remove the entire ProgramData root.
-	if strings.EqualFold(filepath.Clean(dir), filepath.Clean(base)) {
-		return errors.New("refusing to remove ProgramData root")
-	}
-	if !strings.EqualFold(filepath.Base(dir), "gov-pass") {
-		return errors.New("refusing to remove unexpected directory")
+	if err := validateMSIHelperPurgeTarget(base, dir); err != nil {
+		return err
 	}
 
 	if unsafe, err := windowsPathHasReparsePoint(base); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -107,6 +136,47 @@ func purgeProgramDataBestEffort() error {
 		return errors.New("refusing to purge under ProgramData reparse point")
 	}
 	return safeRemoveAllWindows(dir)
+}
+
+func validateMSIHelperPurgeTarget(base, dir string) error {
+	base = filepath.Clean(strings.TrimSpace(base))
+	dir = filepath.Clean(strings.TrimSpace(dir))
+	if base == "" || dir == "" {
+		return errors.New("refusing to remove empty ProgramData path")
+	}
+	baseAbs, err := filepath.Abs(base)
+	if err != nil {
+		return err
+	}
+	dirAbs, err := filepath.Abs(dir)
+	if err != nil {
+		return err
+	}
+	if strings.EqualFold(dirAbs, baseAbs) {
+		return errors.New("refusing to remove ProgramData root")
+	}
+	if !strings.EqualFold(filepath.Base(dirAbs), "gov-pass") {
+		return errors.New("refusing to remove unexpected directory")
+	}
+	rel, err := filepath.Rel(baseAbs, dirAbs)
+	if err != nil {
+		return err
+	}
+	if rel == "." || rel == "" || filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return errors.New("refusing to remove path outside ProgramData")
+	}
+	if !strings.EqualFold(rel, "gov-pass") {
+		return errors.New("refusing to remove unexpected ProgramData child")
+	}
+	return nil
+}
+
+func defaultMSIHelperProgramDataDir() string {
+	base, err := msiHelperKnownFolderPath(windows.FOLDERID_ProgramData, windows.KF_FLAG_DEFAULT)
+	if err == nil && strings.TrimSpace(base) != "" {
+		return filepath.Clean(base)
+	}
+	return `C:\ProgramData`
 }
 
 func stopServiceBestEffort(name string, timeout time.Duration) error {

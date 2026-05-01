@@ -9,7 +9,9 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"unsafe"
 
+	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/debug"
 )
@@ -19,6 +21,8 @@ type serviceRunner func(ctx context.Context, reload <-chan struct{}) error
 const (
 	defaultServiceLogMaxBytes int64 = 10 * 1024 * 1024
 	defaultServiceLogMaxFiles       = 5
+	maxServiceLogMaxBytes     int64 = 1024 * 1024 * 1024
+	maxServiceLogMaxFiles           = 32
 )
 
 type serviceLogConfig struct {
@@ -26,6 +30,8 @@ type serviceLogConfig struct {
 	MaxBytes int64
 	MaxFiles int
 }
+
+var ensureSecureWindowsServiceLogDir = ensureSecureWindowsDir
 
 func isWindowsServiceProcess() bool {
 	ok, err := svc.IsWindowsService()
@@ -71,14 +77,9 @@ func setupServiceLogging(cfg serviceLogConfig) (*os.File, error) {
 		return nil, err
 	}
 
-	maxBytes := cfg.MaxBytes
-	if maxBytes <= 0 {
-		maxBytes = defaultServiceLogMaxBytes
-	}
-
-	maxFiles := cfg.MaxFiles
-	if maxFiles < 1 {
-		maxFiles = defaultServiceLogMaxFiles
+	maxBytes, maxFiles, err := effectiveServiceLogLimits(cfg)
+	if err != nil {
+		return nil, err
 	}
 
 	// Service runs as LocalSystem. Lock down ProgramData state to prevent
@@ -92,13 +93,13 @@ func setupServiceLogging(cfg serviceLogConfig) (*os.File, error) {
 	}
 
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, fmt.Errorf("create log dir failed: %w", err)
+	if err := prepareWindowsServiceLogDir(dir, managedProgramDataPath); err != nil {
+		return nil, err
 	}
 	if err := rotateServiceLog(path, maxBytes, maxFiles); err != nil {
 		return nil, fmt.Errorf("rotate service log failed: %w", err)
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	f, err := openServiceLogFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("open log file failed: %w", err)
 	}
@@ -114,12 +115,50 @@ func setupServiceLogging(cfg serviceLogConfig) (*os.File, error) {
 	return f, nil
 }
 
+func prepareWindowsServiceLogDir(dir string, managedProgramDataPath bool) error {
+	if managedProgramDataPath {
+		if err := ensureSecureWindowsServiceLogDir(dir); err != nil {
+			return fmt.Errorf("secure log dir failed: %w", err)
+		}
+		return nil
+	}
+	if err := rejectWindowsReparsePath(dir); err != nil {
+		return fmt.Errorf("create log dir failed: %w", err)
+	}
+	if err := windowsMkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create log dir failed: %w", err)
+	}
+	if err := rejectWindowsReparsePath(dir); err != nil {
+		return fmt.Errorf("create log dir failed: %w", err)
+	}
+	return nil
+}
+
+func effectiveServiceLogLimits(cfg serviceLogConfig) (int64, int, error) {
+	maxBytes := cfg.MaxBytes
+	if maxBytes <= 0 {
+		maxBytes = defaultServiceLogMaxBytes
+	}
+	if maxBytes > maxServiceLogMaxBytes {
+		return 0, 0, fmt.Errorf("service log max bytes must be <= %d", maxServiceLogMaxBytes)
+	}
+
+	maxFiles := cfg.MaxFiles
+	if maxFiles < 1 {
+		maxFiles = defaultServiceLogMaxFiles
+	}
+	if maxFiles > maxServiceLogMaxFiles {
+		return 0, 0, fmt.Errorf("service log max files must be <= %d", maxServiceLogMaxFiles)
+	}
+	return maxBytes, maxFiles, nil
+}
+
 func rotateServiceLog(path string, maxBytes int64, maxFiles int) error {
 	if maxBytes <= 0 || maxFiles < 1 {
 		return nil
 	}
 
-	info, err := os.Stat(path)
+	info, err := lstatServiceLogFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
@@ -131,27 +170,120 @@ func rotateServiceLog(path string, maxBytes int64, maxFiles int) error {
 	}
 
 	oldest := fmt.Sprintf("%s.%d", path, maxFiles)
-	_ = os.Remove(oldest)
+	if err := removeRotatedServiceLog(oldest); err != nil {
+		return err
+	}
 
 	for i := maxFiles - 1; i >= 1; i-- {
 		src := fmt.Sprintf("%s.%d", path, i)
 		dst := fmt.Sprintf("%s.%d", path, i+1)
-		if _, err := os.Stat(src); err == nil {
+		if _, err := lstatServiceLogFile(src); err == nil {
+			if err := rejectServiceLogReparsePoint(dst); err != nil {
+				return err
+			}
 			if err := os.Rename(src, dst); err != nil {
 				return err
 			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
 		}
 	}
 
-	return os.Rename(path, path+".1")
+	dst := path + ".1"
+	if err := rejectServiceLogReparsePoint(dst); err != nil {
+		return err
+	}
+	return os.Rename(path, dst)
+}
+
+func lstatServiceLogFile(path string) (os.FileInfo, error) {
+	if err := rejectServiceLogReparsePoint(path); err != nil {
+		return nil, err
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("service log path is not a regular file: %s", path)
+	}
+	return info, nil
+}
+
+func rejectServiceLogReparsePoint(path string) error {
+	unsafe, err := windowsPathHasReparsePoint(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	if unsafe {
+		return fmt.Errorf("refusing service log reparse point: %s", path)
+	}
+	return nil
+}
+
+func openServiceLogFile(path string) (*os.File, error) {
+	pathPtr, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return nil, err
+	}
+
+	handle, err := windows.CreateFile(
+		pathPtr,
+		windows.FILE_APPEND_DATA|windows.FILE_READ_ATTRIBUTES|windows.SYNCHRONIZE,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+		nil,
+		windows.OPEN_ALWAYS,
+		windows.FILE_ATTRIBUTE_NORMAL|windows.FILE_FLAG_OPEN_REPARSE_POINT,
+		0,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	var tagInfo windowsFileAttributeTagInfo
+	err = windows.GetFileInformationByHandleEx(
+		handle,
+		windows.FileAttributeTagInfo,
+		(*byte)(unsafe.Pointer(&tagInfo)),
+		uint32(unsafe.Sizeof(tagInfo)),
+	)
+	if err != nil {
+		_ = windows.CloseHandle(handle)
+		return nil, err
+	}
+	if tagInfo.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+		_ = windows.CloseHandle(handle)
+		return nil, fmt.Errorf("refusing service log reparse point: %s", path)
+	}
+
+	f := os.NewFile(uintptr(handle), path)
+	info, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		_ = f.Close()
+		return nil, fmt.Errorf("service log path is not a regular file: %s", path)
+	}
+	return f, nil
+}
+
+func removeRotatedServiceLog(path string) error {
+	if err := rejectServiceLogReparsePoint(path); err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 func defaultServiceLogPath() string {
-	base := os.Getenv("ProgramData")
-	if base == "" {
-		base = `C:\ProgramData`
-	}
-	return filepath.Join(base, "gov-pass", "splitter.log")
+	return filepath.Join(defaultProgramDataDir(), "gov-pass", "splitter.log")
 }
 
 type splitterService struct {

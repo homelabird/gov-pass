@@ -12,9 +12,149 @@ function Test-IsAdmin {
   return $p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
+function Get-System32Command {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Name
+  )
+
+  if ([IO.Path]::GetFileName($Name) -ne $Name) {
+    throw "System32 command name must be a bare filename: $Name"
+  }
+  $sysDir = [Environment]::SystemDirectory
+  if ([string]::IsNullOrWhiteSpace($sysDir)) {
+    throw "Unable to resolve System32"
+  }
+  $path = Join-Path $sysDir $Name
+  if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+    throw "System32 command not found: $path"
+  }
+  Assert-NoReparsePath -Path $path -Label "System32 command"
+  return $path
+}
+
+function Test-ReparsePoint {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Path
+  )
+  if (-not (Test-Path -LiteralPath $Path)) {
+    return $false
+  }
+  $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+  return (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)
+}
+
+function Assert-NoReparsePoint {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Path,
+    [Parameter(Mandatory = $true)]
+    [string]$Label
+  )
+  if ((Test-Path -LiteralPath $Path) -and (Test-ReparsePoint -Path $Path)) {
+    throw "$Label must not be a reparse point: $Path"
+  }
+}
+
+function Assert-NoReparsePath {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Path,
+    [Parameter(Mandatory = $true)]
+    [string]$Label
+  )
+
+  $current = [IO.Path]::GetFullPath($Path)
+  while (-not [string]::IsNullOrWhiteSpace($current)) {
+    if (Test-Path -LiteralPath $current) {
+      Assert-NoReparsePoint -Path $current -Label "$Label path component"
+    }
+    $parent = Split-Path -Parent $current
+    if ([string]::IsNullOrWhiteSpace($parent) -or $parent -eq $current) {
+      break
+    }
+    $current = $parent
+  }
+}
+
+function Assert-ParentNoReparsePoint {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Path,
+    [Parameter(Mandatory = $true)]
+    [string]$Label
+  )
+  $parent = Split-Path -Parent $Path
+  if (-not [string]::IsNullOrWhiteSpace($parent)) {
+    Assert-NoReparsePath -Path $parent -Label "$Label parent"
+  }
+}
+
+function Remove-SafeFileIfPresent {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Path,
+    [Parameter(Mandatory = $true)]
+    [string]$Label
+  )
+  Assert-ParentNoReparsePoint -Path $Path -Label $Label
+  if (-not (Test-Path -LiteralPath $Path)) {
+    return
+  }
+  Assert-NoReparsePoint -Path $Path -Label $Label
+  if (Test-Path -LiteralPath $Path -PathType Container) {
+    throw "$Label must not be a directory: $Path"
+  }
+  Remove-Item -Force -LiteralPath $Path
+}
+
+function Get-SafeTextFile {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Path,
+    [Parameter(Mandatory = $true)]
+    [string]$Label
+  )
+  Assert-NoReparsePath -Path $Path -Label $Label
+  return Get-Content -Raw -LiteralPath $Path
+}
+
+function Set-SafeTextFile {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Path,
+    [Parameter(Mandatory = $true)]
+    [string]$Value,
+    [Parameter(Mandatory = $true)]
+    [string]$Label
+  )
+  Assert-ParentNoReparsePoint -Path $Path -Label $Label
+  if (Test-Path -LiteralPath $Path) {
+    Assert-NoReparsePoint -Path $Path -Label $Label
+    if (Test-Path -LiteralPath $Path -PathType Container) {
+      throw "$Label must not be a directory: $Path"
+    }
+  }
+  Set-Content -Encoding ASCII -LiteralPath $Path -Value $Value
+}
+
 if (-not (Test-IsAdmin)) {
   throw "Administrator privileges are required to install/uninstall MSI and manage services in CI."
 }
+
+$MsiExecPath = Get-System32Command "msiexec.exe"
+$ScExePath = Get-System32Command "sc.exe"
+$commonAppData = [Environment]::GetFolderPath([Environment+SpecialFolder]::CommonApplicationData)
+if ([string]::IsNullOrWhiteSpace($commonAppData)) {
+  $commonAppData = "C:\ProgramData"
+}
+$programFiles = [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)
+if ([string]::IsNullOrWhiteSpace($programFiles)) {
+  $programFiles = "C:\Program Files"
+}
+Assert-NoReparsePath -Path $commonAppData -Label "CommonApplicationData"
+Assert-NoReparsePath -Path $programFiles -Label "ProgramFiles"
 
 $projectDir = $env:CI_PROJECT_DIR
 if ([string]::IsNullOrWhiteSpace($projectDir)) {
@@ -38,7 +178,7 @@ function Invoke-MsiExec {
     [string[]]$Args,
     [int[]]$OkExitCodes = @(0, 3010)
   )
-  $p = Start-Process -FilePath "msiexec.exe" -ArgumentList $Args -Wait -PassThru
+  $p = Start-Process -FilePath $script:MsiExecPath -ArgumentList $Args -Wait -PassThru
   if ($OkExitCodes -notcontains $p.ExitCode) {
     throw "msiexec $($Args -join ' ') failed with exit code $($p.ExitCode)"
   }
@@ -87,7 +227,8 @@ function Wait-PathExists {
   )
   $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
   while ((Get-Date) -lt $deadline) {
-    if (Test-Path $Path) {
+    if (Test-Path -LiteralPath $Path) {
+      Assert-NoReparsePath -Path $Path -Label "wait path"
       return
     }
     Start-Sleep -Seconds 1
@@ -102,7 +243,7 @@ function Wait-PathMissing {
   )
   $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
   while ((Get-Date) -lt $deadline) {
-    if (-not (Test-Path $Path)) {
+    if (-not (Test-Path -LiteralPath $Path)) {
       return
     }
     Start-Sleep -Seconds 1
@@ -118,8 +259,8 @@ function Wait-LogMatch {
   )
   $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
   while ((Get-Date) -lt $deadline) {
-    if (Test-Path $Path) {
-      $content = Get-Content -Raw -Path $Path
+    if (Test-Path -LiteralPath $Path) {
+      $content = Get-SafeTextFile -Path $Path -Label "service log"
       if ($content -match $Pattern) {
         return $content
       }
@@ -185,7 +326,7 @@ function Invoke-NativeCapture {
   }
 }
 
-$programDataDir = "C:\\ProgramData\\gov-pass"
+$programDataDir = Join-Path $commonAppData "gov-pass"
 $cfgPath = Join-Path $programDataDir "config.json"
 $logPath = Join-Path $programDataDir "splitter.log"
 
@@ -199,9 +340,10 @@ function Assert-AuthenticodeSigned {
     [string]$Path
   )
 
-  if (-not (Test-Path $Path)) {
+  if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
     throw "Signature check failed: file not found: $Path"
   }
+  Assert-NoReparsePath -Path $Path -Label "signed file"
 
   $sig = Get-AuthenticodeSignature -FilePath $Path
   if (-not $sig) {
@@ -235,8 +377,8 @@ try {
   } catch {
     # ignore
   }
-  try { Remove-Item -Force -ErrorAction SilentlyContinue $cfgPath } catch { }
-  try { Remove-Item -Force -ErrorAction SilentlyContinue $logPath } catch { }
+  Remove-SafeFileIfPresent -Path $cfgPath -Label "config"
+  Remove-SafeFileIfPresent -Path $logPath -Label "service log"
 
   # Install.
   Invoke-MsiExec -Args @("/i", $MsiPath, "/qn", "/norestart") -OkExitCodes @(0, 3010) | Out-Null
@@ -244,24 +386,31 @@ try {
 
   $svc = Wait-ServiceRunning -Name $svcName -TimeoutSeconds 60
 
-  $installDir = Join-Path $env:ProgramFiles "gov-pass"
+  $installDir = Join-Path $programFiles "gov-pass"
   $exePath = Join-Path $installDir "splitter.exe"
-  if (-not (Test-Path $exePath)) {
+  if (-not (Test-Path -LiteralPath $exePath -PathType Leaf)) {
     throw "splitter.exe not found: $exePath"
   }
   Assert-AuthenticodeSigned -Path $exePath
   $tuiExePath = Join-Path $installDir "gov-pass-tui.exe"
-  if (-not (Test-Path $tuiExePath)) {
+  if (-not (Test-Path -LiteralPath $tuiExePath -PathType Leaf)) {
     throw "gov-pass-tui.exe not found: $tuiExePath"
   }
   Assert-AuthenticodeSigned -Path $tuiExePath
   $helperExePath = Join-Path $installDir "gov-pass-msi-helper.exe"
-  if (-not (Test-Path $helperExePath)) {
+  if (-not (Test-Path -LiteralPath $helperExePath -PathType Leaf)) {
     throw "gov-pass-msi-helper.exe not found: $helperExePath"
   }
   Assert-AuthenticodeSigned -Path $helperExePath
 
-  $menuDir = Join-Path $env:ProgramData "Microsoft\\Windows\\Start Menu\\Programs\\gov-pass"
+  $schemaPath = Join-Path $installDir "docs\\schema\\splitter.windows.schema.json"
+  $examplePath = Join-Path $installDir "docs\\examples\\splitter.windows.json"
+  Wait-PathExists -Path $schemaPath -TimeoutSeconds 30
+  Wait-PathExists -Path $examplePath -TimeoutSeconds 30
+  Get-SafeTextFile -Path $schemaPath -Label "schema" | ConvertFrom-Json | Out-Null
+  Get-SafeTextFile -Path $examplePath -Label "example config" | ConvertFrom-Json | Out-Null
+
+  $menuDir = Join-Path $commonAppData "Microsoft\\Windows\\Start Menu\\Programs\\gov-pass"
   $lnkTui = Join-Path $menuDir "gov-pass TUI.lnk"
   $lnkStart = Join-Path $menuDir "Start gov-pass service (Admin).lnk"
   $lnkStop = Join-Path $menuDir "Stop gov-pass service (Admin).lnk"
@@ -275,7 +424,7 @@ try {
   Wait-PathExists -Path $logPath -TimeoutSeconds 30
 
   # Mutate config so reload is observable.
-  $cfg = Get-Content -Raw -Path $cfgPath | ConvertFrom-Json
+  $cfg = Get-SafeTextFile -Path $cfgPath -Label "config" | ConvertFrom-Json
   if (-not $cfg.engine) {
     throw "config.json missing engine section"
   }
@@ -291,10 +440,10 @@ try {
   $oldChunk = [int]$cfg.engine.split_chunk
   $newChunk = $oldChunk + 1
   $cfg.engine.split_chunk = $newChunk
-  ($cfg | ConvertTo-Json -Depth 16) + "`n" | Set-Content -Encoding ASCII -Path $cfgPath
+  Set-SafeTextFile -Path $cfgPath -Value (($cfg | ConvertTo-Json -Depth 16) + "`n") -Label "config"
 
   # Reload.
-  & sc.exe control $svcName paramchange | Out-Host
+  & $ScExePath control $svcName paramchange | Out-Host
   Start-Sleep -Seconds 2
 
   $svc = Get-Service -Name $svcName -ErrorAction Stop
@@ -326,9 +475,9 @@ try {
   $cfg.windivert.queue_len = 0
   $cfg.windivert.queue_time_ms = 0
   $cfg.windivert.queue_size_bytes = 0
-  ($cfg | ConvertTo-Json -Depth 16) + "`n" | Set-Content -Encoding ASCII -Path $cfgPath
+  Set-SafeTextFile -Path $cfgPath -Value (($cfg | ConvertTo-Json -Depth 16) + "`n") -Label "config"
 
-  & sc.exe control $svcName paramchange | Out-Host
+  & $ScExePath control $svcName paramchange | Out-Host
   Start-Sleep -Seconds 2
 
   $svc = Get-Service -Name $svcName -ErrorAction Stop

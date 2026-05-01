@@ -6,8 +6,10 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc"
 )
 
@@ -102,17 +104,14 @@ func TestResolveTrustedWindowsCommand(t *testing.T) {
 		t.Fatalf("write sc.exe: %v", err)
 	}
 
-	origRoot := windowsSystemRootProvider
-	origLookPath := windowsCommandLookPath
+	origDirs := windowsCommandDirsProvider
 	origStat := windowsCommandStat
 	defer func() {
-		windowsSystemRootProvider = origRoot
-		windowsCommandLookPath = origLookPath
+		windowsCommandDirsProvider = origDirs
 		windowsCommandStat = origStat
 	}()
 
-	windowsSystemRootProvider = func() string { return root }
-	windowsCommandLookPath = func(name string) (string, error) { return scPath, nil }
+	windowsCommandDirsProvider = func() []string { return []string{system32} }
 	windowsCommandStat = os.Stat
 
 	got, err := resolveTrustedWindowsCommand("sc")
@@ -132,20 +131,58 @@ func TestResolveTrustedWindowsCommandRejectsPoisonedPath(t *testing.T) {
 		t.Fatalf("write poison sc.exe: %v", err)
 	}
 
-	origRoot := windowsSystemRootProvider
-	origLookPath := windowsCommandLookPath
+	origDirs := windowsCommandDirsProvider
 	origStat := windowsCommandStat
 	defer func() {
-		windowsSystemRootProvider = origRoot
-		windowsCommandLookPath = origLookPath
+		windowsCommandDirsProvider = origDirs
 		windowsCommandStat = origStat
 	}()
 
-	windowsSystemRootProvider = func() string { return root }
-	windowsCommandLookPath = func(name string) (string, error) { return poisonPath, nil }
+	windowsCommandDirsProvider = func() []string { return []string{filepath.Join(root, "System32")} }
 	windowsCommandStat = os.Stat
 
 	if got, err := resolveTrustedWindowsCommand("sc"); err == nil {
 		t.Fatalf("expected poisoned path to be rejected, got %q", got)
+	}
+}
+
+func TestResolveTrustedWindowsCommandRejectsRelativePathName(t *testing.T) {
+	if got, err := resolveTrustedWindowsCommand(filepath.Join("..", "System32", "sc")); err == nil {
+		t.Fatalf("expected relative path command name to be rejected, got %q", got)
+	}
+}
+
+func TestResolveTrustedWindowsCommandRejectsReparsePoint(t *testing.T) {
+	root := t.TempDir()
+	system32 := filepath.Join(root, "System32")
+	if err := os.MkdirAll(system32, 0o755); err != nil {
+		t.Fatalf("mkdir system32: %v", err)
+	}
+	scPath := filepath.Join(system32, "sc.exe")
+	if err := os.WriteFile(scPath, []byte("test"), 0o644); err != nil {
+		t.Fatalf("write sc.exe: %v", err)
+	}
+
+	origDirs := windowsCommandDirsProvider
+	origStat := windowsCommandStat
+	origAttrs := windowsCommandGetFileAttributes
+	defer func() {
+		windowsCommandDirsProvider = origDirs
+		windowsCommandStat = origStat
+		windowsCommandGetFileAttributes = origAttrs
+	}()
+
+	windowsCommandDirsProvider = func() []string { return []string{system32} }
+	windowsCommandStat = os.Stat
+	windowsCommandGetFileAttributes = func(path *uint16) (uint32, error) {
+		if filepath.Clean(windows.UTF16PtrToString(path)) == scPath {
+			return windows.FILE_ATTRIBUTE_REPARSE_POINT, nil
+		}
+		return 0, windows.ERROR_FILE_NOT_FOUND
+	}
+
+	_, err := resolveTrustedWindowsCommand("sc")
+	if err == nil || !strings.Contains(err.Error(), "reparse point") {
+		t.Fatalf("expected reparse point rejection, got %v", err)
 	}
 }

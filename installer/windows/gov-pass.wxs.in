@@ -64,6 +64,8 @@
     <Feature Id="ProductFeature" Title="gov-pass" Level="1">
       <ComponentRef Id="cmpMain" />
       <ComponentRef Id="cmpDocs" />
+      <ComponentRef Id="cmpDocExamples" />
+      <ComponentRef Id="cmpDocSchemas" />
       <ComponentRef Id="cmpLicenses" />
       <ComponentRef Id="cmpStartMenu" />
     </Feature>
@@ -73,7 +75,10 @@
     <Directory Id="TARGETDIR" Name="SourceDir">
       <Directory Id="ProgramFiles64Folder">
         <Directory Id="INSTALLFOLDER" Name="gov-pass">
-          <Directory Id="DocsFolder" Name="docs" />
+          <Directory Id="DocsFolder" Name="docs">
+            <Directory Id="DocsExamplesFolder" Name="examples" />
+            <Directory Id="DocsSchemaFolder" Name="schema" />
+          </Directory>
           <Directory Id="LicensesFolder" Name="licenses" />
         </Directory>
       </Directory>
@@ -120,7 +125,28 @@
 
     <DirectoryRef Id="DocsFolder">
       <Component Id="cmpDocs" Guid="F4C7B5C6-5C01-4C3F-9F0C-8A7A4B15F8A1" Win64="yes">
-        <File Id="fileThirdPartyNotices" Source="{{SOURCE_DIR}}/docs/THIRD_PARTY_NOTICES.md" KeyPath="yes" />
+        <File Id="fileReadme" Source="{{SOURCE_DIR}}/README.md" KeyPath="yes" />
+        <File Id="fileSecurity" Source="{{SOURCE_DIR}}/SECURITY.md" />
+        <File Id="fileDesign" Source="{{SOURCE_DIR}}/docs/DESIGN.md" />
+        <File Id="fileThirdPartyNotices" Source="{{SOURCE_DIR}}/docs/THIRD_PARTY_NOTICES.md" />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="DocsExamplesFolder">
+      <Component Id="cmpDocExamples" Guid="C44BB842-5B53-4271-831B-C2405CDC362D" Win64="yes">
+        <File Id="fileExampleFreeBSD" Source="{{SOURCE_DIR}}/docs/examples/splitter.freebsd.json" KeyPath="yes" />
+        <File Id="fileExampleLinux" Source="{{SOURCE_DIR}}/docs/examples/splitter.linux.json" />
+        <File Id="fileExampleWindows" Source="{{SOURCE_DIR}}/docs/examples/splitter.windows.json" />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="DocsSchemaFolder">
+      <Component Id="cmpDocSchemas" Guid="265D5ECF-D088-4DDF-A5E9-94904A46678F" Win64="yes">
+        <File Id="fileSchemaReadme" Source="{{SOURCE_DIR}}/docs/schema/README.md" KeyPath="yes" />
+        <File Id="fileSchemaCommon" Source="{{SOURCE_DIR}}/docs/schema/splitter.common.schema.json" />
+        <File Id="fileSchemaFreeBSD" Source="{{SOURCE_DIR}}/docs/schema/splitter.freebsd.schema.json" />
+        <File Id="fileSchemaLinux" Source="{{SOURCE_DIR}}/docs/schema/splitter.linux.schema.json" />
+        <File Id="fileSchemaWindows" Source="{{SOURCE_DIR}}/docs/schema/splitter.windows.schema.json" />
       </Component>
     </DirectoryRef>
 

@@ -17,14 +17,3 @@ func sendPacket(ctx context.Context, ad adapter.Adapter, pkt *packet.Packet) err
 	pkt.Release()
 	return nil
 }
-
-func dropPacket(ctx context.Context, ad adapter.Adapter, pkt *packet.Packet) error {
-	if pkt == nil {
-		return nil
-	}
-	if err := ad.Drop(ctx, pkt); err != nil {
-		return err
-	}
-	pkt.Release()
-	return nil
-}

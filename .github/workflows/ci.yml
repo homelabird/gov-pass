@@ -1,0 +1,98 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: Go Test And Build
+    runs-on: ubuntu-24.04
+    env:
+      STATICCHECK_VERSION: 2025.1.1
+      GOLANGCI_LINT_VERSION: v1.64.8
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install static analysis tools
+        run: |
+          set -euo pipefail
+          GOBIN="$PWD/.bin" go install honnef.co/go/tools/cmd/staticcheck@${STATICCHECK_VERSION}
+          GOBIN="$PWD/.bin" go install github.com/golangci/golangci-lint/cmd/golangci-lint@${GOLANGCI_LINT_VERSION}
+
+      - name: Test
+        run: go test ./... -count=1
+
+      - name: Race tests
+        run: go test -race -count=1 ./internal/engine ./cmd/splitter ./cmd/gov-pass-tui
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Staticcheck
+        run: ./.bin/staticcheck ./...
+
+      - name: GolangCI-Lint
+        run: ./.bin/golangci-lint run ./...
+
+      - name: Validate scripts and config examples
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          for root, pattern in (("docs/examples", "splitter.*.json"), ("docs/schema", "*.json")):
+              for path in sorted(Path(root).glob(pattern)):
+                  with path.open("r", encoding="utf-8") as fh:
+                      json.load(fh)
+                  print(f"{path}: ok")
+          PY
+          while IFS= read -r -d '' script; do
+            bash -n "$script"
+          done < <(find scripts packaging -type f -name '*.sh' -print0 | sort -z)
+          systemd-analyze verify scripts/linux/gov-pass.service packaging/deb/gov-pass.service packaging/rpm/gov-pass.service
+
+      - name: Verify release signing helpers
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$tmp/release-key.pem"
+          openssl pkey -in "$tmp/release-key.pem" -pubout -out "$tmp/release-pub.pem"
+          printf 'deadbeef  gov-pass-test.tar.gz\n' > "$tmp/SHA256SUMS"
+          RELEASE_CHECKSUM_SIGNING_KEY_PATH="$tmp/release-key.pem" bash scripts/ci/sign_release_manifests.sh "$tmp/SHA256SUMS"
+          RELEASE_CHECKSUM_VERIFY_PUBKEY_PATH="$tmp/release-pub.pem" bash scripts/ci/verify_release_manifest_signature.sh "$tmp/SHA256SUMS"
+
+      - name: Cross-build commands
+        run: |
+          set -euo pipefail
+          mkdir -p dist/verify
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o dist/verify/splitter-linux-amd64 ./cmd/splitter
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o dist/verify/gov-pass-tui-linux-amd64 ./cmd/gov-pass-tui
+          CGO_ENABLED=0 GOOS=freebsd GOARCH=amd64 go build -o dist/verify/splitter-freebsd-amd64 ./cmd/splitter
+          CGO_ENABLED=0 GOOS=freebsd GOARCH=amd64 go build -o dist/verify/gov-pass-tui-freebsd-amd64 ./cmd/gov-pass-tui
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o dist/verify/splitter-windows-amd64.exe ./cmd/splitter
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o dist/verify/gov-pass-tui-windows-amd64.exe ./cmd/gov-pass-tui
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o dist/verify/gov-pass-msi-helper-windows-amd64.exe ./cmd/gov-pass-msi-helper
+
+      - name: Cross-compile platform tests
+        run: |
+          set -euo pipefail
+          CGO_ENABLED=0 GOOS=freebsd GOARCH=amd64 go test -c -o dist/verify/splitter-freebsd-amd64.test ./cmd/splitter
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go test -c -o dist/verify/splitter-windows-amd64.test.exe ./cmd/splitter
+          CGO_ENABLED=0 GOOS=freebsd GOARCH=amd64 go test -c -o dist/verify/gov-pass-tui-freebsd-amd64.test ./cmd/gov-pass-tui
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go test -c -o dist/verify/gov-pass-tui-windows-amd64.test.exe ./cmd/gov-pass-tui

@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "splitter.linux.schema.json",
+  "title": "gov-pass splitter Linux JSON config",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "engine": {
+      "$ref": "splitter.common.schema.json#/$defs/engine"
+    },
+    "linux": {
+      "$ref": "#/$defs/linux"
+    }
+  },
+  "$defs": {
+    "linux": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "queue_num": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535,
+          "default": 100
+        },
+        "queue_maxlen": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295,
+          "default": 4096
+        },
+        "copy_range": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295,
+          "default": 65535
+        },
+        "recv_buffer": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65536,
+          "description": "In-process NFQUEUE receive buffer. 0 derives from queue_maxlen with an internal cap.",
+          "default": 0
+        },
+        "mark": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295,
+          "description": "SO_MARK used to bypass reinjected packets. auto_rules=true requires mark > 0.",
+          "default": 1
+        },
+        "auto_rules": {
+          "type": "boolean",
+          "default": true
+        },
+        "auto_offload": {
+          "type": "boolean",
+          "default": true
+        },
+        "auto_offload_restore": {
+          "type": "boolean",
+          "default": true
+        },
+        "auto_install_tools": {
+          "type": "boolean",
+          "default": true
+        },
+        "iface": {
+          "type": "string",
+          "description": "Egress interface for offload changes. Empty string enables auto-detect."
+        },
+        "no_loopback": {
+          "type": "boolean",
+          "default": false
+        }
+      }
+    }
+  }
+}

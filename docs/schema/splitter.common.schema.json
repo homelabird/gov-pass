@@ -1,0 +1,144 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "splitter.common.schema.json",
+  "title": "gov-pass splitter shared JSON config definitions",
+  "$defs": {
+    "duration": {
+      "type": "string",
+      "description": "Go time.ParseDuration value such as 250ms, 5s, 2m, or 0 to disable where supported. An empty string leaves the built-in default unchanged."
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Per-flow override. Runtime validation also requires dst_cidrs or sni_suffixes and either skip=true or at least one changed setting. skip=true must not be combined with split overrides.",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "dst_cidrs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "description": "IPv4 or IPv6 CIDR parsed by netip.ParsePrefix."
+          }
+        },
+        "sni_suffixes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 255,
+            "pattern": "^\\.?[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*\\.?$",
+            "description": "ASCII hostname suffix. Leading and trailing dots are ignored by the runtime; wildcards, underscores, empty labels, and IP literals are rejected."
+          }
+        },
+        "skip": {
+          "type": "boolean"
+        },
+        "split_mode": {
+          "type": "string",
+          "enum": [
+            "tls-hello",
+            "immediate"
+          ]
+        },
+        "split_chunk": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_segment_payload": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "engine": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "split_mode": {
+          "type": "string",
+          "enum": [
+            "tls-hello",
+            "immediate"
+          ],
+          "default": "tls-hello"
+        },
+        "split_chunk": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 5
+        },
+        "collect_timeout": {
+          "$ref": "#/$defs/duration",
+          "default": "250ms"
+        },
+        "max_buffer_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295,
+          "default": 65536
+        },
+        "max_held_packets": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 32
+        },
+        "max_segment_payload": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 1460
+        },
+        "workers": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "flow_idle_timeout": {
+          "$ref": "#/$defs/duration",
+          "default": "30s"
+        },
+        "gc_interval": {
+          "$ref": "#/$defs/duration",
+          "default": "5s"
+        },
+        "max_flows_per_worker": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 4096
+        },
+        "max_reassembly_bytes_per_worker": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 67108864
+        },
+        "max_held_bytes_per_worker": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 67108864
+        },
+        "shutdown_fail_open_timeout": {
+          "$ref": "#/$defs/duration",
+          "default": "5s"
+        },
+        "shutdown_fail_open_max_packets": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 200000
+        },
+        "adapter_flush_timeout": {
+          "$ref": "#/$defs/duration",
+          "default": "2s"
+        },
+        "stats_interval": {
+          "$ref": "#/$defs/duration",
+          "default": "60s"
+        },
+        "policies": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/policy"
+          }
+        }
+      }
+    }
+  }
+}

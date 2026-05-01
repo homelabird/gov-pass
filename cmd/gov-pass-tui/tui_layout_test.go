@@ -69,6 +69,24 @@ func TestRenderPlainTUIViewForWidth_WrapsLongLines(t *testing.T) {
 	}
 }
 
+func TestRenderPlainTUIViewForWidthWrapper(t *testing.T) {
+	status := newTUIStatus(tuiStatusInput{
+		Platform:     "Linux",
+		ServiceName:  "gov-pass",
+		RawState:     "inactive",
+		Active:       false,
+		ActiveKnown:  true,
+		Enabled:      false,
+		EnabledKnown: true,
+		Capabilities: tuiCapabilities{Reload: true},
+	})
+
+	view := renderPlainTUIViewForWidth(status, readyTUIFeedback(), 72)
+	if !strings.Contains(view, "GOV-PASS OPERATOR PANEL") {
+		t.Fatalf("rendered view missing panel header:\n%s", view)
+	}
+}
+
 func TestBuildCompactStatusSummary(t *testing.T) {
 	status := newTUIStatus(tuiStatusInput{
 		Platform:     "Windows",

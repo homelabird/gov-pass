@@ -47,6 +47,19 @@ func TestCanonicalTrustedCommandPath_RejectsSymlinkEscapingTrustedDir(t *testing
 	}
 }
 
+func TestIsBareTrustedCommandName(t *testing.T) {
+	for _, name := range []string{"systemctl", "service", "pfctl"} {
+		if !isBareTrustedCommandName(name) {
+			t.Fatalf("expected %q to be accepted as a bare command name", name)
+		}
+	}
+	for _, name := range []string{"", ".", "..", filepath.Join("..", "bin", "systemctl"), filepath.Join("subdir", "service")} {
+		if isBareTrustedCommandName(name) {
+			t.Fatalf("expected %q to be rejected as a bare command name", name)
+		}
+	}
+}
+
 func executableTestFile(path string) bool {
 	info, err := os.Stat(path)
 	if err != nil || info.IsDir() {

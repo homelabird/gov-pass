@@ -119,4 +119,3 @@ func TestEngineRun_ReturnsFlushErrorOnNonCancelStop(t *testing.T) {
 		t.Fatalf("expected error to include flush deadline exceeded, got %v", err)
 	}
 }
-

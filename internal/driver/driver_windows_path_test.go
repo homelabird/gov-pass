@@ -2,7 +2,12 @@
 
 package driver
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
 
 func TestNormalizeServicePath_QuotedPathWithArgs(t *testing.T) {
 	raw := `"C:\Program Files\gov-pass.sys dir\WinDivert64.sys" /flag`
@@ -35,5 +40,22 @@ func TestServiceTakeoverRequired(t *testing.T) {
 	report.ServiceBinPathExists = false
 	if serviceTakeoverRequired(report) {
 		t.Fatal("missing service path should be repairable without takeover")
+	}
+}
+
+func TestResolveDirRejectsSymlink(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target")
+	if err := os.Mkdir(target, 0o755); err != nil {
+		t.Fatalf("mkdir target: %v", err)
+	}
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	_, err := resolveDir(link)
+	if err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("expected symlink directory rejection, got %v", err)
 	}
 }

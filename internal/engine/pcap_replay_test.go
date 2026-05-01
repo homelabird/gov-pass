@@ -249,8 +249,8 @@ func TestPcapReplay_DropFailureAfterSplitDoesNotReinjectOriginalsOnShutdown(t *t
 	if got := joinPayloads(sends); !bytes.Equal(got, record) {
 		t.Fatalf("drop-failure replay payload mismatch: got %d bytes want %d", len(got), len(record))
 	}
-	if got := len(drops); got != 1 {
-		t.Fatalf("expected 1 attempted drop before failure, got %d", got)
+	if got := len(drops); got != len(replayPkts) {
+		t.Fatalf("expected drop attempt for every held original, got %d want %d", got, len(replayPkts))
 	}
 	snap := eng.Stats()
 	if got := snap.FailOpen[string(failOpenReasonInjectError)]; got != 1 {

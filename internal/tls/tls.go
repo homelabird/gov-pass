@@ -2,6 +2,7 @@ package tls
 
 import (
 	"encoding/binary"
+	"net/netip"
 	"strings"
 )
 
@@ -63,7 +64,7 @@ func ParseClientHello(buf []byte) (ClientHelloInfo, Result) {
 	}
 
 	handshakeLen := int(buf[6])<<16 | int(buf[7])<<8 | int(buf[8])
-	if handshakeLen <= 0 || handshakeHeaderLen+handshakeLen > int(recordLen) {
+	if handshakeLen <= 0 || handshakeHeaderLen+handshakeLen != int(recordLen) {
 		return ClientHelloInfo{}, ResultMismatch
 	}
 
@@ -82,7 +83,7 @@ func ParseClientHello(buf []byte) (ClientHelloInfo, Result) {
 
 	cipherSuitesLen := int(binary.BigEndian.Uint16(body[offset : offset+2]))
 	offset += 2
-	if cipherSuitesLen == 0 || len(body) < offset+cipherSuitesLen+1 {
+	if cipherSuitesLen == 0 || cipherSuitesLen%2 != 0 || len(body) < offset+cipherSuitesLen+1 {
 		return ClientHelloInfo{}, ResultMismatch
 	}
 	offset += cipherSuitesLen
@@ -102,7 +103,7 @@ func ParseClientHello(buf []byte) (ClientHelloInfo, Result) {
 
 	extensionsLen := int(binary.BigEndian.Uint16(body[offset : offset+2]))
 	offset += 2
-	if len(body) < offset+extensionsLen {
+	if len(body) != offset+extensionsLen {
 		return ClientHelloInfo{}, ResultMismatch
 	}
 
@@ -124,7 +125,11 @@ func ParseClientHello(buf []byte) (ClientHelloInfo, Result) {
 		if !ok {
 			return ClientHelloInfo{}, ResultMismatch
 		}
-		info.ServerName = normalizeServerName(name)
+		serverName, ok := normalizeServerName(name)
+		if !ok {
+			return ClientHelloInfo{}, ResultMismatch
+		}
+		info.ServerName = serverName
 		break
 	}
 	if len(extensions) != 0 {
@@ -139,9 +144,10 @@ func parseServerNameExtension(data []byte) (string, bool) {
 	}
 	listLen := int(binary.BigEndian.Uint16(data[:2]))
 	data = data[2:]
-	if len(data) != listLen {
+	if listLen == 0 || len(data) != listLen {
 		return "", false
 	}
+	var hostName string
 	for len(data) >= 3 {
 		nameType := data[0]
 		nameLen := int(binary.BigEndian.Uint16(data[1:3]))
@@ -154,17 +160,50 @@ func parseServerNameExtension(data []byte) (string, bool) {
 		if nameType != serverNameTypeHostName {
 			continue
 		}
+		if hostName != "" {
+			return "", false
+		}
 		if len(name) == 0 {
 			return "", false
 		}
-		return string(name), true
+		hostName = string(name)
 	}
-	return "", len(data) == 0
+	if len(data) != 0 || hostName == "" {
+		return "", false
+	}
+	return hostName, true
 }
 
-func normalizeServerName(value string) string {
-	value = strings.TrimSpace(strings.ToLower(value))
-	value = strings.TrimPrefix(value, ".")
+func normalizeServerName(value string) (string, bool) {
+	if value == "" || strings.TrimSpace(value) != value {
+		return "", false
+	}
+	value = strings.ToLower(value)
+	if strings.HasPrefix(value, ".") {
+		return "", false
+	}
 	value = strings.TrimSuffix(value, ".")
-	return value
+	if value == "" || len(value) > 253 {
+		return "", false
+	}
+	if _, err := netip.ParseAddr(value); err == nil {
+		return "", false
+	}
+
+	labels := strings.Split(value, ".")
+	for _, label := range labels {
+		if label == "" || len(label) > 63 {
+			return "", false
+		}
+		if strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
+			return "", false
+		}
+		for _, r := range label {
+			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
+				continue
+			}
+			return "", false
+		}
+	}
+	return value, true
 }

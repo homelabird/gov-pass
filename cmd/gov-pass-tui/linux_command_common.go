@@ -5,7 +5,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -21,6 +20,34 @@ var trustedLinuxTUICommandDirs = []string{
 	"/nix/var/nix/profiles/default/bin",
 }
 
+func sanitizedLinuxTUICommandEnv() []string {
+	term := safeLinuxTUITerm(os.Getenv("TERM"))
+	return []string{
+		"PATH=" + strings.Join(trustedLinuxTUICommandDirs, string(os.PathListSeparator)),
+		"LANG=C",
+		"LC_ALL=C",
+		"TERM=" + term,
+	}
+}
+
+func safeLinuxTUITerm(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || len(value) > 64 {
+		return "xterm-256color"
+	}
+	for _, r := range value {
+		switch {
+		case r >= 'A' && r <= 'Z':
+		case r >= 'a' && r <= 'z':
+		case r >= '0' && r <= '9':
+		case r == '_' || r == '-' || r == '.' || r == '+':
+		default:
+			return "xterm-256color"
+		}
+	}
+	return value
+}
+
 var linuxTUICommandLookPath = lookTrustedLinuxTUICommand
 
 func lookTrustedLinuxTUICommand(name string) (string, bool) {
@@ -34,16 +61,13 @@ func lookTrustedLinuxTUICommand(name string) (string, bool) {
 		}
 		return "", false
 	}
+	if !isBareTrustedCommandName(name) {
+		return "", false
+	}
 	for _, dir := range trustedLinuxTUICommandDirs {
 		candidate := filepath.Join(dir, name)
 		if path, ok := canonicalTrustedCommandPath(candidate, trustedLinuxTUICommandDirs, isExecutableLinuxTUICommandFile); ok {
 			return path, true
-		}
-	}
-	path, err := exec.LookPath(name)
-	if err == nil {
-		if trustedPath, ok := canonicalTrustedCommandPath(path, trustedLinuxTUICommandDirs, isExecutableLinuxTUICommandFile); ok {
-			return trustedPath, true
 		}
 	}
 	return "", false

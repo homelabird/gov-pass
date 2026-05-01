@@ -3,6 +3,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,14 +11,14 @@ import (
 	"testing"
 )
 
-func writeLinuxWhiptailScript(t *testing.T) string {
+func writeLinuxWhiptailScript(t *testing.T, choicesPath string, logPath string) string {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "fake-whiptail")
-	script := `#!/bin/sh
+	script := fmt.Sprintf(`#!/bin/sh
 set -eu
-choice_file="${FAKE_WHIPTAIL_CHOICES:?}"
-log_file="${FAKE_WHIPTAIL_LOG:?}"
+choice_file=%q
+log_file=%q
 mode=""
 msg=""
 prev=""
@@ -43,17 +44,17 @@ case "$mode" in
     if [ "$choice" = "__CANCEL__" ]; then
       exit 1
     fi
-    printf '%s' "$choice"
+    printf '%%s' "$choice"
     exit 0
     ;;
   msgbox)
-    printf '%s\n' "$msg" >> "$log_file"
+    printf '%%s\n' "$msg" >> "$log_file"
     exit 0
     ;;
 esac
-printf 'unexpected whiptail invocation: %s\n' "$*" >&2
+printf 'unexpected whiptail invocation: %%s\n' "$*" >&2
 exit 64
-`
+`, choicesPath, logPath)
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake whiptail: %v", err)
 	}
@@ -92,10 +93,10 @@ exit 64
 
 func stubLinuxWhiptailFlow(t *testing.T) (choicesPath, logPath string) {
 	t.Helper()
-	whiptailScript := writeLinuxWhiptailScript(t)
-	systemctlScript := writeLinuxSystemctlActionScript(t)
 	choicesPath = filepath.Join(t.TempDir(), "choices.txt")
 	logPath = filepath.Join(t.TempDir(), "msgbox.log")
+	whiptailScript := writeLinuxWhiptailScript(t, choicesPath, logPath)
+	systemctlScript := writeLinuxSystemctlActionScript(t)
 
 	origLookPath := linuxLookPath
 	origSystemctl := linuxSystemctlCmd
@@ -113,13 +114,9 @@ func stubLinuxWhiptailFlow(t *testing.T) (choicesPath, logPath string) {
 		}
 	}
 	linuxSystemctlCmd = func(args ...string) (*exec.Cmd, error) {
-		cmd := exec.Command(systemctlScript, args...)
-		cmd.Env = append(os.Environ(), "FAKE_WHIPTAIL_CHOICES="+choicesPath, "FAKE_WHIPTAIL_LOG="+logPath)
-		return cmd, nil
+		return exec.Command(systemctlScript, args...), nil
 	}
 
-	t.Setenv("FAKE_WHIPTAIL_CHOICES", choicesPath)
-	t.Setenv("FAKE_WHIPTAIL_LOG", logPath)
 	return choicesPath, logPath
 }
 

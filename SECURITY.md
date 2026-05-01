@@ -52,7 +52,8 @@ Hardening (implemented):
 
 External downloads:
 - Optional WinDivert file auto-download is supported.
-- The download uses a pinned official WinDivert release zip and verifies its SHA256.
+- The download uses a pinned official WinDivert release zip and verifies both
+  the zip SHA256 and extracted x64 DLL/SYS SHA256 values.
 - You can disable auto-download with `--auto-download-windivert=false` or via the service config.
 
 Release integrity:
@@ -82,7 +83,9 @@ Rules hardening (implemented):
 - nftables:
   - rules are tagged with a comment (`gov-pass`)
   - uninstall deletes only tagged rules (delete-by-handle), not user rules
-  - when using an `inet` table, the NFQUEUE rule is restricted to IPv4 (`meta nfproto ipv4 ...`).
+  - when using an `inet` table, queue rules are explicit per family
+    (`meta nfproto ipv4 ...` and `meta nfproto ipv6 ...`) instead of an
+    unqualified inet-wide match.
 - iptables:
   - uses a dedicated chain (`GOVPASS_OUTPUT`) so uninstall does not flush user rules.
 
@@ -94,8 +97,8 @@ External tool installation:
 - Disable this in locked-down environments and pre-provision tools instead.
 - Packaged/systemd service mode keeps `--auto-install-tools=false` by default so
   dependency changes do not happen during steady-state service restarts.
-- Package-manager installs run with a minimal inherited environment to reduce
-  unexpected influence from caller-controlled variables.
+- Package-manager installs resolve binaries from trusted absolute paths, run
+  with a minimal environment, and apt installs also force noninteractive mode.
 - The trusted absolute-path lookup model applies to privileged runtime and TUI
   helpers. Bootstrap installers remain operator-run setup scripts, not part of
   the steady-state service path.
@@ -112,9 +115,10 @@ Privileges:
 Operational notes:
 - pf rules should be managed via an anchor so uninstall/reload is bounded to "our rules".
 - The source installer now adds an `rc.d` service plus
-  `/usr/local/libexec/gov-pass/install_pf_anchor.sh` and
-  `/usr/local/libexec/gov-pass/uninstall_pf_anchor.sh`, but the actual anchor
-  policy still requires operator review and editing before it is applied.
+  `/usr/local/libexec/gov-pass/` PF helper scripts, but the actual anchor policy
+  still requires operator review and editing before it is applied.
+- FreeBSD PF helper `--anchor` names are intentionally limited to letters,
+  numbers, underscore, and hyphen to keep managed anchor paths bounded.
 - Privileged helper invocations resolve `service`, `sysrc`, `sudo`, `doas`, and
   `pfctl` from trusted absolute-path locations instead of the ambient `PATH`.
 - Offload may affect observed packet boundaries; validate per target NIC/OS.

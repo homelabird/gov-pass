@@ -17,7 +17,11 @@ import (
 	"fk-gov/internal/packet"
 )
 
-const nfqueueMaxPacket = 0xFFFF
+const (
+	nfqueueMaxPacket         = 0xFFFF
+	defaultNFQueueRecvBuffer = 1024
+	MaxNFQueueRecvBuffer     = 65536
+)
 
 // NFQueueAdapter handles NFQUEUE recv and raw socket injection.
 type NFQueueAdapter struct {
@@ -47,7 +51,7 @@ func NewNFQueue(opts NFQueueOptions) (*NFQueueAdapter, error) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	ad := &NFQueueAdapter{
-		recv:   make(chan *packet.Packet, 1024),
+		recv:   make(chan *packet.Packet, nfqueueRecvBufferSize(opts)),
 		errs:   make(chan error, 1),
 		ctx:    ctx,
 		stop:   cancel,
@@ -88,6 +92,26 @@ func NewNFQueue(opts NFQueueOptions) (*NFQueueAdapter, error) {
 	return ad, nil
 }
 
+func nfqueueRecvBufferSize(opts NFQueueOptions) int {
+	size := opts.RecvBufferSize
+	if size == 0 {
+		size = opts.QueueMaxLen
+	}
+	if size == 0 {
+		return defaultNFQueueRecvBuffer
+	}
+	if size > MaxNFQueueRecvBuffer {
+		return MaxNFQueueRecvBuffer
+	}
+	return int(size)
+}
+
+// NFQueueRecvBufferCapacity returns the effective in-process receive buffer
+// capacity for the provided NFQUEUE options.
+func NFQueueRecvBufferCapacity(opts NFQueueOptions) int {
+	return nfqueueRecvBufferSize(opts)
+}
+
 func (n *NFQueueAdapter) Recv(ctx context.Context) (*packet.Packet, error) {
 	select {
 	case pkt := <-n.recv:
@@ -102,11 +126,14 @@ func (n *NFQueueAdapter) Recv(ctx context.Context) (*packet.Packet, error) {
 }
 
 func (n *NFQueueAdapter) Send(ctx context.Context, pkt *packet.Packet) error {
-	if pkt == nil || len(pkt.Data) == 0 {
+	if pkt == nil {
 		return nil
 	}
 	if pkt.Source == packet.SourceCaptured {
 		return n.setVerdict(pkt, nfqueue.NfAccept)
+	}
+	if len(pkt.Data) == 0 {
+		return nil
 	}
 	return n.inject(pkt)
 }

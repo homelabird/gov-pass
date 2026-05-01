@@ -38,7 +38,7 @@ func EnsureWithReport(ctx context.Context, cfg Config) (Report, func() error, er
 	if err != nil {
 		return report, nil, err
 	}
-	if _, err := os.Stat(report.ResolvedSysPath); err != nil {
+	if err := validateWinDivertRegularFile(report.ResolvedSysPath); err != nil {
 		return report, nil, ErrDriverNotFound
 	}
 	if !cfg.AutoInstall {
@@ -196,8 +196,20 @@ func resolveDir(dir string) (string, error) {
 		}
 		dir = filepath.Dir(exe)
 	}
-	if _, err := os.Stat(dir); err != nil {
+	info, err := os.Lstat(dir)
+	if err != nil {
 		return "", err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("WinDivert directory must not be a symlink: %s", dir)
+	}
+	if unsafe, err := winDivertPathHasReparsePoint(dir); err != nil {
+		return "", err
+	} else if unsafe {
+		return "", fmt.Errorf("WinDivert directory must not be a reparse point: %s", dir)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("WinDivert directory must be a directory: %s", dir)
 	}
 	return dir, nil
 }
@@ -212,7 +224,7 @@ func resolveSysPath(dir, name string) (string, error) {
 func probeSysPath(dir, name string) (string, bool) {
 	if name != "" {
 		path := filepath.Join(dir, name)
-		if _, err := os.Stat(path); err == nil {
+		if err := validateWinDivertRegularFile(path); err == nil {
 			return path, true
 		}
 		return path, false
@@ -221,7 +233,7 @@ func probeSysPath(dir, name string) (string, bool) {
 	candidates := []string{"WinDivert64.sys", "WinDivert.sys"}
 	for _, candidate := range candidates {
 		path := filepath.Join(dir, candidate)
-		if _, err := os.Stat(path); err == nil {
+		if err := validateWinDivertRegularFile(path); err == nil {
 			return path, true
 		}
 	}
@@ -296,11 +308,10 @@ func system32Command(name string) (string, error) {
 	}
 	sysDir, err := windows.GetSystemDirectory()
 	if err != nil {
-		root := strings.TrimSpace(os.Getenv("SystemRoot"))
-		if root == "" {
-			root = `C:\Windows`
-		}
-		sysDir = filepath.Join(root, "System32")
+		return "", fmt.Errorf("resolve System32 failed: %w", err)
+	}
+	if strings.TrimSpace(sysDir) == "" {
+		return "", fmt.Errorf("resolve System32 failed: empty path")
 	}
 	path := filepath.Join(strings.TrimSpace(sysDir), name)
 	if _, err := os.Stat(path); err != nil {

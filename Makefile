@@ -41,11 +41,17 @@ install-tui: build-tui
 	@echo "TUI controller installed to $(DESTDIR)$(PREFIX)/dist/gov-pass-tui"
 
 uninstall:
-	systemctl disable --now gov-pass 2>/dev/null || true
-	rm -f $(DESTDIR)/etc/systemd/system/gov-pass.service
-	rm -rf $(DESTDIR)$(PREFIX)
+	prefix="$(DESTDIR)$(PREFIX)"; \
+	case "$$prefix" in ""|"/"|"/usr"|"/usr/local"|"/opt"|"/etc"|"/bin"|"/sbin"|"/lib"|"/lib64") \
+		echo "refusing to uninstall unsafe PREFIX: $$prefix"; exit 1 ;; \
+	esac; \
+	systemctl disable --now gov-pass 2>/dev/null || true; \
+	rm -f "$(DESTDIR)/etc/systemd/system/gov-pass.service"; \
+	rm -rf "$$prefix"; \
 	systemctl daemon-reload 2>/dev/null || true
 
 # ── clean ────────────────────────────────────────────────────────────────
 clean:
-	rm -rf $(DISTDIR)
+	distdir="$(DISTDIR)"; \
+	case "$$distdir" in ""|"/"|"."|".."|../*|*/../*|*/..|/*) echo "refusing to clean unsafe DISTDIR: $$distdir"; exit 1 ;; esac; \
+	rm -rf "$$distdir"

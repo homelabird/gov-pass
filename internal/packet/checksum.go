@@ -22,13 +22,10 @@ func TCPChecksumIPv4(data []byte, headerLen int) uint16 {
 		return 0
 	}
 	totalLen := int(binary.BigEndian.Uint16(data[2:4]))
-	if totalLen <= 0 || totalLen > len(data) {
-		totalLen = len(data)
-	}
-	tcpLen := totalLen - headerLen
-	if tcpLen < 0 || headerLen+tcpLen > len(data) {
+	if totalLen < headerLen+20 || totalLen > len(data) {
 		return 0
 	}
+	tcpLen := totalLen - headerLen
 
 	sum := uint32(0)
 	sum += uint32(binary.BigEndian.Uint16(data[12:14]))
@@ -42,7 +39,7 @@ func TCPChecksumIPv4(data []byte, headerLen int) uint16 {
 	}
 	sum += tcpLen32
 
-	sum += checksumSum(data[headerLen : headerLen+tcpLen])
+	sum += checksumSum(data[headerLen:totalLen])
 	return finalizeChecksum(sum)
 }
 
@@ -51,14 +48,17 @@ func TCPChecksumIPv6(data []byte, headerLen int) uint16 {
 		return 0
 	}
 	payloadLen := int(binary.BigEndian.Uint16(data[4:6]))
-	totalLen := 40 + payloadLen
-	if payloadLen <= 0 || totalLen > len(data) {
-		totalLen = len(data)
-	}
-	tcpLen := totalLen - headerLen
-	if tcpLen < 0 || headerLen+tcpLen > len(data) {
+	if payloadLen == 0 {
 		return 0
 	}
+	totalLen := 40 + payloadLen
+	if totalLen > len(data) {
+		return 0
+	}
+	if totalLen < headerLen+20 {
+		return 0
+	}
+	tcpLen := totalLen - headerLen
 
 	sum := uint32(0)
 	for i := 8; i < 24; i += 2 {
@@ -75,7 +75,7 @@ func TCPChecksumIPv6(data []byte, headerLen int) uint16 {
 	sum += tcpLen32 & 0xffff
 	sum += uint32(protoTCP)
 
-	sum += checksumSum(data[headerLen : headerLen+tcpLen])
+	sum += checksumSum(data[headerLen:totalLen])
 	return finalizeChecksum(sum)
 }
 

@@ -12,12 +12,33 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 
 	"fk-gov/internal/adapter"
 	"fk-gov/internal/engine"
+)
+
+const (
+	defaultFreeBSDPFAnchorName   = "gov-pass"
+	defaultFreeBSDPFConfPath     = "/etc/pf.conf"
+	defaultFreeBSDPFAnchorSource = "/usr/local/etc/gov-pass/pf.anchor.conf"
+	defaultFreeBSDPFAnchorPath   = "/etc/pf.anchors/gov-pass"
+)
+
+var (
+	freebsdLookPath  = resolveTrustedFreeBSDSplitterCommand
+	freebsdStat      = os.Stat
+	freebsdCmdOutput = func(name string, args ...string) ([]byte, error) {
+		if !filepath.IsAbs(name) {
+			return nil, fmt.Errorf("command path must be absolute: %s", name)
+		}
+		cmd := exec.Command(name, args...)
+		cmd.Env = sanitizedFreeBSDSplitterCommandEnv()
+		return cmd.CombinedOutput()
+	}
 )
 
 func main() {
@@ -40,6 +61,7 @@ func main() {
 	shutdownFailOpenTimeout := flag.Duration("shutdown-fail-open-timeout", cfg.ShutdownFailOpenTimeout, "shutdown fail-open drain timeout per worker (0=use default)")
 	shutdownFailOpenMaxPkts := flag.Int("shutdown-fail-open-max-pkts", cfg.ShutdownFailOpenMaxPackets, "shutdown fail-open max packets per worker (0=use default)")
 	adapterFlushTimeout := flag.Duration("adapter-flush-timeout", cfg.AdapterFlushTimeout, "adapter flush timeout on shutdown (0=use default)")
+	statsInterval := flag.Duration("stats-interval", defaultStatsInterval, "periodic engine stats log interval (0=disabled)")
 	divertPort := flag.Int("divert-port", defaultDivertPort, "pf divert-to port")
 	configPath := flag.String("config", "", "path to config json")
 	checkMode := flag.Bool("check", false, "run preflight checks and exit")
@@ -72,6 +94,7 @@ func main() {
 			ShutdownFailOpenTimeout:    shutdownFailOpenTimeout,
 			ShutdownFailOpenMaxPackets: shutdownFailOpenMaxPkts,
 			AdapterFlushTimeout:        adapterFlushTimeout,
+			StatsInterval:              statsInterval,
 			Policies:                   &policies,
 			DivertPort:                 divertPort,
 		}
@@ -126,6 +149,9 @@ func main() {
 	if *adapterFlushTimeout < 0 {
 		log.Fatal("adapter-flush-timeout must be >= 0")
 	}
+	if *statsInterval < 0 {
+		log.Fatal("stats-interval must be >= 0")
+	}
 	if *divertPort < 1 || *divertPort > 65535 {
 		log.Fatal("divert-port must be in 1..65535")
 	}
@@ -167,9 +193,20 @@ func main() {
 	if err != nil {
 		log.Fatalf("divert open failed: %v", err)
 	}
-	eng := engine.New(cfg, ad)
+	eng, err := engine.NewChecked(cfg, ad)
+	if err != nil {
+		log.Fatalf("invalid engine config: %v", err)
+	}
 
-	logInfo("engine_started", "engine started", "workers", cfg.WorkerCount, "split_mode", cfg.SplitMode, "split_chunk", cfg.SplitChunk)
+	logInfo("engine_started", "engine started",
+		"workers", cfg.WorkerCount,
+		"split_mode", cfg.SplitMode,
+		"split_chunk", cfg.SplitChunk,
+		"stats_interval", *statsInterval,
+		"divert_port", opts.Port,
+	)
+	stopStats := startEngineStatsLogger(ctx, eng, *statsInterval)
+	defer stopStats()
 	err = eng.Run(ctx)
 	logInfo("engine_stats", "engine stats", "stats", eng.Stats())
 	if err != nil && !errors.Is(err, context.Canceled) {
@@ -193,24 +230,7 @@ type freebsdJSONConfig struct {
 	FreeBSD *freebsdRuntimeJSONConfig `json:"freebsd,omitempty"`
 }
 
-type freebsdEngineJSONConfig struct {
-	SplitMode                   *string                  `json:"split_mode,omitempty"`
-	SplitChunk                  *int                     `json:"split_chunk,omitempty"`
-	CollectTimeout              *string                  `json:"collect_timeout,omitempty"`
-	MaxBufferBytes              *int                     `json:"max_buffer_bytes,omitempty"`
-	MaxHeldPackets              *int                     `json:"max_held_packets,omitempty"`
-	MaxSegmentPayload           *int                     `json:"max_segment_payload,omitempty"`
-	Workers                     *int                     `json:"workers,omitempty"`
-	FlowIdleTimeout             *string                  `json:"flow_idle_timeout,omitempty"`
-	GCInterval                  *string                  `json:"gc_interval,omitempty"`
-	MaxFlowsPerWorker           *int                     `json:"max_flows_per_worker,omitempty"`
-	MaxReassemblyBytesPerWorker *int                     `json:"max_reassembly_bytes_per_worker,omitempty"`
-	MaxHeldBytesPerWorker       *int                     `json:"max_held_bytes_per_worker,omitempty"`
-	ShutdownFailOpenTimeout     *string                  `json:"shutdown_fail_open_timeout,omitempty"`
-	ShutdownFailOpenMaxPackets  *int                     `json:"shutdown_fail_open_max_packets,omitempty"`
-	AdapterFlushTimeout         *string                  `json:"adapter_flush_timeout,omitempty"`
-	Policies                    []enginePolicyJSONConfig `json:"policies,omitempty"`
-}
+type freebsdEngineJSONConfig = engineJSONConfig
 
 type freebsdRuntimeJSONConfig struct {
 	DivertPort *int `json:"divert_port,omitempty"`
@@ -232,115 +252,52 @@ type freebsdFlagRefs struct {
 	ShutdownFailOpenTimeout    *time.Duration
 	ShutdownFailOpenMaxPackets *int
 	AdapterFlushTimeout        *time.Duration
+	StatsInterval              *time.Duration
 	Policies                   *[]engine.Policy
 	DivertPort                 *int
+}
+
+func freebsdEngineFlagRefs(refs *freebsdFlagRefs) engineFlagRefs {
+	if refs == nil {
+		return engineFlagRefs{}
+	}
+	return engineFlagRefs{
+		SplitMode:                  refs.SplitMode,
+		SplitChunk:                 refs.SplitChunk,
+		CollectTimeout:             refs.CollectTimeout,
+		MaxBuffer:                  refs.MaxBuffer,
+		MaxHeld:                    refs.MaxHeld,
+		MaxSegPayload:              refs.MaxSegPayload,
+		Workers:                    refs.Workers,
+		FlowTimeout:                refs.FlowTimeout,
+		GCInterval:                 refs.GCInterval,
+		MaxFlows:                   refs.MaxFlows,
+		MaxReassembly:              refs.MaxReassembly,
+		MaxHeldBytes:               refs.MaxHeldBytes,
+		ShutdownFailOpenTimeout:    refs.ShutdownFailOpenTimeout,
+		ShutdownFailOpenMaxPackets: refs.ShutdownFailOpenMaxPackets,
+		AdapterFlushTimeout:        refs.AdapterFlushTimeout,
+		StatsInterval:              refs.StatsInterval,
+		Policies:                   refs.Policies,
+	}
 }
 
 func applyFreeBSDJSONConfig(path string, setFlags map[string]bool, refs *freebsdFlagRefs) error {
 	if refs == nil {
 		return errors.New("nil refs")
 	}
-	b, err := os.ReadFile(path)
+	b, err := readJSONConfigFile(path)
 	if err != nil {
 		return err
 	}
 
 	var cfg freebsdJSONConfig
-	if err := json.Unmarshal(b, &cfg); err != nil {
+	if err := decodeStrictJSONConfig(b, &cfg); err != nil {
 		return err
 	}
 
-	if cfg.Engine != nil {
-		if cfg.Engine.SplitMode != nil && !setFlags["split-mode"] {
-			v := strings.TrimSpace(*cfg.Engine.SplitMode)
-			if v != "" {
-				*refs.SplitMode = v
-			}
-		}
-		if cfg.Engine.SplitChunk != nil && !setFlags["split-chunk"] {
-			*refs.SplitChunk = *cfg.Engine.SplitChunk
-		}
-		if cfg.Engine.CollectTimeout != nil && !setFlags["collect-timeout"] {
-			v := strings.TrimSpace(*cfg.Engine.CollectTimeout)
-			if v != "" {
-				d, err := time.ParseDuration(v)
-				if err != nil {
-					return fmt.Errorf("engine.collect_timeout: %w", err)
-				}
-				*refs.CollectTimeout = d
-			}
-		}
-		if cfg.Engine.MaxBufferBytes != nil && !setFlags["max-buffer"] {
-			*refs.MaxBuffer = *cfg.Engine.MaxBufferBytes
-		}
-		if cfg.Engine.MaxHeldPackets != nil && !setFlags["max-held-pkts"] {
-			*refs.MaxHeld = *cfg.Engine.MaxHeldPackets
-		}
-		if cfg.Engine.MaxSegmentPayload != nil && !setFlags["max-seg-payload"] {
-			*refs.MaxSegPayload = *cfg.Engine.MaxSegmentPayload
-		}
-		if cfg.Engine.Workers != nil && !setFlags["workers"] {
-			*refs.Workers = *cfg.Engine.Workers
-		}
-		if cfg.Engine.FlowIdleTimeout != nil && !setFlags["flow-timeout"] {
-			v := strings.TrimSpace(*cfg.Engine.FlowIdleTimeout)
-			if v != "" {
-				d, err := time.ParseDuration(v)
-				if err != nil {
-					return fmt.Errorf("engine.flow_idle_timeout: %w", err)
-				}
-				*refs.FlowTimeout = d
-			}
-		}
-		if cfg.Engine.GCInterval != nil && !setFlags["gc-interval"] {
-			v := strings.TrimSpace(*cfg.Engine.GCInterval)
-			if v != "" {
-				d, err := time.ParseDuration(v)
-				if err != nil {
-					return fmt.Errorf("engine.gc_interval: %w", err)
-				}
-				*refs.GCInterval = d
-			}
-		}
-		if cfg.Engine.MaxFlowsPerWorker != nil && !setFlags["max-flows-per-worker"] {
-			*refs.MaxFlows = *cfg.Engine.MaxFlowsPerWorker
-		}
-		if cfg.Engine.MaxReassemblyBytesPerWorker != nil && !setFlags["max-reassembly-bytes-per-worker"] {
-			*refs.MaxReassembly = *cfg.Engine.MaxReassemblyBytesPerWorker
-		}
-		if cfg.Engine.MaxHeldBytesPerWorker != nil && !setFlags["max-held-bytes-per-worker"] {
-			*refs.MaxHeldBytes = *cfg.Engine.MaxHeldBytesPerWorker
-		}
-		if cfg.Engine.ShutdownFailOpenTimeout != nil && !setFlags["shutdown-fail-open-timeout"] {
-			v := strings.TrimSpace(*cfg.Engine.ShutdownFailOpenTimeout)
-			if v != "" {
-				d, err := time.ParseDuration(v)
-				if err != nil {
-					return fmt.Errorf("engine.shutdown_fail_open_timeout: %w", err)
-				}
-				*refs.ShutdownFailOpenTimeout = d
-			}
-		}
-		if cfg.Engine.ShutdownFailOpenMaxPackets != nil && !setFlags["shutdown-fail-open-max-pkts"] {
-			*refs.ShutdownFailOpenMaxPackets = *cfg.Engine.ShutdownFailOpenMaxPackets
-		}
-		if cfg.Engine.AdapterFlushTimeout != nil && !setFlags["adapter-flush-timeout"] {
-			v := strings.TrimSpace(*cfg.Engine.AdapterFlushTimeout)
-			if v != "" {
-				d, err := time.ParseDuration(v)
-				if err != nil {
-					return fmt.Errorf("engine.adapter_flush_timeout: %w", err)
-				}
-				*refs.AdapterFlushTimeout = d
-			}
-		}
-		if cfg.Engine.Policies != nil && refs.Policies != nil {
-			policies, err := parseEnginePolicies(cfg.Engine.Policies)
-			if err != nil {
-				return err
-			}
-			*refs.Policies = policies
-		}
+	if err := applyEngineJSONConfigToFlags(cfg.Engine, setFlags, freebsdEngineFlagRefs(refs)); err != nil {
+		return err
 	}
 
 	if cfg.FreeBSD != nil {
@@ -365,23 +322,54 @@ type freebsdPreflightReport struct {
 }
 
 func runFreeBSDPreflight(jsonOut bool) error {
-	checks := make([]freebsdPreflightCheck, 0, 4)
+	checks := make([]freebsdPreflightCheck, 0, 9)
 	add := func(name string, ok bool, detail string) {
 		checks = append(checks, freebsdPreflightCheck{Name: name, OK: ok, Detail: detail})
 	}
 
 	add("root", os.Geteuid() == 0, "required to open pf divert socket")
+	cmdPaths := make(map[string]string)
 	for _, cmd := range []string{"pfctl", "service", "sysrc"} {
-		if _, err := exec.LookPath(cmd); err != nil {
+		path, err := freebsdLookPath(cmd)
+		if err != nil {
 			add(cmd, false, "required for the documented FreeBSD operator workflow")
 			continue
 		}
-		add(cmd, true, "found in PATH")
+		cmdPaths[cmd] = path
+		add(cmd, true, path)
+	}
+
+	addFreeBSDFileCheck(checksAppendFunc(add), "pf_conf", defaultFreeBSDPFConfPath)
+	addFreeBSDFileCheck(checksAppendFunc(add), "pf_anchor_source", defaultFreeBSDPFAnchorSource)
+	addFreeBSDFileCheck(checksAppendFunc(add), "pf_anchor_installed", defaultFreeBSDPFAnchorPath)
+
+	if pfctlPath := cmdPaths["pfctl"]; pfctlPath != "" {
+		out, err := freebsdCmdOutput(pfctlPath, "-s", "info")
+		if err != nil {
+			add("pf_status", false, freeBSDCommandFailureDetail(out, err))
+		} else if freeBSDPFStatusEnabled(string(out)) {
+			add("pf_status", true, "pf is enabled")
+		} else {
+			add("pf_status", false, "pf is disabled or status could not be parsed")
+		}
+
+		out, err = freebsdCmdOutput(pfctlPath, "-a", defaultFreeBSDPFAnchorName, "-s", "rules")
+		if err != nil {
+			add("pf_anchor_rules", false, freeBSDCommandFailureDetail(out, err))
+		} else if freeBSDPFAnchorRulesLoaded(string(out)) {
+			add("pf_anchor_rules", true, "live anchor has rules")
+		} else {
+			add("pf_anchor_rules", false, "live anchor has no rules; run install_pf_anchor.sh")
+		}
+	} else {
+		add("pf_status", false, "pfctl unavailable")
+		add("pf_anchor_rules", false, "pfctl unavailable")
 	}
 
 	notes := []string{
 		"reload is not supported on FreeBSD; use restart",
-		"pf policy remains operator-managed; run install_pf_anchor.sh separately",
+		"pf policy remains operator-managed; install and apply the gov-pass anchor before starting splitter",
+		"pf_status and pf_anchor_rules inspect current pf state but do not prove interface selectors match the deployment",
 		"the current divert socket path is IPv4-focused; treat IPv6 divert handling as unsupported",
 	}
 
@@ -420,4 +408,22 @@ func runFreeBSDPreflight(jsonOut bool) error {
 		return errors.New("preflight failed")
 	}
 	return nil
+}
+
+type checksAppendFunc func(name string, ok bool, detail string)
+
+func addFreeBSDFileCheck(add checksAppendFunc, name string, path string) {
+	if _, err := freebsdStat(path); err == nil {
+		add(name, true, path)
+	} else {
+		add(name, false, fmt.Sprintf("%s: %v", path, err))
+	}
+}
+
+func freeBSDCommandFailureDetail(out []byte, err error) string {
+	text := strings.TrimSpace(string(out))
+	if text == "" {
+		return err.Error()
+	}
+	return fmt.Sprintf("%s: %v", text, err)
 }

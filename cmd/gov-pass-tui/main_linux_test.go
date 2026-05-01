@@ -3,9 +3,11 @@
 package main
 
 import (
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -124,5 +126,79 @@ func TestRunAction_InvalidServiceName(t *testing.T) {
 	stubLinuxTUICommands(t)
 	if err := runAction("gov pass", "status"); err == nil {
 		t.Fatal("expected invalid service name error")
+	}
+}
+
+func TestLinuxTrustedCommandHelpers(t *testing.T) {
+	dir := t.TempDir()
+	cmd := filepath.Join(dir, "systemctl")
+	if err := os.WriteFile(cmd, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write fake command: %v", err)
+	}
+
+	origDirs := trustedLinuxTUICommandDirs
+	trustedLinuxTUICommandDirs = []string{dir}
+	defer func() {
+		trustedLinuxTUICommandDirs = origDirs
+	}()
+
+	got, err := resolveTrustedLinuxTUICommand("systemctl")
+	if err != nil {
+		t.Fatalf("resolveTrustedLinuxTUICommand: %v", err)
+	}
+	if filepath.Clean(got) != filepath.Clean(cmd) {
+		t.Fatalf("resolveTrustedLinuxTUICommand returned %q, want %q", got, cmd)
+	}
+	if !isTrustedLinuxTUICommandPath(cmd) {
+		t.Fatalf("isTrustedLinuxTUICommandPath(%q) = false, want true", cmd)
+	}
+}
+
+func TestHasCommandUsesTrustedLookup(t *testing.T) {
+	stubLinuxTUICommands(t)
+	if !hasCommand("systemctl") {
+		t.Fatal("hasCommand(systemctl) = false, want true")
+	}
+}
+
+func TestRunPlainTUIQuit(t *testing.T) {
+	stubLinuxTUICommands(t)
+
+	origStdin := os.Stdin
+	origStdout := os.Stdout
+	inR, inW, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("stdin pipe: %v", err)
+	}
+	outR, outW, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("stdout pipe: %v", err)
+	}
+	t.Cleanup(func() {
+		os.Stdin = origStdin
+		os.Stdout = origStdout
+		_ = inR.Close()
+		_ = outR.Close()
+	})
+
+	if _, err := inW.WriteString("q\n"); err != nil {
+		t.Fatalf("write stdin: %v", err)
+	}
+	_ = inW.Close()
+	os.Stdin = inR
+	os.Stdout = outW
+
+	runErr := runPlainTUI("gov-pass")
+	_ = outW.Close()
+	os.Stdout = origStdout
+	if runErr != nil {
+		t.Fatalf("runPlainTUI: %v", runErr)
+	}
+	out, err := io.ReadAll(outR)
+	if err != nil {
+		t.Fatalf("read stdout: %v", err)
+	}
+	if !strings.Contains(string(out), "GOV-PASS OPERATOR PANEL") {
+		t.Fatalf("plain TUI output missing panel header:\n%s", out)
 	}
 }

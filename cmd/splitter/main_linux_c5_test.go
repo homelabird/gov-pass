@@ -23,6 +23,69 @@ func writeTempJSON(t *testing.T, content string) string {
 	return p
 }
 
+func linuxExampleConfigRefs() *linuxFlagRefs {
+	cfg := engine.DefaultConfig()
+	splitMode := "tls-hello"
+	splitChunk := cfg.SplitChunk
+	collectTimeout := cfg.CollectTimeout
+	maxBuffer := cfg.MaxBufferBytes
+	maxHeld := cfg.MaxHeldPackets
+	maxSegPayload := cfg.MaxSegmentPayload
+	workers := cfg.WorkerCount
+	flowTimeout := cfg.FlowIdleTimeout
+	gcInterval := cfg.GCInterval
+	maxFlows := cfg.MaxFlowsPerWorker
+	maxReassembly := cfg.MaxReassemblyBytesPerWorker
+	maxHeldBytes := cfg.MaxHeldBytesPerWorker
+	shutdownFailOpenTimeout := cfg.ShutdownFailOpenTimeout
+	shutdownFailOpenMaxPkts := cfg.ShutdownFailOpenMaxPackets
+	adapterFlushTimeout := cfg.AdapterFlushTimeout
+	statsInterval := defaultStatsInterval
+	policies := cfg.Policies
+	queueNum := 100
+	queueMaxLen := 4096
+	copyRange := 0xffff
+	recvBuffer := 0
+	mark := 1
+	autoRules := true
+	autoOffload := true
+	autoOffloadRestore := true
+	autoInstallTools := true
+	iface := ""
+	noLoopback := false
+
+	return &linuxFlagRefs{
+		SplitMode:                  &splitMode,
+		SplitChunk:                 &splitChunk,
+		CollectTimeout:             &collectTimeout,
+		MaxBuffer:                  &maxBuffer,
+		MaxHeld:                    &maxHeld,
+		MaxSegPayload:              &maxSegPayload,
+		Workers:                    &workers,
+		FlowTimeout:                &flowTimeout,
+		GCInterval:                 &gcInterval,
+		MaxFlows:                   &maxFlows,
+		MaxReassembly:              &maxReassembly,
+		MaxHeldBytes:               &maxHeldBytes,
+		ShutdownFailOpenTimeout:    &shutdownFailOpenTimeout,
+		ShutdownFailOpenMaxPackets: &shutdownFailOpenMaxPkts,
+		AdapterFlushTimeout:        &adapterFlushTimeout,
+		StatsInterval:              &statsInterval,
+		Policies:                   &policies,
+		QueueNum:                   &queueNum,
+		QueueMaxLen:                &queueMaxLen,
+		CopyRange:                  &copyRange,
+		RecvBuffer:                 &recvBuffer,
+		Mark:                       &mark,
+		AutoRules:                  &autoRules,
+		AutoOffload:                &autoOffload,
+		AutoOffloadRestore:         &autoOffloadRestore,
+		AutoInstallTools:           &autoInstallTools,
+		Iface:                      &iface,
+		NoLoopback:                 &noLoopback,
+	}
+}
+
 func withCapturedStdout(t *testing.T, fn func() error) (string, error) {
 	t.Helper()
 	orig := os.Stdout
@@ -52,7 +115,9 @@ func TestApplyLinuxJSONConfig_MergeOrder(t *testing.T) {
 	splitMode := "tls-hello"
 	splitChunk := 5
 	collectTimeout := 250 * time.Millisecond
+	statsInterval := defaultStatsInterval
 	queueNum := 100
+	recvBuffer := 0
 	autoRules := true
 	iface := ""
 	noLoopback := false
@@ -61,7 +126,9 @@ func TestApplyLinuxJSONConfig_MergeOrder(t *testing.T) {
 		SplitMode:      &splitMode,
 		SplitChunk:     &splitChunk,
 		CollectTimeout: &collectTimeout,
+		StatsInterval:  &statsInterval,
 		QueueNum:       &queueNum,
+		RecvBuffer:     &recvBuffer,
 		AutoRules:      &autoRules,
 		Iface:          &iface,
 		NoLoopback:     &noLoopback,
@@ -71,12 +138,14 @@ func TestApplyLinuxJSONConfig_MergeOrder(t *testing.T) {
   "engine": {
     "split_mode": "immediate",
     "split_chunk": 9,
-    "collect_timeout": "1s"
+    "collect_timeout": "1s",
+    "stats_interval": "2m"
   },
-  "linux": {
-    "queue_num": 321,
-    "auto_rules": false,
-    "iface": "eth9",
+	  "linux": {
+	    "queue_num": 321,
+	    "recv_buffer": 2048,
+	    "auto_rules": false,
+	    "iface": "eth9",
     "no_loopback": true
   }
 }`)
@@ -94,8 +163,14 @@ func TestApplyLinuxJSONConfig_MergeOrder(t *testing.T) {
 	if collectTimeout != time.Second {
 		t.Fatalf("collectTimeout mismatch: %s", collectTimeout)
 	}
+	if statsInterval != 2*time.Minute {
+		t.Fatalf("statsInterval mismatch: %s", statsInterval)
+	}
 	if queueNum != 321 {
 		t.Fatalf("queueNum mismatch: %d", queueNum)
+	}
+	if recvBuffer != 2048 {
+		t.Fatalf("recvBuffer mismatch: %d", recvBuffer)
 	}
 	if autoRules {
 		t.Fatalf("autoRules should be false")
@@ -110,31 +185,38 @@ func TestApplyLinuxJSONConfig_MergeOrder(t *testing.T) {
 
 func TestApplyLinuxJSONConfig_ExplicitFlagsOverride(t *testing.T) {
 	splitChunk := 5
+	statsInterval := defaultStatsInterval
 	queueNum := 100
+	recvBuffer := 0
 	autoRules := true
 	iface := "eth0"
 
 	refs := &linuxFlagRefs{
-		SplitChunk: &splitChunk,
-		QueueNum:   &queueNum,
-		AutoRules:  &autoRules,
-		Iface:      &iface,
+		SplitChunk:    &splitChunk,
+		StatsInterval: &statsInterval,
+		QueueNum:      &queueNum,
+		RecvBuffer:    &recvBuffer,
+		AutoRules:     &autoRules,
+		Iface:         &iface,
 	}
 
 	cfgPath := writeTempJSON(t, `{
-  "engine": { "split_chunk": 9 },
+  "engine": { "split_chunk": 9, "stats_interval": "2m" },
   "linux": {
-    "queue_num": 321,
-    "auto_rules": false,
+	    "queue_num": 321,
+	    "recv_buffer": 2048,
+	    "auto_rules": false,
     "iface": "eth9"
   }
 }`)
 
 	setFlags := map[string]bool{
-		"split-chunk": true,
-		"queue-num":   true,
-		"auto-rules":  true,
-		"iface":       true,
+		"split-chunk":    true,
+		"stats-interval": true,
+		"queue-num":      true,
+		"recv-buffer":    true,
+		"auto-rules":     true,
+		"iface":          true,
 	}
 	if err := applyLinuxJSONConfig(cfgPath, setFlags, refs); err != nil {
 		t.Fatalf("apply config: %v", err)
@@ -143,8 +225,14 @@ func TestApplyLinuxJSONConfig_ExplicitFlagsOverride(t *testing.T) {
 	if splitChunk != 5 {
 		t.Fatalf("splitChunk should remain 5, got %d", splitChunk)
 	}
+	if statsInterval != defaultStatsInterval {
+		t.Fatalf("statsInterval should remain default, got %s", statsInterval)
+	}
 	if queueNum != 100 {
 		t.Fatalf("queueNum should remain 100, got %d", queueNum)
+	}
+	if recvBuffer != 0 {
+		t.Fatalf("recvBuffer should remain 0, got %d", recvBuffer)
 	}
 	if !autoRules {
 		t.Fatalf("autoRules should remain true")
@@ -164,6 +252,19 @@ func TestApplyLinuxJSONConfig_InvalidDuration(t *testing.T) {
 	err := applyLinuxJSONConfig(cfgPath, map[string]bool{}, refs)
 	if err == nil || !strings.Contains(err.Error(), "engine.collect_timeout") {
 		t.Fatalf("expected collect_timeout error, got %v", err)
+	}
+}
+
+func TestApplyLinuxJSONConfig_InvalidStatsInterval(t *testing.T) {
+	statsInterval := defaultStatsInterval
+	refs := &linuxFlagRefs{StatsInterval: &statsInterval}
+	cfgPath := writeTempJSON(t, `{
+  "engine": { "stats_interval": "not-a-duration" }
+}`)
+
+	err := applyLinuxJSONConfig(cfgPath, map[string]bool{}, refs)
+	if err == nil || !strings.Contains(err.Error(), "engine.stats_interval") {
+		t.Fatalf("expected stats_interval error, got %v", err)
 	}
 }
 
@@ -200,6 +301,28 @@ func TestApplyLinuxJSONConfig_Policies(t *testing.T) {
 	}
 	if len(policies[1].SNISuffixes) != 1 || policies[1].SNISuffixes[0] != "example.com" {
 		t.Fatalf("unexpected SNI policy: %+v", policies[1])
+	}
+}
+
+func TestLinuxExampleConfigApplies(t *testing.T) {
+	path := filepath.Join("..", "..", "docs", "examples", "splitter.linux.json")
+	if err := applyLinuxJSONConfig(path, map[string]bool{}, linuxExampleConfigRefs()); err != nil {
+		t.Fatalf("apply example config: %v", err)
+	}
+}
+
+func TestApplyLinuxJSONConfigRejectsUnknownFields(t *testing.T) {
+	refs := linuxExampleConfigRefs()
+	cfgPath := writeTempJSON(t, `{
+  "engine": {
+    "split_chunk": 9,
+    "split_chonk": 10
+  }
+}`)
+
+	err := applyLinuxJSONConfig(cfgPath, map[string]bool{}, refs)
+	if err == nil || !strings.Contains(err.Error(), `unknown field "split_chonk"`) {
+		t.Fatalf("expected unknown field error, got %v", err)
 	}
 }
 

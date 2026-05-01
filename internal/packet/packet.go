@@ -15,6 +15,7 @@ var (
 	ErrTooShort     = errors.New("packet too short")
 	ErrIPv4Fragment = errors.New("ipv4 fragment")
 	ErrIPv6Fragment = errors.New("ipv6 fragment")
+	ErrIPv6Jumbo    = errors.New("ipv6 jumbo payload unsupported")
 )
 
 const (
@@ -125,46 +126,72 @@ func (p *Packet) Release() {
 		return
 	}
 	backing := p.dataBacking[:cap(p.dataBacking)]
-	p.dataPool.Put(backing)
+	p.dataPool.Put(&backing)
 	p.dataBacking = nil
 	p.dataPool = nil
 }
 
 // DecodeTCP fills Meta for IPv4/TCP or IPv6/TCP packets.
 func DecodeTCP(pkt *Packet) error {
+	if pkt == nil {
+		return ErrTooShort
+	}
 	if len(pkt.Data) < 1 {
 		return ErrTooShort
 	}
-	switch Version(pkt.Data) {
-	case IPVersion4:
-		return decodeIPv4TCP(pkt)
-	case IPVersion6:
-		return decodeIPv6TCP(pkt)
-	default:
-		return ErrNotIP
-	}
+	return decodeTCPWithRollback(pkt, func() error {
+		switch Version(pkt.Data) {
+		case IPVersion4:
+			return decodeIPv4TCP(pkt)
+		case IPVersion6:
+			return decodeIPv6TCP(pkt)
+		default:
+			return ErrNotIP
+		}
+	})
 }
 
 // DecodeIPv4TCP fills Meta for IPv4/TCP packets.
 func DecodeIPv4TCP(pkt *Packet) error {
+	if pkt == nil {
+		return ErrTooShort
+	}
 	if len(pkt.Data) < 1 {
 		return ErrTooShort
 	}
 	if Version(pkt.Data) != IPVersion4 {
 		return ErrNotIPv4
 	}
-	return decodeIPv4TCP(pkt)
+	return decodeTCPWithRollback(pkt, func() error {
+		return decodeIPv4TCP(pkt)
+	})
 }
 
 // DecodeIPv6TCP fills Meta for IPv6/TCP packets.
 func DecodeIPv6TCP(pkt *Packet) error {
+	if pkt == nil {
+		return ErrTooShort
+	}
 	if len(pkt.Data) < 1 {
 		return ErrTooShort
 	}
 	if Version(pkt.Data) != IPVersion6 {
 		return ErrNotIPv6
 	}
-	return decodeIPv6TCP(pkt)
+	return decodeTCPWithRollback(pkt, func() error {
+		return decodeIPv6TCP(pkt)
+	})
+}
+
+func decodeTCPWithRollback(pkt *Packet, decode func() error) error {
+	originalData := pkt.Data
+	originalMeta := pkt.Meta
+	if err := decode(); err != nil {
+		pkt.Data = originalData
+		pkt.Meta = originalMeta
+		return err
+	}
+	return nil
 }
 
 func decodeIPv4TCP(pkt *Packet) error {
@@ -175,6 +202,13 @@ func decodeIPv4TCP(pkt *Packet) error {
 	ihl := int(vihl&0x0f) * 4
 	if ihl < 20 || len(pkt.Data) < ihl+20 {
 		return ErrTooShort
+	}
+	totalLen := int(binary.BigEndian.Uint16(pkt.Data[2:4]))
+	if totalLen < ihl+20 || totalLen > len(pkt.Data) {
+		return ErrTooShort
+	}
+	if totalLen < len(pkt.Data) {
+		pkt.Data = pkt.Data[:totalLen]
 	}
 	flagsOffset := binary.BigEndian.Uint16(pkt.Data[6:8])
 	if (flagsOffset&0x1fff) != 0 || (flagsOffset&0x2000) != 0 {
@@ -210,6 +244,17 @@ func decodeIPv4TCP(pkt *Packet) error {
 func decodeIPv6TCP(pkt *Packet) error {
 	if len(pkt.Data) < 40 {
 		return ErrTooShort
+	}
+	payloadLen := int(binary.BigEndian.Uint16(pkt.Data[4:6]))
+	if payloadLen == 0 {
+		return ErrIPv6Jumbo
+	}
+	totalLen := 40 + payloadLen
+	if totalLen > len(pkt.Data) {
+		return ErrTooShort
+	}
+	if totalLen < len(pkt.Data) {
+		pkt.Data = pkt.Data[:totalLen]
 	}
 
 	pkt.Meta = Meta{}
@@ -324,14 +369,14 @@ func SetIPv4Checksum(data []byte, sum uint16) {
 }
 
 func SetTCPSeq(data []byte, ipHeaderLen int, seq uint32) {
-	if len(data) < ipHeaderLen+8 {
+	if ipHeaderLen < 0 || ipHeaderLen > len(data)-8 {
 		return
 	}
 	binary.BigEndian.PutUint32(data[ipHeaderLen+4:ipHeaderLen+8], seq)
 }
 
 func SetTCPChecksumZero(data []byte, ipHeaderLen int) {
-	if len(data) < ipHeaderLen+18 {
+	if ipHeaderLen < 0 || ipHeaderLen > len(data)-18 {
 		return
 	}
 	data[ipHeaderLen+16] = 0
@@ -339,14 +384,14 @@ func SetTCPChecksumZero(data []byte, ipHeaderLen int) {
 }
 
 func SetTCPChecksum(data []byte, ipHeaderLen int, sum uint16) {
-	if len(data) < ipHeaderLen+18 {
+	if ipHeaderLen < 0 || ipHeaderLen > len(data)-18 {
 		return
 	}
 	binary.BigEndian.PutUint16(data[ipHeaderLen+16:ipHeaderLen+18], sum)
 }
 
 func SetTCPFlags(data []byte, ipHeaderLen int, flags uint8) {
-	if len(data) < ipHeaderLen+14 {
+	if ipHeaderLen < 0 || ipHeaderLen > len(data)-14 {
 		return
 	}
 	data[ipHeaderLen+13] = flags

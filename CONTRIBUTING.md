@@ -9,8 +9,11 @@
 ## Quick Checks
 
 ```bash
-go test ./...
+go test -count=1 ./...
+go test -race -count=1 ./internal/engine ./cmd/splitter ./cmd/gov-pass-tui
 go vet ./...
+staticcheck ./...
+golangci-lint run ./...
 ```
 
 ## Local Build/Run
@@ -72,8 +75,10 @@ sudo ./scripts/linux/uninstall_nfqueue.sh --queue-num 100 --mark 1
 - GitLab CI builds release artifacts on tags (`build_release`).
 - GitHub Actions publishes GitHub release assets on tag pushes via [`release.yml`](.github/workflows/release.yml), including `install_one_touch_curl.sh`, signed checksum manifests, and platform bundles.
 - Branch pipelines now run:
-  - `verify_go_tests`: `go test ./...` + `go vet ./...`
-  - `verify_cross_builds`: Linux/FreeBSD/Windows cross-build smoke
+  - `verify_go_tests`: shell syntax checks + `go test ./...` + `go vet ./...`
+  - `verify_static_analysis`: `staticcheck ./...` + `golangci-lint run ./...`
+  - `verify_race_tests`: race-enabled tests for engine, splitter, and TUI packages
+  - `verify_cross_builds`: Linux/FreeBSD/Windows cross-build and test-binary compile smoke
   - `verify_release_signing_helpers`: detached-signature helper round-trip
   - `verify_tui_tests`: TUI-focused tests + Windows TUI compile smoke
 - GitHub release publishing requires checksum-signing secrets:
@@ -83,19 +88,23 @@ sudo ./scripts/linux/uninstall_nfqueue.sh --queue-num 100 --mark 1
   - `WINDOWS_CODESIGN_PFX_B64`
   - `WINDOWS_CODESIGN_PFX_PASSWORD`
 - Linux root/network namespace E2E uses `verify_linux_netns_e2e`:
-  - Tag pipelines always run `verify_linux_netns_e2e` and require a `linux-root` runner.
+  - Tag and default-branch pipelines run `verify_linux_netns_e2e` and require a `linux-root` runner.
   - Branch/MR pipelines can opt in by setting `LINUX_NETNS_E2E=1`
   - Runner tag requirement: `linux-root`
   - Runner must permit `ip netns` creation and veth pair setup (`CAP_NET_ADMIN`)
   - Job: `verify_linux_netns_e2e`
 - Windows MSI E2E verification requires a Windows runner with Administrator privileges:
-  - Enable by setting `WINDOWS_E2E=1` for tagged pipelines.
+  - Enable by setting `WINDOWS_E2E=1` for tagged, branch, or MR pipelines.
+  - The job depends on signed Windows artifacts, so the Windows code-signing and release-manifest signing secrets must be available to the pipeline.
   - Job: `verify_windows_msi_e2e` runs `scripts/windows/ci_msi_e2e.ps1`.
   - Coverage: MSI install/uninstall, service reload/start/stop, and `gov-pass-tui.exe` status/reload/interactive smoke.
 - FreeBSD TUI smoke verification is available as an opt-in verify job:
-  - Set `FREEBSD_E2E=1`
+  - Set `FREEBSD_E2E=1` for tagged, branch, or MR pipelines.
   - Runner tag requirement: `freebsd-root`
   - Job: `verify_freebsd_tui_smoke` installs via `scripts/install_one_touch.sh` with `INSTALL_TUI=1` and runs `scripts/freebsd/ci_tui_smoke.sh`.
+- Android scripts under `scripts/android/` are archived historical material only:
+  - They are not maintained build targets.
+  - They are not covered by CI or release workflows.
 
 ## Engineering Guidelines
 

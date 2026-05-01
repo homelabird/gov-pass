@@ -5,6 +5,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -106,8 +107,8 @@ func TestValidateWindowsServiceConfigPath_AllowsMissingLeafUnderSafeRoot(t *test
 	t.Setenv("ProgramData", `C:\ProgramData`)
 	installWindowsPathTestStubs(t,
 		map[string]bool{
-			filepath.Clean(`C:\`):             true,
-			filepath.Clean(`C:\ProgramData`):  true,
+			filepath.Clean(`C:\`):                     true,
+			filepath.Clean(`C:\ProgramData`):          true,
 			filepath.Clean(`C:\ProgramData\gov-pass`): true,
 		},
 		map[string]bool{},
@@ -132,5 +133,105 @@ func TestValidateWindowsServiceConfigPath_RejectsReparsePoint(t *testing.T) {
 
 	if err := validateWindowsServiceConfigPath(`C:\ProgramData\gov-pass\config.json`); err == nil {
 		t.Fatal("expected reparse-point config path to fail")
+	}
+}
+
+func TestPrepareWindowsServiceLogDirRejectsReparseBeforeMkdir(t *testing.T) {
+	installWindowsPathTestStubs(t,
+		map[string]bool{
+			filepath.Clean(`C:\`): true,
+		},
+		map[string]bool{
+			filepath.Clean(`C:\Logs`): true,
+		},
+	)
+
+	origMkdirAll := windowsMkdirAll
+	mkdirCalled := false
+	windowsMkdirAll = func(string, os.FileMode) error {
+		mkdirCalled = true
+		return nil
+	}
+	t.Cleanup(func() { windowsMkdirAll = origMkdirAll })
+
+	err := prepareWindowsServiceLogDir(`C:\Logs`, false)
+	if err == nil || !strings.Contains(err.Error(), "reparse") {
+		t.Fatalf("expected reparse rejection, got %v", err)
+	}
+	if mkdirCalled {
+		t.Fatal("MkdirAll was called after pre-existing log directory reparse point")
+	}
+}
+
+func TestPrepareWindowsServiceLogDirRejectsReparseAfterMkdir(t *testing.T) {
+	existing := map[string]bool{
+		filepath.Clean(`C:\`): true,
+	}
+	reparse := map[string]bool{}
+	installWindowsPathTestStubs(t, existing, reparse)
+
+	origMkdirAll := windowsMkdirAll
+	mkdirCalled := false
+	windowsMkdirAll = func(path string, _ os.FileMode) error {
+		mkdirCalled = true
+		clean := filepath.Clean(path)
+		existing[clean] = true
+		reparse[clean] = true
+		return nil
+	}
+	t.Cleanup(func() { windowsMkdirAll = origMkdirAll })
+
+	err := prepareWindowsServiceLogDir(`C:\Logs`, false)
+	if err == nil || !strings.Contains(err.Error(), "reparse") {
+		t.Fatalf("expected post-create reparse rejection, got %v", err)
+	}
+	if !mkdirCalled {
+		t.Fatal("MkdirAll was not called")
+	}
+}
+
+func TestPrepareWindowsServiceLogDirUsesSecureHelperForManagedPath(t *testing.T) {
+	origEnsure := ensureSecureWindowsServiceLogDir
+	origMkdirAll := windowsMkdirAll
+	secureCalled := false
+	mkdirCalled := false
+	ensureSecureWindowsServiceLogDir = func(path string) error {
+		secureCalled = path == `C:\ProgramData\gov-pass`
+		return nil
+	}
+	windowsMkdirAll = func(string, os.FileMode) error {
+		mkdirCalled = true
+		return nil
+	}
+	t.Cleanup(func() {
+		ensureSecureWindowsServiceLogDir = origEnsure
+		windowsMkdirAll = origMkdirAll
+	})
+
+	if err := prepareWindowsServiceLogDir(`C:\ProgramData\gov-pass`, true); err != nil {
+		t.Fatalf("prepare managed log dir: %v", err)
+	}
+	if !secureCalled {
+		t.Fatal("secure log dir helper was not called")
+	}
+	if mkdirCalled {
+		t.Fatal("direct MkdirAll should not be used for managed log directories")
+	}
+}
+
+func TestEffectiveServiceLogLimits(t *testing.T) {
+	maxBytes, maxFiles, err := effectiveServiceLogLimits(serviceLogConfig{})
+	if err != nil {
+		t.Fatalf("default limits error: %v", err)
+	}
+	if maxBytes != defaultServiceLogMaxBytes || maxFiles != defaultServiceLogMaxFiles {
+		t.Fatalf("default limits = (%d,%d), want (%d,%d)", maxBytes, maxFiles, defaultServiceLogMaxBytes, defaultServiceLogMaxFiles)
+	}
+
+	if _, _, err := effectiveServiceLogLimits(serviceLogConfig{MaxBytes: maxServiceLogMaxBytes + 1}); err == nil {
+		t.Fatal("expected max bytes validation error")
+	}
+	if _, _, err := effectiveServiceLogLimits(serviceLogConfig{MaxFiles: maxServiceLogMaxFiles + 1}); err == nil {
+		t.Fatal("expected max files validation error")
 	}
 }

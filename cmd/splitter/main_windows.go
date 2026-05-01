@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"fk-gov/internal/adapter"
 	"fk-gov/internal/driver"
@@ -24,6 +25,12 @@ const (
 	defaultQueueLen             uint64 = 4096
 	defaultQueueTimeMs          uint64 = 2000
 	defaultQueueSize            uint64 = 32 * 1024 * 1024
+	winDivertQueueLenMin        uint64 = 32
+	winDivertQueueLenMax        uint64 = 16384
+	winDivertQueueTimeMin       uint64 = 100
+	winDivertQueueTimeMax       uint64 = 16000
+	winDivertQueueSizeMin       uint64 = 65535
+	winDivertQueueSizeMax       uint64 = 33554432
 	defaultWinDivertServiceName        = "WinDivert"
 	defaultAppServiceName              = "gov-pass"
 )
@@ -52,6 +59,7 @@ func run() error {
 	shutdownFailOpenTimeout := flag.Duration("shutdown-fail-open-timeout", defaultCfg.ShutdownFailOpenTimeout, "shutdown fail-open drain timeout per worker (0=use default)")
 	shutdownFailOpenMaxPkts := flag.Int("shutdown-fail-open-max-pkts", defaultCfg.ShutdownFailOpenMaxPackets, "shutdown fail-open max packets per worker (0=use default)")
 	adapterFlushTimeout := flag.Duration("adapter-flush-timeout", defaultCfg.AdapterFlushTimeout, "adapter flush timeout on shutdown (0=use default)")
+	statsInterval := flag.Duration("stats-interval", defaultStatsInterval, "periodic engine stats log interval (0=disabled)")
 	filter := flag.String("filter", defaultWinDivertFilter, "WinDivert filter")
 	queueLen := flag.Uint("queue-len", uint(defaultQueueLen), "WinDivert queue length (0=driver default)")
 	queueTime := flag.Uint("queue-time", uint(defaultQueueTimeMs), "WinDivert queue time in ms (0=driver default)")
@@ -105,6 +113,7 @@ func run() error {
 		ShutdownFailOpenTimeout:    *shutdownFailOpenTimeout,
 		ShutdownFailOpenMaxPackets: *shutdownFailOpenMaxPkts,
 		AdapterFlushTimeout:        *adapterFlushTimeout,
+		StatsInterval:              *statsInterval,
 
 		Filter:    *filter,
 		QueueLen:  uint64(*queueLen),
@@ -153,6 +162,7 @@ type windowsRunConfig struct {
 	AutoInstallDriver    bool
 	AutoUninstallDriver  bool
 	AutoDownloadFiles    bool
+	StatsInterval        time.Duration
 }
 
 func runWindows(ctx context.Context, cfg engine.Config, wc windowsRunConfig) error {
@@ -198,9 +208,14 @@ func runWindows(ctx context.Context, cfg engine.Config, wc windowsRunConfig) err
 	if err != nil {
 		return fmt.Errorf("WinDivert open failed: %w", err)
 	}
-	eng := engine.New(cfg, ad)
+	eng, err := engine.NewChecked(cfg, ad)
+	if err != nil {
+		return fmt.Errorf("invalid engine config: %w", err)
+	}
 
-	logInfo("engine_started", "engine started", "workers", cfg.WorkerCount, "split_mode", cfg.SplitMode, "split_chunk", cfg.SplitChunk)
+	logWindowsEngineStarted(cfg, wc)
+	stopStats := startEngineStatsLogger(ctx, eng, wc.StatsInterval)
+	defer stopStats()
 	err = eng.Run(ctx)
 	logInfo("engine_stats", "engine stats", "stats", eng.Stats())
 	if err != nil && !errors.Is(err, context.Canceled) {
@@ -257,7 +272,15 @@ func runWindowsService(ctx context.Context, args windowsCLIArgs, setFlags map[st
 	if err != nil {
 		return fmt.Errorf("WinDivert open failed: %w", err)
 	}
-	eng := engine.New(cfg, ad)
+	eng, err := engine.NewChecked(cfg, ad)
+	if err != nil {
+		return fmt.Errorf("invalid engine config: %w", err)
+	}
+
+	stopStats := startEngineStatsLogger(ctx, eng, wc.StatsInterval)
+	defer func() {
+		stopStats()
+	}()
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -268,7 +291,7 @@ func runWindowsService(ctx context.Context, args windowsCLIArgs, setFlags map[st
 
 	curCfg := cfg
 	curWc := wc
-	logInfo("engine_started", fmt.Sprintf("engine started (workers=%d)", curCfg.WorkerCount), "workers", curCfg.WorkerCount, "split_mode", curCfg.SplitMode, "split_chunk", curCfg.SplitChunk)
+	logWindowsEngineStarted(curCfg, curWc)
 
 	for {
 		select {
@@ -285,6 +308,13 @@ func runWindowsService(ctx context.Context, args windowsCLIArgs, setFlags map[st
 			}
 
 			reopened := false
+			if newWc.StatsInterval != curWc.StatsInterval {
+				stopStats()
+				stopStats = startEngineStatsLogger(ctx, eng, newWc.StatsInterval)
+				curWc.StatsInterval = newWc.StatsInterval
+				logInfo("reload_stats_interval_applied", "reload: stats interval applied", "stats_interval", curWc.StatsInterval)
+			}
+
 			if requiresWinDivertReopenForReload(curWc.Filter, curWc.AdapterOpts, newWc.Filter, newWc.AdapterOpts) {
 				if err := ad.Reopen(newWc.Filter, newWc.AdapterOpts); err != nil {
 					logError("reload_handle_reopen_failed", "reload: WinDivert handle reopen failed", err)
@@ -355,6 +385,19 @@ func runWindowsService(ctx context.Context, args windowsCLIArgs, setFlags map[st
 			return nil
 		}
 	}
+}
+
+func logWindowsEngineStarted(cfg engine.Config, wc windowsRunConfig) {
+	logInfo("engine_started", fmt.Sprintf("engine started (workers=%d)", cfg.WorkerCount),
+		"workers", cfg.WorkerCount,
+		"split_mode", cfg.SplitMode,
+		"split_chunk", cfg.SplitChunk,
+		"stats_interval", wc.StatsInterval,
+		"filter", wc.Filter,
+		"queue_len", wc.AdapterOpts.QueueLen,
+		"queue_time_ms", wc.AdapterOpts.QueueTime,
+		"queue_size_bytes", wc.AdapterOpts.QueueSize,
+	)
 }
 
 func logWinDivertReport(report driver.Report) {

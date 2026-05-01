@@ -21,6 +21,20 @@ type Engine struct {
 }
 
 func New(cfg Config, ad adapter.Adapter) *Engine {
+	if err := ValidateConfig(cfg); err != nil {
+		panic(fmt.Sprintf("invalid engine config: %v", err))
+	}
+	return newEngine(cfg, ad)
+}
+
+func NewChecked(cfg Config, ad adapter.Adapter) (*Engine, error) {
+	if err := ValidateConfig(cfg); err != nil {
+		return nil, err
+	}
+	return newEngine(cfg, ad), nil
+}
+
+func newEngine(cfg Config, ad adapter.Adapter) *Engine {
 	cfg = cloneConfig(cfg)
 	sharder := flow.NewSharder(cfg.WorkerCount)
 	stats := newStats()

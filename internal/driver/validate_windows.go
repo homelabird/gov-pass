@@ -41,5 +41,27 @@ func ValidateDriverFileName(name string) error {
 	if ext := strings.ToLower(filepath.Ext(name)); ext != ".sys" {
 		return fmt.Errorf("driver sys name must end with .sys")
 	}
+	stem := strings.TrimSuffix(name, filepath.Ext(name))
+	if stem == "" || stem == "." || stem == ".." {
+		return fmt.Errorf("driver sys name must include a filename before .sys")
+	}
+	if strings.TrimRight(stem, " .") != stem {
+		return fmt.Errorf("driver sys name must not end with space or dot before .sys")
+	}
+	if isReservedWindowsDeviceFileName(stem) {
+		return fmt.Errorf("driver sys name must not use reserved Windows device name %q", stem)
+	}
 	return nil
+}
+
+func isReservedWindowsDeviceFileName(stem string) bool {
+	stem = strings.ToUpper(strings.TrimRight(strings.TrimSpace(stem), " ."))
+	switch stem {
+	case "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$":
+		return true
+	}
+	if len(stem) == 4 && (strings.HasPrefix(stem, "COM") || strings.HasPrefix(stem, "LPT")) {
+		return stem[3] >= '1' && stem[3] <= '9'
+	}
+	return false
 }

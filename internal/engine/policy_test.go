@@ -74,6 +74,23 @@ func TestConfigResolvePlan_SNIRequiresHello(t *testing.T) {
 	}
 }
 
+func TestConfigResolvePlan_NormalizesPolicySNISuffix(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Policies = []Policy{{
+		SNISuffixes:   []string{".EXAMPLE.COM."},
+		HasSplitChunk: true,
+		SplitChunk:    9,
+	}}
+
+	plan, resolved := cfg.resolvePlan(meta4(8, 8, 8, 8), &itls.ClientHelloInfo{ServerName: "www.example.com"})
+	if !resolved {
+		t.Fatal("expected resolved plan after hello is parsed")
+	}
+	if plan.SplitChunk != 9 {
+		t.Fatalf("unexpected split chunk: %d", plan.SplitChunk)
+	}
+}
+
 func TestConfigResolvePlan_SNIFallsThroughAfterNoMatch(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.SplitChunk = 5

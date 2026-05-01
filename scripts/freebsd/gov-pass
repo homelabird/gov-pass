@@ -4,6 +4,10 @@
 # REQUIRE: NETWORKING pf
 # KEYWORD: shutdown
 
+TRUSTED_PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+PATH="${TRUSTED_PATH}"
+export PATH
+
 . /etc/rc.subr
 
 service_label="gov-pass"
@@ -27,6 +31,48 @@ load_rc_config "$name"
 : "${gov_pass_enable:=NO}"
 : "${gov_pass_flags:=--config ${gov_pass_config}}"
 
+lookup_trusted_command() {
+	name="$1"
+	candidate="$(PATH="${TRUSTED_PATH}" command -v "$name" 2>/dev/null || true)"
+	if [ -z "$candidate" ]; then
+		echo "${service_label}: required command not found in trusted directories: $name" >&2
+		return 1
+	fi
+	case "$candidate" in
+		*/*) ;;
+		*)
+			echo "${service_label}: refusing non-path command lookup for $name: $candidate" >&2
+			return 1
+			;;
+	esac
+	if [ -L "$candidate" ]; then
+		echo "${service_label}: refusing symlinked trusted command for $name: $candidate" >&2
+		return 1
+	fi
+	if [ ! -x "$candidate" ] || [ -d "$candidate" ]; then
+		echo "${service_label}: trusted command is not executable: $candidate" >&2
+		return 1
+	fi
+	printf '%s\n' "$candidate"
+}
+
+TOUCH_BIN="$(lookup_trusted_command touch)" || exit 1
+CHMOD_BIN="$(lookup_trusted_command chmod)" || exit 1
+CAT_BIN="$(lookup_trusted_command cat)" || exit 1
+RM_BIN="$(lookup_trusted_command rm)" || exit 1
+DAEMON_BIN="$(lookup_trusted_command daemon)" || exit 1
+
+read_pidfile() {
+	pid="$("${CAT_BIN}" "${pidfile}")" || return 1
+	case "$pid" in
+		""|*[!0-9]*)
+			echo "${service_label}: invalid pidfile content: ${pidfile}" >&2
+			return 1
+			;;
+	esac
+	printf '%s\n' "$pid"
+}
+
 gov_pass_start() {
 	if [ ! -x "${gov_pass_bin}" ]; then
 		echo "${service_label}: binary not found: ${gov_pass_bin}"
@@ -41,11 +87,11 @@ gov_pass_start() {
 		return 0
 	fi
 
-	touch "${gov_pass_log}"
-	chmod 0600 "${gov_pass_log}" 2>/dev/null || true
+	"${TOUCH_BIN}" "${gov_pass_log}"
+	"${CHMOD_BIN}" 0600 "${gov_pass_log}" 2>/dev/null || true
 
 	echo "Starting ${service_label}."
-	/usr/sbin/daemon -f -p "${pidfile}" -o "${gov_pass_log}" \
+	"${DAEMON_BIN}" -f -p "${pidfile}" -o "${gov_pass_log}" \
 		"${gov_pass_bin}" ${gov_pass_flags}
 }
 
@@ -55,16 +101,17 @@ gov_pass_stop() {
 		return 0
 	fi
 
-	pid="$(cat "${pidfile}")"
+	pid="$(read_pidfile)" || return 1
 	echo "Stopping ${service_label}."
 	kill "${pid}"
 	wait_for_pids "${pid}"
-	rm -f "${pidfile}"
+	"${RM_BIN}" -f "${pidfile}"
 }
 
 gov_pass_status() {
 	if check_pidfile "${pidfile}" "${procname}" >/dev/null 2>&1; then
-		echo "${service_label} is running as pid $(cat "${pidfile}")"
+		pid="$(read_pidfile)" || return 1
+		echo "${service_label} is running as pid ${pid}"
 		return 0
 	fi
 	echo "${service_label} is not running"

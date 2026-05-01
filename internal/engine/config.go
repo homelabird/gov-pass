@@ -163,6 +163,7 @@ func (p Policy) match(meta packet.Meta, hello *itls.ClientHelloInfo) planMatchSt
 		return planMatchNo
 	}
 	for _, suffix := range p.SNISuffixes {
+		suffix = normalizeHostname(suffix)
 		if serverName == suffix || strings.HasSuffix(serverName, "."+suffix) {
 			return planMatchYes
 		}
@@ -177,8 +178,19 @@ func ValidatePolicy(policy Policy) error {
 	if !policy.Skip && !policy.HasSplitMode && !policy.HasSplitChunk && !policy.HasMaxSegmentPayload {
 		return fmt.Errorf("policy must change at least one setting or set skip=true")
 	}
+	if policy.Skip && (policy.HasSplitMode || policy.HasSplitChunk || policy.HasMaxSegmentPayload) {
+		return fmt.Errorf("skip=true cannot be combined with split overrides")
+	}
+	if policy.HasSplitMode && !isValidSplitMode(policy.SplitMode) {
+		return fmt.Errorf("split_mode must be tls-hello or immediate")
+	}
 	if len(policy.SNISuffixes) > 0 && policy.HasSplitMode && policy.SplitMode != SplitModeTLSHello {
 		return fmt.Errorf("sni_suffixes policies only support split_mode=tls-hello")
+	}
+	for _, suffix := range policy.SNISuffixes {
+		if err := validateSNISuffix(suffix); err != nil {
+			return fmt.Errorf("sni_suffixes: %w", err)
+		}
 	}
 	if policy.HasSplitChunk && policy.SplitChunk < 1 {
 		return fmt.Errorf("split_chunk must be >= 1")
@@ -196,6 +208,38 @@ func normalizeHostname(value string) string {
 	return value
 }
 
+func validateSNISuffix(value string) error {
+	value = normalizeHostname(value)
+	if value == "" {
+		return fmt.Errorf("empty value")
+	}
+	if len(value) > 253 {
+		return fmt.Errorf("%q exceeds 253 characters", value)
+	}
+	if _, err := netip.ParseAddr(value); err == nil {
+		return fmt.Errorf("%q must be a hostname suffix, not an IP address", value)
+	}
+	labels := strings.Split(value, ".")
+	for _, label := range labels {
+		if label == "" {
+			return fmt.Errorf("%q contains an empty label", value)
+		}
+		if len(label) > 63 {
+			return fmt.Errorf("%q contains a label longer than 63 characters", value)
+		}
+		if strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
+			return fmt.Errorf("%q contains a label with leading or trailing hyphen", value)
+		}
+		for _, r := range label {
+			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
+				continue
+			}
+			return fmt.Errorf("%q contains unsupported hostname character %q", value, r)
+		}
+	}
+	return nil
+}
+
 func ValidatePolicies(policies []Policy) error {
 	for i, policy := range policies {
 		if err := ValidatePolicy(policy); err != nil {
@@ -206,11 +250,59 @@ func ValidatePolicies(policies []Policy) error {
 }
 
 func ValidateConfig(cfg Config) error {
-	if err := ValidatePolicies(cfg.Policies); err != nil {
-		return err
+	if !isValidSplitMode(cfg.SplitMode) {
+		return fmt.Errorf("split-mode must be tls-hello or immediate")
+	}
+	if cfg.SplitChunk < 1 {
+		return fmt.Errorf("split-chunk must be >= 1")
+	}
+	if cfg.CollectTimeout < time.Millisecond {
+		return fmt.Errorf("collect-timeout must be >= 1ms")
+	}
+	if cfg.MaxBufferBytes < 1 {
+		return fmt.Errorf("max-buffer must be >= 1")
 	}
 	if int64(cfg.MaxBufferBytes) > maxUint32Int64 {
 		return fmt.Errorf("max-buffer must be <= %d", maxUint32Int64)
+	}
+	if cfg.MaxHeldPackets < 1 {
+		return fmt.Errorf("max-held-pkts must be >= 1")
+	}
+	if cfg.MaxSegmentPayload < 0 {
+		return fmt.Errorf("max-seg-payload must be >= 0")
+	}
+	if cfg.WorkerCount < 1 {
+		return fmt.Errorf("workers must be >= 1")
+	}
+	if cfg.WorkerQueueSize < 1 {
+		return fmt.Errorf("worker-queue-size must be >= 1")
+	}
+	if cfg.FlowIdleTimeout < time.Millisecond {
+		return fmt.Errorf("flow-timeout must be >= 1ms")
+	}
+	if cfg.GCInterval < time.Millisecond {
+		return fmt.Errorf("gc-interval must be >= 1ms")
+	}
+	if cfg.MaxFlowsPerWorker < 0 {
+		return fmt.Errorf("max-flows-per-worker must be >= 0")
+	}
+	if cfg.MaxReassemblyBytesPerWorker < 0 {
+		return fmt.Errorf("max-reassembly-bytes-per-worker must be >= 0")
+	}
+	if cfg.MaxHeldBytesPerWorker < 0 {
+		return fmt.Errorf("max-held-bytes-per-worker must be >= 0")
+	}
+	if cfg.ShutdownFailOpenTimeout < 0 {
+		return fmt.Errorf("shutdown-fail-open-timeout must be >= 0")
+	}
+	if cfg.ShutdownFailOpenMaxPackets < 0 {
+		return fmt.Errorf("shutdown-fail-open-max-pkts must be >= 0")
+	}
+	if cfg.AdapterFlushTimeout < 0 {
+		return fmt.Errorf("adapter-flush-timeout must be >= 0")
+	}
+	if err := ValidatePolicies(cfg.Policies); err != nil {
+		return err
 	}
 	for i, policy := range cfg.Policies {
 		if len(policy.SNISuffixes) == 0 {
@@ -225,6 +317,15 @@ func ValidateConfig(cfg Config) error {
 		}
 	}
 	return nil
+}
+
+func isValidSplitMode(mode SplitMode) bool {
+	switch mode {
+	case SplitModeImmediate, SplitModeTLSHello:
+		return true
+	default:
+		return false
+	}
 }
 
 func cloneConfig(cfg Config) Config {

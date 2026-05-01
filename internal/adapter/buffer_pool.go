@@ -11,7 +11,15 @@ func copyIntoPoolBuffer(pool *sync.Pool, src []byte) (data []byte, backing []byt
 		return out, nil
 	}
 
-	buf, _ := pool.Get().([]byte)
+	var buf []byte
+	switch v := pool.Get().(type) {
+	case []byte:
+		buf = v
+	case *[]byte:
+		if v != nil {
+			buf = *v
+		}
+	}
 	if cap(buf) < len(src) {
 		buf = make([]byte, len(src))
 	}

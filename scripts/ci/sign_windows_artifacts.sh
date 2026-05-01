@@ -1,5 +1,43 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
+
+TRUSTED_PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+PATH="$TRUSTED_PATH"
+export PATH
+
+lookup_optional_trusted_command() {
+  local name="$1"
+  local old_ifs="$IFS"
+  local dir candidate
+  IFS=:
+  for dir in $TRUSTED_PATH; do
+    candidate="${dir}/${name}"
+    if [[ -L "$candidate" ]]; then
+      echo "sign_windows_artifacts: refusing symlinked trusted command for $name: $candidate" >&2
+      IFS="$old_ifs"
+      exit 1
+    fi
+    if [[ -f "$candidate" && -x "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      IFS="$old_ifs"
+      return 0
+    fi
+  done
+  IFS="$old_ifs"
+  return 1
+}
+
+lookup_trusted_command() {
+  local name="$1"
+  local candidate
+  if candidate="$(lookup_optional_trusted_command "$name")"; then
+    printf '%s\n' "$candidate"
+    return 0
+  fi
+  echo "sign_windows_artifacts: required command not found in trusted directories: $name" >&2
+  exit 1
+}
 
 usage() {
   cat <<'EOF' >&2
@@ -29,17 +67,43 @@ fi
 
 desc="${WINDOWS_CODESIGN_DESC:-gov-pass}"
 url="${WINDOWS_CODESIGN_URL:-}"
+url_args=()
 
-tmpdir="$(mktemp -d)"
-cleanup() { rm -rf "$tmpdir"; }
+validate_http_url() {
+  local label="$1"
+  local value="$2"
+  case "$value" in
+    http://*|https://*)
+      ;;
+    *)
+      echo "sign_windows_artifacts: ${label} must start with http:// or https://: $value" >&2
+      exit 1
+      ;;
+  esac
+}
+
+if [[ -n "$url" ]]; then
+  validate_http_url "WINDOWS_CODESIGN_URL" "$url"
+  url_args=(-i "$url")
+fi
+
+MKTEMP_BIN="$(lookup_trusted_command mktemp)"
+RM_BIN="$(lookup_trusted_command rm)"
+BASE64_BIN="$(lookup_trusted_command base64)"
+CHMOD_BIN="$(lookup_trusted_command chmod)"
+MV_BIN="$(lookup_trusted_command mv)"
+OSSLSIGNCODE_BIN="$(lookup_trusted_command osslsigncode)"
+
+tmpdir="$("$MKTEMP_BIN" -d)"
+cleanup() { "$RM_BIN" -rf -- "$tmpdir"; }
 trap cleanup EXIT
 
 pfx="$tmpdir/codesign.pfx"
 passfile="$tmpdir/pass.txt"
 
-printf '%s' "$WINDOWS_CODESIGN_PFX_B64" | base64 -d >"$pfx"
+printf '%s' "$WINDOWS_CODESIGN_PFX_B64" | "$BASE64_BIN" -d >"$pfx"
 printf '%s' "$WINDOWS_CODESIGN_PFX_PASSWORD" >"$passfile"
-chmod 600 "$pfx" "$passfile"
+"$CHMOD_BIN" 600 "$pfx" "$passfile"
 
 default_ts_urls=("http://timestamp.digicert.com" "http://timestamp.sectigo.com")
 
@@ -70,6 +134,7 @@ build_ts_args() {
 
   for u in "${urls[@]}"; do
     if [[ -n "$u" ]]; then
+      validate_http_url "timestamp URL" "$u"
       args+=(-ts "$u")
     fi
   done
@@ -83,7 +148,8 @@ build_ts_args() {
 
 sign_one() {
   local in="$1"
-  local out="$tmpdir/$(basename "$in").signed"
+  local base="${in##*/}"
+  local out="$tmpdir/${base}.signed"
   local extra=()
   local -a ts_args=()
 
@@ -99,21 +165,25 @@ sign_one() {
   done < <(build_ts_args)
 
   # Use RFC3161 timestamping (-ts) and SHA-256 digest.
-  osslsigncode sign \
+  "$OSSLSIGNCODE_BIN" sign \
     -pkcs12 "$pfx" \
     -readpass "$passfile" \
     -h sha256 \
     -n "$desc" \
-    ${url:+-i "$url"} \
+    "${url_args[@]}" \
     "${ts_args[@]}" \
     "${extra[@]}" \
     -in "$in" \
     -out "$out" >/dev/null
 
-  mv -f "$out" "$in"
+  "$MV_BIN" -f -- "$out" "$in"
 }
 
 for f in "$@"; do
+  if [[ -L "$f" ]]; then
+    echo "sign_windows_artifacts: refusing to sign through symlink: $f" >&2
+    exit 1
+  fi
   if [[ ! -f "$f" ]]; then
     echo "sign_windows_artifacts: file not found: $f" >&2
     exit 1

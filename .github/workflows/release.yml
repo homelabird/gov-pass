@@ -29,7 +29,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends zip msitools osslsigncode openssl pkg-config gcc dpkg-dev git
+          sudo apt-get install -y --no-install-recommends zip wixl msitools osslsigncode openssl pkg-config gcc dpkg-dev git
 
       - name: Build release assets
         env:
@@ -47,6 +47,45 @@ jobs:
         run: |
           set -euo pipefail
 
+          validate_release_version() {
+            value="$1"
+            case "$value" in
+              ''|.*|*/*|*\\*)
+                echo "Invalid release version: $value"
+                exit 1
+                ;;
+            esac
+            if ! printf '%s\n' "$value" | grep -Eq '^v?[0-9][0-9A-Za-z._+-]*$'; then
+              echo "Invalid release version: $value"
+              exit 1
+            fi
+          }
+
+          validate_release_version "$PKG_VERSION"
+
+          safe_remove_dir() {
+            path="$1"
+            expected_parent="$2"
+            case "$path" in
+              ""|"/"|"."|".."|*"/.."|*"/../"*)
+                echo "Refusing to remove unsafe directory: $path"
+                exit 1
+                ;;
+            esac
+            case "$path" in
+              "$expected_parent"/*) ;;
+              *)
+                echo "Refusing to remove directory outside $expected_parent: $path"
+                exit 1
+                ;;
+            esac
+            if [ -L "$path" ]; then
+              echo "Refusing to remove symlink directory: $path"
+              exit 1
+            fi
+            rm -rf "$path"
+          }
+
           mkdir -p "$DIST_DIR"
           BASE_DIR="$DIST_DIR"
           cp scripts/install_one_touch_curl.sh "$BASE_DIR/install_one_touch_curl.sh"
@@ -55,9 +94,13 @@ jobs:
 
           stage_common() {
             dest="$1"
-            mkdir -p "$dest/docs" "$dest/licenses"
+            mkdir -p "$dest/docs/examples" "$dest/docs/schema" "$dest/licenses"
             cp LICENSE "$dest/"
+            cp README.md SECURITY.md "$dest/"
+            cp docs/DESIGN.md "$dest/docs/"
             cp docs/THIRD_PARTY_NOTICES.md "$dest/docs/"
+            cp docs/examples/splitter.*.json "$dest/docs/examples/"
+            cp docs/schema/* "$dest/docs/schema/"
             cp third_party/windivert/WinDivert-2.2.2-A/LICENSE "$dest/licenses/WinDivert-LICENSE.txt"
             cp third_party/go-nfqueue/LICENSE "$dest/licenses/go-nfqueue-LICENSE.txt"
             cp third_party/netlink/LICENSE.md "$dest/licenses/netlink-LICENSE.txt"
@@ -83,6 +126,10 @@ jobs:
           FREEBSD_DIR="$BASE_DIR/gov-pass-${PKG_VERSION}-freebsd-amd64"
           mkdir -p "$FREEBSD_DIR"
           CGO_ENABLED=0 GOOS=freebsd GOARCH=amd64 go build -o "$FREEBSD_DIR/splitter" ./cmd/splitter
+          CGO_ENABLED=0 GOOS=freebsd GOARCH=amd64 go build -o "$FREEBSD_DIR/gov-pass-tui" ./cmd/gov-pass-tui
+          mkdir -p "$FREEBSD_DIR/scripts/freebsd" "$FREEBSD_DIR/docs/pf"
+          cp scripts/freebsd/gov-pass scripts/freebsd/install_pf_anchor.sh scripts/freebsd/uninstall_pf_anchor.sh scripts/freebsd/gov-pass-apply-pf.sh scripts/freebsd/gov-pass-remove-pf.sh "$FREEBSD_DIR/scripts/freebsd/"
+          cp docs/pf/*.conf "$FREEBSD_DIR/docs/pf/"
           stage_common "$FREEBSD_DIR"
           tar -C "$BASE_DIR" -czf "$BASE_DIR/gov-pass-${PKG_VERSION}-freebsd-amd64.tar.gz" "gov-pass-${PKG_VERSION}-freebsd-amd64"
 
@@ -109,7 +156,7 @@ jobs:
           )
 
           MSI_ROOT="$BASE_DIR/gov-pass-msi-root"
-          rm -rf "$MSI_ROOT"
+          safe_remove_dir "$MSI_ROOT" "$BASE_DIR"
           mkdir -p "$MSI_ROOT"
           cp -a "$WIN_DIR/." "$MSI_ROOT/"
           WXS_OUT="$BASE_DIR/gov-pass.wxs"
@@ -125,10 +172,12 @@ jobs:
             msiinfo export "gov-pass-${PKG_VERSION}-windows-amd64.msi" ServiceControl | grep -q "gov-pass"
             msiinfo export "gov-pass-${PKG_VERSION}-windows-amd64.msi" Shortcut | grep -q "Reload gov-pass config"
             msiinfo export "gov-pass-${PKG_VERSION}-windows-amd64.msi" Shortcut | grep -q "gov-pass TUI"
+            msiinfo export "gov-pass-${PKG_VERSION}-windows-amd64.msi" File | grep -q "splitter.windows.schema.json"
+            msiinfo export "gov-pass-${PKG_VERSION}-windows-amd64.msi" File | grep -q "splitter.windows.json"
           )
 
           RAW_TAG="${PKG_VERSION#v}"
-          bash packaging/deb/build_deb.sh "$RAW_TAG"
+          GOV_PASS_GO_BIN="$(command -v go)" bash packaging/deb/build_deb.sh "$RAW_TAG"
           BIN_DEB="dist/gov-pass_${RAW_TAG}_amd64.deb"
           test -f "$BIN_DEB"
           cp "$BIN_DEB" "$DIST_DIR/gov-pass-${PKG_VERSION}-linux-amd64.deb"
@@ -182,6 +231,45 @@ jobs:
         run: |
           set -euo pipefail
 
+          validate_release_version() {
+            value="$1"
+            case "$value" in
+              ''|.*|*/*|*\\*)
+                echo "Invalid release version: $value"
+                exit 1
+                ;;
+            esac
+            if ! printf '%s\n' "$value" | grep -Eq '^v?[0-9][0-9A-Za-z._+-]*$'; then
+              echo "Invalid release version: $value"
+              exit 1
+            fi
+          }
+
+          validate_release_version "$PKG_VERSION"
+
+          safe_remove_dir() {
+            path="$1"
+            expected_parent="$2"
+            case "$path" in
+              ""|"/"|"."|".."|*"/.."|*"/../"*)
+                echo "Refusing to remove unsafe directory: $path"
+                exit 1
+                ;;
+            esac
+            case "$path" in
+              "$expected_parent"/*) ;;
+              *)
+                echo "Refusing to remove directory outside $expected_parent: $path"
+                exit 1
+                ;;
+            esac
+            if [ -L "$path" ]; then
+              echo "Refusing to remove symlink directory: $path"
+              exit 1
+            fi
+            rm -rf "$path"
+          }
+
           dnf -y install --setopt=install_weak_deps=False rpm-build golang gcc git openssl systemd-rpm-macros rpmlint
           mkdir -p "$DIST_DIR"
 
@@ -203,10 +291,11 @@ jobs:
           fi
 
           RPM_TOP="$GITHUB_WORKSPACE/rpmbuild"
-          rm -rf "$RPM_TOP"
+          safe_remove_dir "$RPM_TOP" "$GITHUB_WORKSPACE"
           mkdir -p "$RPM_TOP/BUILD" "$RPM_TOP/BUILDROOT" "$RPM_TOP/RPMS" "$RPM_TOP/SOURCES" "$RPM_TOP/SPECS" "$RPM_TOP/SRPMS"
-          git archive --format=tar --prefix="gov-pass-${RPM_VERSION}/" "$PKG_VERSION" | gzip -n > "$RPM_TOP/SOURCES/gov-pass-${RPM_VERSION}.tar.gz"
+          git archive --format=tar --prefix="gov-pass-${RPM_VERSION}/" HEAD | gzip -n > "$RPM_TOP/SOURCES/gov-pass-${RPM_VERSION}.tar.gz"
           cp packaging/rpm/gov-pass.spec "$RPM_TOP/SPECS/"
+          sed -i -E "s/(^\* .* - )[0-9][^[:space:]]*/\1${RPM_VERSION}-${RPM_RELEASE}/" "$RPM_TOP/SPECS/gov-pass.spec"
           cp packaging/rpm/gov-pass.service packaging/rpm/gov-pass.sysconfig "$RPM_TOP/SOURCES/"
           rpmbuild -ba --define "_topdir $RPM_TOP" --define "gov_pass_version $RPM_VERSION" --define "gov_pass_release $RPM_RELEASE" "$RPM_TOP/SPECS/gov-pass.spec"
 

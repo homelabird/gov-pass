@@ -14,6 +14,8 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+var windowsMkdirAll = os.MkdirAll
+
 const (
 	sidSystem         = "*S-1-5-18"
 	sidAdministrators = "*S-1-5-32-544"
@@ -25,13 +27,22 @@ func ensureSecureWindowsDir(dir string) error {
 	if dir == "" {
 		return fmt.Errorf("dir is empty")
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := rejectWindowsReparsePath(dir); err != nil {
+		return err
+	}
+	if err := windowsMkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	if err := rejectWindowsReparsePath(dir); err != nil {
 		return err
 	}
 	return hardenWindowsDirACL(dir)
 }
 
 func hardenWindowsDirACL(dir string) error {
+	if err := rejectWindowsReparsePath(dir); err != nil {
+		return err
+	}
 	icacls, err := resolveSystem32WindowsCommand("icacls.exe")
 	if err != nil {
 		return err
@@ -64,6 +75,9 @@ func hardenWindowsFileACL(path string) error {
 	if path == "" {
 		return fmt.Errorf("path is empty")
 	}
+	if err := rejectWindowsReparsePath(path); err != nil {
+		return err
+	}
 	icacls, err := resolveSystem32WindowsCommand("icacls.exe")
 	if err != nil {
 		return err
@@ -94,17 +108,33 @@ func resolveSystem32WindowsCommand(name string) (string, error) {
 	if name == "" {
 		return "", fmt.Errorf("command name is empty")
 	}
+	if filepath.Base(name) != name || filepath.VolumeName(name) != "" {
+		return "", fmt.Errorf("command name must be a bare filename: %s", name)
+	}
 	sysDir, err := windows.GetSystemDirectory()
 	if err != nil {
-		root := strings.TrimSpace(os.Getenv("SystemRoot"))
-		if root == "" {
-			root = `C:\Windows`
-		}
-		sysDir = filepath.Join(root, "System32")
+		return "", fmt.Errorf("resolve System32 failed: %w", err)
+	}
+	if strings.TrimSpace(sysDir) == "" {
+		return "", fmt.Errorf("resolve System32 failed: empty path")
 	}
 	path := filepath.Join(strings.TrimSpace(sysDir), name)
-	if _, err := os.Stat(path); err != nil {
+	if err := rejectWindowsReparsePath(path); err != nil {
 		return "", err
 	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("System32 command is a directory: %s", path)
+	}
 	return path, nil
+}
+
+func rejectWindowsReparsePath(path string) error {
+	if _, err := inspectManagedWindowsPath(path); err != nil {
+		return fmt.Errorf("refusing reparse point path %s: %w", path, err)
+	}
+	return nil
 }

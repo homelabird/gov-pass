@@ -47,6 +47,8 @@ func TestParseNftHandle(t *testing.T) {
 	}{
 		{line: "tcp dport 443 queue num 100 bypass comment \"gov-pass\" # handle 17", want: 17, ok: true},
 		{line: "tcp dport 443 # handle not-a-number", want: 0, ok: false},
+		{line: "tcp dport 443 # handle -1", want: 0, ok: false},
+		{line: "tcp dport 443 # handle 0", want: 0, ok: false},
 		{line: "tcp dport 443 comment \"gov-pass\"", want: 0, ok: false},
 	}
 
@@ -96,6 +98,10 @@ func TestParseRouteDev(t *testing.T) {
 			out:  "default via 10.0.0.1 proto dhcp metric 100",
 			want: "",
 		},
+		{
+			out:  "default via 10.0.0.1 dev --help proto dhcp metric 100",
+			want: "",
+		},
 	}
 
 	for _, tt := range tests {
@@ -105,9 +111,34 @@ func TestParseRouteDev(t *testing.T) {
 	}
 }
 
+func TestNormalizeLinuxIfaceName(t *testing.T) {
+	valid := []string{"eth0", "enp0s31f6", "vlan.100", "tun0", "veth0@if2", "br:wan"}
+	for _, iface := range valid {
+		t.Run(iface, func(t *testing.T) {
+			got, err := normalizeLinuxIfaceName(" " + iface + " ")
+			if err != nil {
+				t.Fatalf("normalizeLinuxIfaceName(%q) unexpected error: %v", iface, err)
+			}
+			if got != iface {
+				t.Fatalf("normalizeLinuxIfaceName(%q) = %q", iface, got)
+			}
+		})
+	}
+
+	invalid := []string{"", "-eth0", "eth/0", `eth\0`, "bad name", strings.Repeat("a", 16)}
+	for _, iface := range invalid {
+		t.Run(iface, func(t *testing.T) {
+			if _, err := normalizeLinuxIfaceName(iface); err == nil {
+				t.Fatalf("expected error for iface %q", iface)
+			}
+		})
+	}
+}
+
 func TestParseRouteDevs(t *testing.T) {
 	out := strings.Join([]string{
 		"default via 10.0.0.1 dev eth0 proto dhcp metric 100",
+		"default via 10.0.0.1 dev --help proto dhcp metric 100",
 		"default via fe80::1 dev eth0 proto ra metric 100",
 		"2606:4700:4700::1111 from :: via fe80::2 dev tun0 src 2001:db8::2 metric 10",
 		"default via 192.168.50.1 proto dhcp metric 100",

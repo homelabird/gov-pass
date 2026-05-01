@@ -123,7 +123,7 @@ func serviceStatusText(serviceName string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	cmd := exec.Command(servicePath, serviceName, "onestatus")
+	cmd := newFreeBSDCommand(servicePath, serviceName, "onestatus")
 	out, err := cmd.CombinedOutput()
 	text := strings.TrimSpace(string(out))
 	if state, _, ok := classifyFreeBSDServiceStatusOutput(text, err == nil); ok {
@@ -141,7 +141,7 @@ func isServiceEnabled(serviceName string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	cmd := exec.Command(sysrcPath, "-n", key)
+	cmd := newFreeBSDCommand(sysrcPath, "-n", key)
 	out, err := cmd.CombinedOutput()
 	text := strings.TrimSpace(string(out))
 	if err == nil {
@@ -188,13 +188,19 @@ func runCommand(name string, args ...string) (string, error) {
 }
 
 func runCommandPath(path string, args ...string) (string, error) {
-	cmd := exec.Command(path, args...)
+	cmd := newFreeBSDCommand(path, args...)
 	out, err := cmd.CombinedOutput()
 	text := strings.TrimSpace(string(out))
 	if err != nil {
 		return text, fmt.Errorf("%s %s failed: %s", path, strings.Join(args, " "), nonEmpty(text, err.Error()))
 	}
 	return text, nil
+}
+
+func newFreeBSDCommand(path string, args ...string) *exec.Cmd {
+	cmd := exec.Command(path, args...)
+	cmd.Env = sanitizedFreeBSDCommandEnv()
+	return cmd
 }
 
 func requiresPrivilegedRetry(output string) bool {

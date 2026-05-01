@@ -14,30 +14,12 @@ import (
 	"fk-gov/internal/adapter"
 	"fk-gov/internal/driver"
 	"fk-gov/internal/engine"
+	"golang.org/x/sys/windows"
 )
 
 type windowsJSONConfig struct {
 	Engine    *engineJSONConfig    `json:"engine,omitempty"`
 	WinDivert *winDivertJSONConfig `json:"windivert,omitempty"`
-}
-
-type engineJSONConfig struct {
-	SplitMode                   *string                  `json:"split_mode,omitempty"`
-	SplitChunk                  *int                     `json:"split_chunk,omitempty"`
-	CollectTimeout              *string                  `json:"collect_timeout,omitempty"`
-	MaxBufferBytes              *int                     `json:"max_buffer_bytes,omitempty"`
-	MaxHeldPackets              *int                     `json:"max_held_packets,omitempty"`
-	MaxSegmentPayload           *int                     `json:"max_segment_payload,omitempty"`
-	Workers                     *int                     `json:"workers,omitempty"`
-	FlowIdleTimeout             *string                  `json:"flow_idle_timeout,omitempty"`
-	GCInterval                  *string                  `json:"gc_interval,omitempty"`
-	MaxFlowsPerWorker           *int                     `json:"max_flows_per_worker,omitempty"`
-	MaxReassemblyBytesPerWorker *int                     `json:"max_reassembly_bytes_per_worker,omitempty"`
-	MaxHeldBytesPerWorker       *int                     `json:"max_held_bytes_per_worker,omitempty"`
-	ShutdownFailOpenTimeout     *string                  `json:"shutdown_fail_open_timeout,omitempty"`
-	ShutdownFailOpenMaxPackets  *int                     `json:"shutdown_fail_open_max_packets,omitempty"`
-	AdapterFlushTimeout         *string                  `json:"adapter_flush_timeout,omitempty"`
-	Policies                    []enginePolicyJSONConfig `json:"policies,omitempty"`
 }
 
 type winDivertJSONConfig struct {
@@ -68,6 +50,7 @@ type windowsCLIArgs struct {
 	ShutdownFailOpenTimeout    time.Duration
 	ShutdownFailOpenMaxPackets int
 	AdapterFlushTimeout        time.Duration
+	StatsInterval              time.Duration
 
 	Filter    string
 	QueueLen  uint64
@@ -85,20 +68,28 @@ type windowsCLIArgs struct {
 	ConfigPath string
 }
 
+var windowsKnownFolderPath = windows.KnownFolderPath
+
+var (
+	ensureSecureWindowsConfigDir        = ensureSecureWindowsDir
+	hardenWindowsConfigFileACL          = hardenWindowsFileACL
+	writeWindowsJSONConfigIfMissingFile = writeWindowsJSONConfigIfMissing
+)
+
 func defaultProgramDataDir() string {
-	base := os.Getenv("ProgramData")
-	if base == "" {
-		base = `C:\ProgramData`
-	}
-	return base
+	return defaultWindowsKnownFolderDir(windows.FOLDERID_ProgramData, `C:\ProgramData`)
 }
 
 func defaultProgramFilesDir() string {
-	base := os.Getenv("ProgramFiles")
-	if base == "" {
-		base = `C:\Program Files`
+	return defaultWindowsKnownFolderDir(windows.FOLDERID_ProgramFiles, `C:\Program Files`)
+}
+
+func defaultWindowsKnownFolderDir(folderID *windows.KNOWNFOLDERID, fallback string) string {
+	base, err := windowsKnownFolderPath(folderID, windows.KF_FLAG_DEFAULT)
+	if err == nil && strings.TrimSpace(base) != "" {
+		return filepath.Clean(base)
 	}
-	return base
+	return fallback
 }
 
 func defaultServiceConfigPath() string {
@@ -140,12 +131,12 @@ func validateWindowsServiceDriverDir(dir string) error {
 }
 
 func readWindowsJSONConfig(path string) (windowsJSONConfig, error) {
-	b, err := os.ReadFile(path)
+	b, err := readJSONConfigFile(path)
 	if err != nil {
 		return windowsJSONConfig{}, err
 	}
 	var cfg windowsJSONConfig
-	if err := json.Unmarshal(b, &cfg); err != nil {
+	if err := decodeStrictJSONConfig(b, &cfg); err != nil {
 		return windowsJSONConfig{}, err
 	}
 	return cfg, nil
@@ -153,7 +144,13 @@ func readWindowsJSONConfig(path string) (windowsJSONConfig, error) {
 
 func writeWindowsJSONConfigIfMissing(path string, cfg windowsJSONConfig) error {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := rejectWindowsReparsePath(dir); err != nil {
+		return err
+	}
+	if err := windowsMkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	if err := rejectWindowsReparsePath(dir); err != nil {
 		return err
 	}
 
@@ -163,9 +160,17 @@ func writeWindowsJSONConfigIfMissing(path string, cfg windowsJSONConfig) error {
 	}
 	b = append(b, '\n')
 
+	if err := rejectWindowsReparsePath(path); err != nil {
+		return err
+	}
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 	if err != nil {
 		if errors.Is(err, os.ErrExist) {
+			existing, _, openErr := openRegularConfigFile(path)
+			if openErr != nil {
+				return openErr
+			}
+			_ = existing.Close()
 			return nil
 		}
 		return err
@@ -174,6 +179,13 @@ func writeWindowsJSONConfigIfMissing(path string, cfg windowsJSONConfig) error {
 		_ = f.Close()
 	}()
 
+	info, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("config path must be a regular file: %s", path)
+	}
 	if _, err := f.Write(b); err != nil {
 		return err
 	}
@@ -185,83 +197,13 @@ func applyWindowsJSONConfig(dstEngine *engine.Config, dstWin *windowsRunConfig, 
 		return errors.New("nil config destination")
 	}
 
-	if cfg.Engine != nil {
-		if cfg.Engine.SplitMode != nil && strings.TrimSpace(*cfg.Engine.SplitMode) != "" {
-			mode, err := parseSplitMode(*cfg.Engine.SplitMode)
-			if err != nil {
-				return fmt.Errorf("engine.split_mode: %w", err)
-			}
-			dstEngine.SplitMode = mode
-		}
-		if cfg.Engine.SplitChunk != nil {
-			dstEngine.SplitChunk = *cfg.Engine.SplitChunk
-		}
-		if cfg.Engine.CollectTimeout != nil && strings.TrimSpace(*cfg.Engine.CollectTimeout) != "" {
-			d, err := time.ParseDuration(*cfg.Engine.CollectTimeout)
-			if err != nil {
-				return fmt.Errorf("engine.collect_timeout: %w", err)
-			}
-			dstEngine.CollectTimeout = d
-		}
-		if cfg.Engine.MaxBufferBytes != nil {
-			dstEngine.MaxBufferBytes = *cfg.Engine.MaxBufferBytes
-		}
-		if cfg.Engine.MaxHeldPackets != nil {
-			dstEngine.MaxHeldPackets = *cfg.Engine.MaxHeldPackets
-		}
-		if cfg.Engine.MaxSegmentPayload != nil {
-			dstEngine.MaxSegmentPayload = *cfg.Engine.MaxSegmentPayload
-		}
-		if cfg.Engine.Workers != nil {
-			dstEngine.WorkerCount = *cfg.Engine.Workers
-		}
-		if cfg.Engine.FlowIdleTimeout != nil && strings.TrimSpace(*cfg.Engine.FlowIdleTimeout) != "" {
-			d, err := time.ParseDuration(*cfg.Engine.FlowIdleTimeout)
-			if err != nil {
-				return fmt.Errorf("engine.flow_idle_timeout: %w", err)
-			}
-			dstEngine.FlowIdleTimeout = d
-		}
-		if cfg.Engine.GCInterval != nil && strings.TrimSpace(*cfg.Engine.GCInterval) != "" {
-			d, err := time.ParseDuration(*cfg.Engine.GCInterval)
-			if err != nil {
-				return fmt.Errorf("engine.gc_interval: %w", err)
-			}
-			dstEngine.GCInterval = d
-		}
-		if cfg.Engine.MaxFlowsPerWorker != nil {
-			dstEngine.MaxFlowsPerWorker = *cfg.Engine.MaxFlowsPerWorker
-		}
-		if cfg.Engine.MaxReassemblyBytesPerWorker != nil {
-			dstEngine.MaxReassemblyBytesPerWorker = *cfg.Engine.MaxReassemblyBytesPerWorker
-		}
-		if cfg.Engine.MaxHeldBytesPerWorker != nil {
-			dstEngine.MaxHeldBytesPerWorker = *cfg.Engine.MaxHeldBytesPerWorker
-		}
-		if cfg.Engine.ShutdownFailOpenTimeout != nil && strings.TrimSpace(*cfg.Engine.ShutdownFailOpenTimeout) != "" {
-			d, err := time.ParseDuration(*cfg.Engine.ShutdownFailOpenTimeout)
-			if err != nil {
-				return fmt.Errorf("engine.shutdown_fail_open_timeout: %w", err)
-			}
-			dstEngine.ShutdownFailOpenTimeout = d
-		}
-		if cfg.Engine.ShutdownFailOpenMaxPackets != nil {
-			dstEngine.ShutdownFailOpenMaxPackets = *cfg.Engine.ShutdownFailOpenMaxPackets
-		}
-		if cfg.Engine.AdapterFlushTimeout != nil && strings.TrimSpace(*cfg.Engine.AdapterFlushTimeout) != "" {
-			d, err := time.ParseDuration(*cfg.Engine.AdapterFlushTimeout)
-			if err != nil {
-				return fmt.Errorf("engine.adapter_flush_timeout: %w", err)
-			}
-			dstEngine.AdapterFlushTimeout = d
-		}
-		if cfg.Engine.Policies != nil {
-			policies, err := parseEnginePolicies(cfg.Engine.Policies)
-			if err != nil {
-				return err
-			}
-			dstEngine.Policies = policies
-		}
+	if err := applyEngineJSONConfig(dstEngine, cfg.Engine); err != nil {
+		return err
+	}
+	if statsInterval, err := parseEngineStatsIntervalConfig(cfg.Engine); err != nil {
+		return err
+	} else if statsInterval != nil {
+		dstWin.StatsInterval = *statsInterval
 	}
 
 	if cfg.WinDivert != nil {
@@ -307,6 +249,7 @@ func windowsJSONConfigFromDefaults(cfg engine.Config, wc windowsRunConfig) windo
 	gcInterval := cfg.GCInterval.String()
 	shutdownFailOpenTimeout := cfg.ShutdownFailOpenTimeout.String()
 	adapterFlushTimeout := cfg.AdapterFlushTimeout.String()
+	statsInterval := wc.StatsInterval.String()
 
 	engineCfg := &engineJSONConfig{
 		SplitMode:                   &mode,
@@ -324,6 +267,7 @@ func windowsJSONConfigFromDefaults(cfg engine.Config, wc windowsRunConfig) windo
 		ShutdownFailOpenTimeout:     &shutdownFailOpenTimeout,
 		ShutdownFailOpenMaxPackets:  &cfg.ShutdownFailOpenMaxPackets,
 		AdapterFlushTimeout:         &adapterFlushTimeout,
+		StatsInterval:               &statsInterval,
 	}
 
 	filter := wc.Filter
@@ -352,64 +296,41 @@ func windowsJSONConfigFromDefaults(cfg engine.Config, wc windowsRunConfig) windo
 	}
 }
 
-func validateEngineConfig(cfg engine.Config) error {
-	if cfg.SplitChunk < 1 {
-		return errors.New("split-chunk must be >= 1")
-	}
-	if cfg.MaxBufferBytes < 1 {
-		return errors.New("max-buffer must be >= 1")
-	}
-	if cfg.MaxHeldPackets < 1 {
-		return errors.New("max-held-pkts must be >= 1")
-	}
-	if cfg.MaxSegmentPayload < 0 {
-		return errors.New("max-seg-payload must be >= 0")
-	}
-	if cfg.WorkerCount < 1 {
-		return errors.New("workers must be >= 1")
-	}
-	if cfg.CollectTimeout < 1*time.Millisecond {
-		return errors.New("collect-timeout must be >= 1ms")
-	}
-	if cfg.FlowIdleTimeout < 1*time.Millisecond {
-		return errors.New("flow-timeout must be >= 1ms")
-	}
-	if cfg.GCInterval < 1*time.Millisecond {
-		return errors.New("gc-interval must be >= 1ms")
-	}
-	if cfg.MaxFlowsPerWorker < 0 {
-		return errors.New("max-flows-per-worker must be >= 0")
-	}
-	if cfg.MaxReassemblyBytesPerWorker < 0 {
-		return errors.New("max-reassembly-bytes-per-worker must be >= 0")
-	}
-	if cfg.MaxHeldBytesPerWorker < 0 {
-		return errors.New("max-held-bytes-per-worker must be >= 0")
-	}
-	if cfg.ShutdownFailOpenTimeout < 0 {
-		return errors.New("shutdown-fail-open-timeout must be >= 0")
-	}
-	if cfg.ShutdownFailOpenMaxPackets < 0 {
-		return errors.New("shutdown-fail-open-max-pkts must be >= 0")
-	}
-	if cfg.AdapterFlushTimeout < 0 {
-		return errors.New("adapter-flush-timeout must be >= 0")
-	}
-	if err := engine.ValidateConfig(cfg); err != nil {
-		return err
-	}
-	return nil
-}
-
 func validateWindowsRunConfig(wc windowsRunConfig) error {
 	if strings.TrimSpace(wc.Filter) == "" {
 		return errors.New("filter is empty")
+	}
+	if err := validateWinDivertOptions(wc.AdapterOpts); err != nil {
+		return err
 	}
 	if err := driver.ValidateServiceName(wc.WinDivertSvcName); err != nil {
 		return fmt.Errorf("windivert service name invalid: %w", err)
 	}
 	if err := driver.ValidateDriverFileName(wc.WinDivertSys); err != nil {
 		return fmt.Errorf("windivert sys filename invalid: %w", err)
+	}
+	return nil
+}
+
+func validateWinDivertOptions(opts adapter.WinDivertOptions) error {
+	if err := validateWinDivertQueueParam("queue_len", opts.QueueLen, winDivertQueueLenMin, winDivertQueueLenMax); err != nil {
+		return err
+	}
+	if err := validateWinDivertQueueParam("queue_time_ms", opts.QueueTime, winDivertQueueTimeMin, winDivertQueueTimeMax); err != nil {
+		return err
+	}
+	if err := validateWinDivertQueueParam("queue_size_bytes", opts.QueueSize, winDivertQueueSizeMin, winDivertQueueSizeMax); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateWinDivertQueueParam(name string, value uint64, min uint64, max uint64) error {
+	if value == 0 {
+		return nil
+	}
+	if value < min || value > max {
+		return fmt.Errorf("%s must be 0 or between %d and %d", name, min, max)
 	}
 	return nil
 }
@@ -430,6 +351,7 @@ func windowsDefaults() (engine.Config, windowsRunConfig) {
 		AutoInstallDriver:    true,
 		AutoUninstallDriver:  true,
 		AutoDownloadFiles:    true,
+		StatsInterval:        defaultStatsInterval,
 	}
 	return cfg, wc
 }
@@ -455,13 +377,16 @@ func effectiveWindowsConfig(args windowsCLIArgs, setFlags map[string]bool, asSer
 	if asService && configPath != "" && managedProgramDataPath {
 		// Ensure ProgramData state is not user-writable. This prevents config
 		// tampering and DLL hijacking via windivert_dir in service mode.
-		if err := ensureSecureWindowsDir(programDataRoot); err != nil {
+		if err := ensureSecureWindowsConfigDir(programDataRoot); err != nil {
 			return engine.Config{}, windowsRunConfig{}, fmt.Errorf("secure ProgramData dir failed: %w", err)
 		}
-		if _, err := os.Stat(configPath); err == nil {
-			if err := hardenWindowsFileACL(configPath); err != nil {
+		if existing, _, err := openRegularConfigFile(configPath); err == nil {
+			_ = existing.Close()
+			if err := hardenWindowsConfigFileACL(configPath); err != nil {
 				return engine.Config{}, windowsRunConfig{}, fmt.Errorf("secure config file failed: %w", err)
 			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return engine.Config{}, windowsRunConfig{}, fmt.Errorf("secure config file failed: %w", err)
 		}
 	}
 
@@ -469,23 +394,27 @@ func effectiveWindowsConfig(args windowsCLIArgs, setFlags map[string]bool, asSer
 		fileCfg, err := readWindowsJSONConfig(configPath)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) && asService && usingDefaultPath {
-				// First service run: create a default config template and continue with defaults.
+				// First service run: create a default config template, then
+				// read it back so create races cannot silently ignore config.
 				tpl := windowsJSONConfigFromDefaults(cfg, wc)
-				if err := writeWindowsJSONConfigIfMissing(configPath, tpl); err != nil {
+				if err := writeWindowsJSONConfigIfMissingFile(configPath, tpl); err != nil {
 					return engine.Config{}, windowsRunConfig{}, fmt.Errorf("create default config failed: %w", err)
 				}
 				if asService && managedProgramDataPath {
-					if err := hardenWindowsFileACL(configPath); err != nil {
+					if err := hardenWindowsConfigFileACL(configPath); err != nil {
 						return engine.Config{}, windowsRunConfig{}, fmt.Errorf("secure config file failed: %w", err)
 					}
+				}
+				fileCfg, err = readWindowsJSONConfig(configPath)
+				if err != nil {
+					return engine.Config{}, windowsRunConfig{}, fmt.Errorf("read config failed (%s): %w", configPath, err)
 				}
 			} else {
 				return engine.Config{}, windowsRunConfig{}, fmt.Errorf("read config failed (%s): %w", configPath, err)
 			}
-		} else {
-			if err := applyWindowsJSONConfig(&cfg, &wc, fileCfg); err != nil {
-				return engine.Config{}, windowsRunConfig{}, fmt.Errorf("apply config failed: %w", err)
-			}
+		}
+		if err := applyWindowsJSONConfig(&cfg, &wc, fileCfg); err != nil {
+			return engine.Config{}, windowsRunConfig{}, fmt.Errorf("apply config failed: %w", err)
 		}
 	}
 
@@ -539,6 +468,9 @@ func effectiveWindowsConfig(args windowsCLIArgs, setFlags map[string]bool, asSer
 	if setFlags["adapter-flush-timeout"] {
 		cfg.AdapterFlushTimeout = args.AdapterFlushTimeout
 	}
+	if setFlags["stats-interval"] {
+		wc.StatsInterval = args.StatsInterval
+	}
 	if setFlags["filter"] {
 		wc.Filter = args.Filter
 	}
@@ -580,6 +512,9 @@ func effectiveWindowsConfig(args windowsCLIArgs, setFlags map[string]bool, asSer
 
 	if err := validateEngineConfig(cfg); err != nil {
 		return engine.Config{}, windowsRunConfig{}, err
+	}
+	if wc.StatsInterval < 0 {
+		return engine.Config{}, windowsRunConfig{}, errors.New("stats-interval must be >= 0")
 	}
 	if err := validateWindowsRunConfig(wc); err != nil {
 		return engine.Config{}, windowsRunConfig{}, err

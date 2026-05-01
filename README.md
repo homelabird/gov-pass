@@ -37,6 +37,13 @@ Optional TUI controller install:
 sudo INSTALL_TUI=1 ./scripts/install_one_touch.sh
 ```
 
+Source installs resolve `go` only from trusted system paths. If Go is installed
+elsewhere, set `GOV_PASS_GO_BIN` to an absolute, non-symlinked `go` binary path:
+
+```bash
+sudo GOV_PASS_GO_BIN="$(command -v go)" ./scripts/install_one_touch.sh
+```
+
 Release installer:
 
 ```bash
@@ -67,6 +74,9 @@ Run in Administrator PowerShell:
 .\scripts\install_one_touch.ps1
 ```
 
+If Go is not installed under the standard Program Files location, set
+`$env:GOV_PASS_GO_BIN` to the absolute `go.exe` path before running the helper.
+
 This helper builds `dist\splitter.exe`, packages local WinDivert runtime files,
 and installs/starts the WinDivert driver. It does not install the `gov-pass`
 Windows service or create `C:\ProgramData\gov-pass\config.json`.
@@ -88,8 +98,9 @@ Reload config in place:
 sc.exe control gov-pass paramchange
 ```
 
-Use [`docs/examples/splitter.windows.json`](docs/examples/splitter.windows.json) as
-the service config template and `splitter.exe --print-reloadability` to inspect
+Use [`docs/examples/splitter.windows.json`](docs/examples/splitter.windows.json)
+as the service config template, [`docs/schema/`](docs/schema/) for the versioned
+JSON field contract, and `splitter.exe --print-reloadability` to inspect
 restart-required settings on the current build.
 
 ### FreeBSD
@@ -111,6 +122,10 @@ Use [`docs/pf/`](docs/pf/) for anchor examples and [`docs/DESIGN.md`](docs/DESIG
 for the current FreeBSD caveats. Current scope: reload is restart-only, `pf`
 policy remains operator-managed, and the current divert socket path should be
 treated as IPv4-only.
+
+`splitter --check` also checks whether `pf` is enabled and whether the
+`gov-pass` live anchor has rules loaded. It does not prove that interface
+selectors in the anchor match a given pfSense or FreeBSD topology.
 
 ## Manual Build
 
@@ -137,8 +152,8 @@ go build -o dist\splitter.exe .\cmd\splitter
 
 - Linux installs NFQUEUE rules automatically, disables GRO/GSO/TSO on the
   detected egress interface, and restores offload settings on exit when
-  possible. `--ip-family=auto` is the default, so IPv4-only and IPv6-only
-  hosts no longer need a dual-stack kernel setup just to start.
+  possible. The Linux backend opens IPv4 and IPv6 NFQUEUE paths and auto-rules
+  install explicit IPv4 and IPv6 TCP/443 queue rules.
 - The packaged/systemd Linux service keeps `--auto-install-tools=false`; in
   service mode pre-provision `nftables` or `iptables`/`ip6tables`, `ethtool`,
   and `ip`, and set `--iface` explicitly on multi-egress, container, or VPN
@@ -200,24 +215,33 @@ Most useful flags:
 - `--check-json`: preflight checks in JSON
 - `--split-mode`: `tls-hello` or `immediate`
 - `--split-chunk`: first segment size in bytes
+- `--stats-interval`: periodic engine stats log interval (`0` disables it)
 - `--auto-rules` / `--auto-offload` (Linux): disable automatic helpers
-- `--ip-family` (Linux): `auto`, `dual`, `ipv4`, or `ipv6`
+- `--iface` (Linux): pin the egress interface for offload changes
+- `--recv-buffer` (Linux): internal NFQUEUE recv buffer (`0` derives from `--queue-maxlen`)
 - `--service` (Windows): run under the Windows service wrapper
 
 Run `splitter --help` for the full flag list on the current platform.
+Use [`docs/examples/`](docs/examples/) for platform templates and
+[`docs/schema/`](docs/schema/) for the JSON schema files. CI validates that each
+example stays within its matching schema.
 
 ## Docs
 
 - [`SECURITY.md`](SECURITY.md): privilege model and hardening
 - [`CONTRIBUTING.md`](CONTRIBUTING.md): local build, test, and CI workflow
 - [`docs/DESIGN.md`](docs/DESIGN.md): runtime architecture and platform caveats
+- [`docs/schema/`](docs/schema/): JSON config schema documents
 - [`docs/MAINTAINERS.md`](docs/MAINTAINERS.md): release, packaging, and signing notes
 
 ## Development
 
 ```bash
-go test ./...
+go test -count=1 ./...
+go test -race -count=1 ./internal/engine ./cmd/splitter ./cmd/gov-pass-tui
 go vet ./...
+staticcheck ./...
+golangci-lint run ./...
 ```
 
 ## Security And Notices

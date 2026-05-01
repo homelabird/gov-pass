@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "splitter.freebsd.schema.json",
+  "title": "gov-pass splitter FreeBSD JSON config",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "engine": {
+      "$ref": "splitter.common.schema.json#/$defs/engine"
+    },
+    "freebsd": {
+      "$ref": "#/$defs/freebsd"
+    }
+  },
+  "$defs": {
+    "freebsd": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "divert_port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "default": 10000
+        }
+      }
+    }
+  }
+}

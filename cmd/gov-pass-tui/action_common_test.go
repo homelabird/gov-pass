@@ -53,7 +53,7 @@ func TestNormalizeUnixServiceName_Valid(t *testing.T) {
 }
 
 func TestNormalizeUnixServiceName_Invalid(t *testing.T) {
-	tests := []string{"", "  ", "-gov-pass", "gov pass", "gov/pass", "gov\npass"}
+	tests := []string{"", "  ", "-gov-pass", ".service", "service.", "@gov-pass", "gov-pass@", ".", "..", "gov pass", "gov/pass", "gov\npass"}
 	for _, in := range tests {
 		if _, err := normalizeUnixServiceName(in); err == nil {
 			t.Fatalf("normalizeUnixServiceName(%q) expected error", in)
@@ -62,7 +62,7 @@ func TestNormalizeUnixServiceName_Invalid(t *testing.T) {
 }
 
 func TestNormalizeWindowsServiceName_Valid(t *testing.T) {
-	tests := []string{"gov-pass", "Gov Pass", "GovPass_Prod", "Gov.Pass@Lab"}
+	tests := []string{"gov-pass", "GovPass_Prod", "GovPass1"}
 	for _, in := range tests {
 		got, err := normalizeWindowsServiceName(in)
 		if err != nil {
@@ -75,7 +75,7 @@ func TestNormalizeWindowsServiceName_Valid(t *testing.T) {
 }
 
 func TestNormalizeWindowsServiceName_Invalid(t *testing.T) {
-	tests := []string{"", "  ", "bad\nname", "bad\rname"}
+	tests := []string{"", "  ", "-gov-pass", "Gov Pass", "Gov.Pass", "GovPass@Lab", "bad\nname", "bad\rname", strings.Repeat("a", 64)}
 	for _, in := range tests {
 		if _, err := normalizeWindowsServiceName(in); err == nil {
 			t.Fatalf("normalizeWindowsServiceName(%q) expected error", in)

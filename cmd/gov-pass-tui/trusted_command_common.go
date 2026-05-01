@@ -5,6 +5,11 @@ import (
 	"strings"
 )
 
+func isBareTrustedCommandName(name string) bool {
+	name = strings.TrimSpace(name)
+	return name != "" && name != "." && name != ".." && filepath.Base(name) == name && filepath.VolumeName(name) == ""
+}
+
 func canonicalTrustedCommandPath(path string, trustedDirs []string, isExecutable func(string) bool) (string, bool) {
 	clean := filepath.Clean(strings.TrimSpace(path))
 	if !filepath.IsAbs(clean) {

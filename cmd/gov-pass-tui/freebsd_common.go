@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -15,6 +14,15 @@ var trustedFreeBSDCommandDirs = []string{
 	"/usr/bin",
 	"/sbin",
 	"/bin",
+}
+
+func sanitizedFreeBSDCommandEnv() []string {
+	return []string{
+		"PATH=" + strings.Join(trustedFreeBSDCommandDirs, string(os.PathListSeparator)),
+		"HOME=/root",
+		"LANG=C",
+		"LC_ALL=C",
+	}
 }
 
 var freeBSDCommandLookPath = lookTrustedFreeBSDCommand
@@ -54,16 +62,13 @@ func lookTrustedFreeBSDCommand(name string) (string, bool) {
 		}
 		return "", false
 	}
+	if !isBareTrustedCommandName(name) {
+		return "", false
+	}
 	for _, dir := range trustedFreeBSDCommandDirs {
 		candidate := filepath.Join(dir, name)
 		if path, ok := canonicalTrustedCommandPath(candidate, trustedFreeBSDCommandDirs, isExecutableFreeBSDCommandFile); ok {
 			return path, true
-		}
-	}
-	path, err := exec.LookPath(name)
-	if err == nil {
-		if trustedPath, ok := canonicalTrustedCommandPath(path, trustedFreeBSDCommandDirs, isExecutableFreeBSDCommandFile); ok {
-			return trustedPath, true
 		}
 	}
 	return "", false

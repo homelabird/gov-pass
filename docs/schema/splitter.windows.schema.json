@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "splitter.windows.schema.json",
+  "title": "gov-pass splitter Windows JSON config",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "engine": {
+      "$ref": "splitter.common.schema.json#/$defs/engine"
+    },
+    "windivert": {
+      "$ref": "#/$defs/windivert"
+    }
+  },
+  "$defs": {
+    "windivert": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "filter": {
+          "type": "string",
+          "default": "outbound and (ip or ipv6) and tcp.DstPort == 443"
+        },
+        "queue_len": {
+          "type": "integer",
+          "description": "WinDivert WINDIVERT_PARAM_QUEUE_LENGTH. 0 uses the driver default; non-zero values must be in the driver-supported range.",
+          "anyOf": [
+            {
+              "type": "integer",
+              "const": 0
+            },
+            {
+              "type": "integer",
+              "minimum": 32,
+              "maximum": 16384
+            }
+          ],
+          "default": 4096
+        },
+        "queue_time_ms": {
+          "type": "integer",
+          "description": "WinDivert WINDIVERT_PARAM_QUEUE_TIME in milliseconds. 0 uses the driver default; non-zero values must be in the driver-supported range.",
+          "anyOf": [
+            {
+              "type": "integer",
+              "const": 0
+            },
+            {
+              "type": "integer",
+              "minimum": 100,
+              "maximum": 16000
+            }
+          ],
+          "default": 2000
+        },
+        "queue_size_bytes": {
+          "type": "integer",
+          "description": "WinDivert WINDIVERT_PARAM_QUEUE_SIZE in bytes. 0 uses the driver default; non-zero values must be in the driver-supported range.",
+          "anyOf": [
+            {
+              "type": "integer",
+              "const": 0
+            },
+            {
+              "type": "integer",
+              "minimum": 65535,
+              "maximum": 33554432
+            }
+          ],
+          "default": 33554432
+        },
+        "windivert_dir": {
+          "type": "string",
+          "description": "Directory containing WinDivert.dll and the driver files. Empty string resolves relative to the executable."
+        },
+        "windivert_sys": {
+          "type": "string",
+          "description": "WinDivert driver filename. Empty string lets the runtime select the architecture default."
+        },
+        "allow_service_takeover": {
+          "type": "boolean",
+          "default": false
+        },
+        "auto_install_driver": {
+          "type": "boolean",
+          "default": true
+        },
+        "auto_download_files": {
+          "type": "boolean",
+          "default": true
+        }
+      }
+    }
+  }
+}

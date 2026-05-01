@@ -425,7 +425,7 @@ func whiptailCommand(args ...string) (*exec.Cmd, error) {
 		return nil, fmt.Errorf("whiptail not found in trusted command directories")
 	}
 	// #nosec G204 -- path is resolved from trusted command directories and arguments stay positional.
-	return exec.Command(path, args...), nil
+	return newLinuxTUICommand(path, args...), nil
 }
 
 func systemctlCommand(args ...string) (*exec.Cmd, error) {
@@ -434,7 +434,7 @@ func systemctlCommand(args ...string) (*exec.Cmd, error) {
 		return nil, fmt.Errorf("systemctl not found in trusted command directories")
 	}
 	// #nosec G204 -- action and service name are normalized through allowlists before invocation.
-	return exec.Command(path, args...), nil
+	return newLinuxTUICommand(path, args...), nil
 }
 
 func sudoSystemctlCommand(action, serviceName string) (*exec.Cmd, error) {
@@ -447,7 +447,7 @@ func sudoSystemctlCommand(action, serviceName string) (*exec.Cmd, error) {
 		return nil, fmt.Errorf("systemctl not found in trusted command directories")
 	}
 	// #nosec G204 -- action and service name are normalized through allowlists before invocation.
-	return exec.Command(sudoPath, "-n", systemctlPath, action, serviceName), nil
+	return newLinuxTUICommand(sudoPath, "-n", systemctlPath, action, serviceName), nil
 }
 
 func pkexecSystemctlCommand(action, serviceName string) (*exec.Cmd, error) {
@@ -460,5 +460,11 @@ func pkexecSystemctlCommand(action, serviceName string) (*exec.Cmd, error) {
 		return nil, fmt.Errorf("systemctl not found in trusted command directories")
 	}
 	// #nosec G204 -- action and service name are normalized through allowlists before invocation.
-	return exec.Command(pkexecPath, systemctlPath, action, serviceName), nil
+	return newLinuxTUICommand(pkexecPath, systemctlPath, action, serviceName), nil
+}
+
+func newLinuxTUICommand(path string, args ...string) *exec.Cmd {
+	cmd := exec.Command(path, args...)
+	cmd.Env = sanitizedLinuxTUICommandEnv()
+	return cmd
 }

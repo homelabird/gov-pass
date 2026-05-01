@@ -530,14 +530,12 @@ func (w *worker) injectWindow(ctx context.Context, key flow.Key, st *flow.FlowSt
 			if err != nil {
 				return w.handleDetachedInjectError(ctx, st, held, sentAny || sentCount > 0)
 			}
-			sentAny = sentAny || sentCount > 0
 		} else {
 			remSegs := chunkPayload(remainder, maxPayload)
 			sentCount, err = w.sendSegments(ctx, tpl, st.BaseSeq+windowLen32, remSegs, flagsNoPshFin, flags, ipid)
 			if err != nil {
 				return w.handleDetachedInjectError(ctx, st, held, sentAny || sentCount > 0)
 			}
-			sentAny = sentAny || sentCount > 0
 		}
 	}
 
@@ -700,21 +698,32 @@ func (w *worker) reinjectTrimmed(ctx context.Context, held []*packet.Packet, bas
 		if !ok {
 			return sent, errors.New("payload exceeds uint32")
 		}
-		end := offset + payloadLen
-		if end <= windowLen {
+		offset64 := uint64(offset)
+		payloadLen64 := uint64(payloadLen)
+		windowLen64 := uint64(windowLen)
+		end := offset64 + payloadLen64
+		if end <= windowLen64 {
 			continue
 		}
 
-		trim := uint32(0)
-		if offset < windowLen {
-			trim = windowLen - offset
+		trim := uint64(0)
+		if offset64 < windowLen64 {
+			trim = windowLen64 - offset64
 		}
-		if trim >= payloadLen {
+		if trim >= payloadLen64 {
 			continue
 		}
 
-		newPayload := payload[trim:]
-		newSeq := pkt.Meta.Seq + trim
+		trimIndex, ok := safecast.Uint64ToInt(trim)
+		if !ok {
+			return sent, errors.New("trim offset exceeds int")
+		}
+		newPayload := payload[trimIndex:]
+		trimSeq, ok := safecast.IntToUint32(trimIndex)
+		if !ok {
+			return sent, errors.New("trim offset exceeds uint32")
+		}
+		newSeq := pkt.Meta.Seq + trimSeq
 
 		newPkt, err := buildPacket(pkt, newSeq, newPayload, pkt.Meta.Flags, ipid)
 		if err != nil {
@@ -848,20 +857,6 @@ func (w *worker) failOpen(ctx context.Context, key flow.Key, st *flow.FlowState)
 	return nil
 }
 
-func (w *worker) dropHeld(ctx context.Context, st *flow.FlowState) error {
-	for i, pkt := range st.HeldPackets {
-		if pkt == nil {
-			continue
-		}
-		if err := dropPacket(ctx, w.adapter, pkt); err != nil {
-			w.compactHeldPackets(st)
-			return err
-		}
-		w.consumeHeldPacket(st, i)
-	}
-	return nil
-}
-
 func (w *worker) takeHeldPackets(st *flow.FlowState) []*packet.Packet {
 	if st == nil || len(st.HeldPackets) == 0 {
 		return nil
@@ -904,13 +899,17 @@ func (w *worker) failOpenDetachedPackets(ctx context.Context, pkts []*packet.Pac
 }
 
 func (w *worker) dropDetachedPackets(ctx context.Context, pkts []*packet.Packet) error {
+	var errs []error
 	for _, pkt := range pkts {
 		if pkt == nil {
 			continue
 		}
 		if err := w.adapter.Drop(ctx, pkt); err != nil {
-			return err
+			errs = append(errs, err)
 		}
+	}
+	if len(errs) > 0 {
+		return errors.Join(errs...)
 	}
 	return nil
 }
@@ -923,6 +922,7 @@ func (w *worker) handleDetachedInjectError(ctx context.Context, st *flow.FlowSta
 		w.clearCollectingState(st)
 		return err
 	}
+	_ = w.dropDetachedPackets(ctx, held)
 	w.releaseDetachedPackets(held)
 	st.State = flow.StatePassThrough
 	w.clearCollectingState(st)

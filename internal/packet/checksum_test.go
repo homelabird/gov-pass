@@ -29,6 +29,56 @@ func TestTCPChecksumIPv6(t *testing.T) {
 	}
 }
 
+func TestTCPChecksumIPv4HonorsTotalLength(t *testing.T) {
+	pkt := append(testIPv4TCPPacket(), 0xde, 0xad, 0xbe, 0xef)
+	sum := TCPChecksumIPv4(pkt, 20)
+	if sum != 0x92c0 {
+		t.Fatalf("unexpected tcp checksum with trailing bytes: got 0x%04x", sum)
+	}
+	binary.BigEndian.PutUint16(pkt[2:4], uint16(len(pkt)+1))
+	if sum := TCPChecksumIPv4(pkt, 20); sum != 0 {
+		t.Fatalf("expected zero checksum for oversized IPv4 total length, got 0x%04x", sum)
+	}
+}
+
+func TestTCPChecksumIPv6HonorsPayloadLength(t *testing.T) {
+	pkt := append(testIPv6TCPPacket(), 0xde, 0xad, 0xbe, 0xef)
+	sum := TCPChecksumIPv6(pkt, 40)
+	if sum != 0x2383 {
+		t.Fatalf("unexpected tcp checksum with trailing bytes: got 0x%04x", sum)
+	}
+	binary.BigEndian.PutUint16(pkt[4:6], uint16(len(pkt)-39))
+	if sum := TCPChecksumIPv6(pkt, 40); sum != 0 {
+		t.Fatalf("expected zero checksum for oversized IPv6 payload length, got 0x%04x", sum)
+	}
+}
+
+func TestTCPChecksumIPv6RejectsUnsupportedJumboPayload(t *testing.T) {
+	pkt := testIPv6TCPPacket()
+	binary.BigEndian.PutUint16(pkt[4:6], 0)
+	if sum := TCPChecksumIPv6(pkt, 40); sum != 0 {
+		t.Fatalf("expected zero checksum for unsupported IPv6 jumbo payload, got 0x%04x", sum)
+	}
+}
+
+func TestTCPSettersIgnoreInvalidHeaderOffsets(t *testing.T) {
+	data := make([]byte, 20)
+	maxInt := int(^uint(0) >> 1)
+	for _, ipHeaderLen := range []int{-1, 20, maxInt} {
+		t.Run("", func(t *testing.T) {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("setter panicked for ipHeaderLen=%d: %v", ipHeaderLen, r)
+				}
+			}()
+			SetTCPSeq(data, ipHeaderLen, 1)
+			SetTCPChecksumZero(data, ipHeaderLen)
+			SetTCPChecksum(data, ipHeaderLen, 1)
+			SetTCPFlags(data, ipHeaderLen, TCPFlagACK)
+		})
+	}
+}
+
 func testIPv4TCPPacket() []byte {
 	buf := make([]byte, 40)
 	buf[0] = 0x45

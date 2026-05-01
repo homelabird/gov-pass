@@ -12,6 +12,7 @@ func TestWindowsReloadabilityMatrix_HasExpectedEntries(t *testing.T) {
 
 	mustContain(t, windowsReloadableSettings, "engine.split_mode")
 	mustContain(t, windowsReloadableSettings, "engine.policies")
+	mustContain(t, windowsReloadableSettings, "engine.stats_interval")
 	mustContain(t, windowsReloadableSettings, "windivert.filter (via handle reopen)")
 	mustContain(t, windowsReloadableSettings, "windivert.queue_len (including 0/default via handle reopen)")
 	mustContain(t, windowsRestartRequiredSettings, "windivert_dir")

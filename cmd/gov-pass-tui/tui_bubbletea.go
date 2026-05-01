@@ -247,10 +247,7 @@ func bubbleFooterLines(selected tuiAction, actions []tuiAction, width int, busy 
 }
 
 func appendWrappedFooter(lines []string, text string, width int) []string {
-	for _, line := range wrapPanelLine(text, maxInt(width, 20)) {
-		lines = append(lines, line)
-	}
-	return lines
+	return append(lines, wrapPanelLine(text, maxInt(width, 20))...)
 }
 
 func bubbleShortcutSummary(actions []tuiAction) string {
