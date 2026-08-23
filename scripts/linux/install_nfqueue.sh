@@ -28,7 +28,16 @@ lookup_trusted_command() {
   for dir in $TRUSTED_PATH; do
     local candidate="${dir}/${name}"
     if [ -L "$candidate" ]; then
-      continue
+      local resolved
+      resolved="$(readlink -f -- "$candidate" 2>/dev/null || true)"
+      case "$resolved" in
+        /usr/local/sbin/*|/usr/local/bin/*|/usr/sbin/*|/usr/bin/*|/sbin/*|/bin/*|/run/current-system/sw/bin/*|/nix/var/nix/profiles/default/bin/*)
+          candidate="$resolved"
+          ;;
+        *)
+          continue
+          ;;
+      esac
     fi
     if [ -f "$candidate" ] && [ -x "$candidate" ]; then
       printf '%s\n' "$candidate"

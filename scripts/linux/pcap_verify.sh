@@ -25,8 +25,16 @@ lookup_optional_trusted_command() {
       ;;
   esac
   if [ -L "$candidate" ]; then
-    echo "refusing symlinked command for $name: $candidate" >&2
-    exit 1
+    resolved="$(readlink -f -- "$candidate" 2>/dev/null || true)"
+    case "$resolved" in
+      /usr/local/sbin/*|/usr/local/bin/*|/usr/sbin/*|/usr/bin/*|/sbin/*|/bin/*)
+        candidate="$resolved"
+        ;;
+      *)
+        echo "refusing symlinked command outside trusted directories for $name: $candidate" >&2
+        exit 1
+        ;;
+    esac
   fi
   if [ ! -x "$candidate" ] || [ -d "$candidate" ]; then
     echo "trusted command is not executable: $candidate" >&2

@@ -79,8 +79,16 @@ lookup_optional_trusted_command() {
       ;;
   esac
   if [ -L "$candidate" ]; then
-    echo "refusing symlinked command for $name: $candidate" >&2
-    exit 1
+    resolved="$(readlink -f -- "$candidate" 2>/dev/null || true)"
+    case "$resolved" in
+      /usr/local/sbin/*|/usr/local/bin/*|/usr/sbin/*|/usr/bin/*|/sbin/*|/bin/*)
+        candidate="$resolved"
+        ;;
+      *)
+        echo "refusing symlinked command outside trusted directories for $name: $candidate" >&2
+        exit 1
+        ;;
+    esac
   fi
   if [ ! -x "$candidate" ] || [ -d "$candidate" ]; then
     echo "trusted command is not executable: $candidate" >&2
@@ -232,5 +240,11 @@ if [ "$success" -ne 1 ]; then
   echo "netns integration test: TLS handshake failed"
   exit 1
 fi
+
+# Keep a small concurrent smoke in the real NFQUEUE path. This is intentionally
+# bounded so CI catches queue drops without turning a correctness job into a
+# noisy throughput benchmark.
+"$IP_BIN" netns exec "$CLIENT_NS" "$ROOT/scripts/linux/load_probe.sh" \
+  --target https://10.200.1.1/ --concurrency 4 --requests 40
 
 echo "netns integration test: OK"
