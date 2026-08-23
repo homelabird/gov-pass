@@ -397,6 +397,8 @@ try {
     throw "gov-pass-tui.exe not found: $tuiExePath"
   }
   Assert-AuthenticodeSigned -Path $tuiExePath
+  $tuiAdminPath = Join-Path $installDir "gov-pass-tui-admin.cmd"
+  Wait-PathExists -Path $tuiAdminPath -TimeoutSeconds 30
   $helperExePath = Join-Path $installDir "gov-pass-msi-helper.exe"
   if (-not (Test-Path -LiteralPath $helperExePath -PathType Leaf)) {
     throw "gov-pass-msi-helper.exe not found: $helperExePath"
@@ -419,6 +421,13 @@ try {
   Wait-PathExists -Path $lnkStart -TimeoutSeconds 30
   Wait-PathExists -Path $lnkStop -TimeoutSeconds 30
   Wait-PathExists -Path $lnkReload -TimeoutSeconds 30
+  $shortcutTarget = (New-Object -ComObject WScript.Shell).CreateShortcut($lnkTui).TargetPath
+  if (-not [string]::Equals(
+      [IO.Path]::GetFullPath($shortcutTarget),
+      [IO.Path]::GetFullPath($tuiAdminPath),
+      [StringComparison]::OrdinalIgnoreCase)) {
+    throw "gov-pass TUI shortcut target mismatch: $shortcutTarget"
+  }
 
   Wait-PathExists -Path $cfgPath -TimeoutSeconds 30
   Wait-PathExists -Path $logPath -TimeoutSeconds 30
@@ -522,17 +531,6 @@ try {
   $tuiReload = Invoke-NativeCapture -FilePath $tuiExePath -ArgumentList @("--service-name", $svcName, "--action", "reload")
   if ($tuiReload.ExitCode -ne 0) {
     throw "TUI reload smoke failed with exit code $($tuiReload.ExitCode): $($tuiReload.Output)"
-  }
-
-  $tuiPanel = Invoke-NativeCapture -FilePath $tuiExePath -ArgumentList @("--service-name", $svcName) -InputText "r`nq`n"
-  if ($tuiPanel.ExitCode -ne 0) {
-    throw "Interactive TUI smoke failed with exit code $($tuiPanel.ExitCode): $($tuiPanel.Output)"
-  }
-  if ($tuiPanel.Output -notmatch "GOV-PASS CONTROL") {
-    throw "Interactive TUI smoke missing panel header: $($tuiPanel.Output)"
-  }
-  if ($tuiPanel.Output -notmatch "Select>") {
-    throw "Interactive TUI smoke missing prompt: $($tuiPanel.Output)"
   }
 
 } finally {

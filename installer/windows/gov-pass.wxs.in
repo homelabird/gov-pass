@@ -112,6 +112,7 @@
           Remove="uninstall"
           Wait="yes" />
         <File Id="fileTuiExe" Source="{{SOURCE_DIR}}/gov-pass-tui.exe" />
+        <File Id="fileTuiAdminCmd" Source="{{SOURCE_DIR}}/gov-pass-tui-admin.cmd" />
         <File Id="fileSplitterAdminCmd" Source="{{SOURCE_DIR}}/splitter-admin.cmd" />
         <File Id="fileServiceStartAdminCmd" Source="{{SOURCE_DIR}}/service-start-admin.cmd" />
         <File Id="fileServiceStopAdminCmd" Source="{{SOURCE_DIR}}/service-stop-admin.cmd" />
@@ -163,8 +164,8 @@
         <Shortcut
           Id="StartMenuShortcutTui"
           Name="gov-pass TUI"
-          Description="Terminal TUI to manage the gov-pass service"
-          Target="[INSTALLFOLDER]gov-pass-tui.exe"
+          Description="Terminal TUI to manage the gov-pass service as Administrator"
+          Target="[INSTALLFOLDER]gov-pass-tui-admin.cmd"
           WorkingDirectory="INSTALLFOLDER" />
         <Shortcut
           Id="StartMenuShortcutAdmin"

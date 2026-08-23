@@ -102,6 +102,7 @@ build_release:
     - cp third_party/windivert/WinDivert-2.2.2-A/x64/WinDivert64.sys "$WIN_DIR/"
     - if [ -f third_party/windivert/WinDivert-2.2.2-A/x64/WinDivert.cat ]; then cp third_party/windivert/WinDivert-2.2.2-A/x64/WinDivert.cat "$WIN_DIR/"; fi
     - cp installer/windows/splitter-admin.cmd "$WIN_DIR/"
+    - cp installer/windows/gov-pass-tui-admin.cmd "$WIN_DIR/"
     - cp installer/windows/service-start-admin.cmd "$WIN_DIR/"
     - cp installer/windows/service-stop-admin.cmd "$WIN_DIR/"
     - cp installer/windows/service-restart-admin.cmd "$WIN_DIR/"
@@ -120,8 +121,10 @@ build_release:
     - (cd "$BASE_DIR" && msiinfo export "gov-pass-${PKG_VERSION}-windows-amd64.msi" ServiceControl | grep -q "gov-pass")
     - (cd "$BASE_DIR" && msiinfo export "gov-pass-${PKG_VERSION}-windows-amd64.msi" Shortcut | grep -q "Reload gov-pass config")
     - (cd "$BASE_DIR" && msiinfo export "gov-pass-${PKG_VERSION}-windows-amd64.msi" Shortcut | grep -q "gov-pass TUI")
+    - (cd "$BASE_DIR" && msiinfo export "gov-pass-${PKG_VERSION}-windows-amd64.msi" Shortcut | grep -q "gov-pass-tui-admin.cmd")
     - (cd "$BASE_DIR" && msiinfo export "gov-pass-${PKG_VERSION}-windows-amd64.msi" File | grep -q "splitter.windows.schema.json")
     - (cd "$BASE_DIR" && msiinfo export "gov-pass-${PKG_VERSION}-windows-amd64.msi" File | grep -q "splitter.windows.json")
+    - (cd "$BASE_DIR" && msiinfo export "gov-pass-${PKG_VERSION}-windows-amd64.msi" File | grep -q "gov-pass-tui-admin.cmd")
     - (cd "$BASE_DIR" && sha256sum "install_one_touch_curl.sh" "gov-pass-${PKG_VERSION}-linux-amd64.tar.gz" "gov-pass-${PKG_VERSION}-freebsd-amd64.tar.gz" "gov-pass-${PKG_VERSION}-windows-amd64.zip" "gov-pass-${PKG_VERSION}-windows-amd64.msi" > SHA256SUMS)
     - bash scripts/ci/sign_release_manifests.sh "$BASE_DIR/SHA256SUMS"
   artifacts:

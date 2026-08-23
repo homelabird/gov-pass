@@ -145,6 +145,7 @@ jobs:
             cp third_party/windivert/WinDivert-2.2.2-A/x64/WinDivert.cat "$WIN_DIR/"
           fi
           cp installer/windows/splitter-admin.cmd "$WIN_DIR/"
+          cp installer/windows/gov-pass-tui-admin.cmd "$WIN_DIR/"
           cp installer/windows/service-start-admin.cmd "$WIN_DIR/"
           cp installer/windows/service-stop-admin.cmd "$WIN_DIR/"
           cp installer/windows/service-restart-admin.cmd "$WIN_DIR/"
@@ -168,12 +169,14 @@ jobs:
           maybe_sign_windows "$BASE_DIR/gov-pass-${PKG_VERSION}-windows-amd64.msi"
           (
             cd "$BASE_DIR"
-            msiinfo export "gov-pass-${PKG_VERSION}-windows-amd64.msi" ServiceInstall | grep -q "gov-pass"
-            msiinfo export "gov-pass-${PKG_VERSION}-windows-amd64.msi" ServiceControl | grep -q "gov-pass"
-            msiinfo export "gov-pass-${PKG_VERSION}-windows-amd64.msi" Shortcut | grep -q "Reload gov-pass config"
-            msiinfo export "gov-pass-${PKG_VERSION}-windows-amd64.msi" Shortcut | grep -q "gov-pass TUI"
-            msiinfo export "gov-pass-${PKG_VERSION}-windows-amd64.msi" File | grep -q "splitter.windows.schema.json"
-            msiinfo export "gov-pass-${PKG_VERSION}-windows-amd64.msi" File | grep -q "splitter.windows.json"
+            msiinfo export "gov-pass-${PKG_VERSION}-windows-amd64.msi" ServiceInstall | grep "gov-pass" >/dev/null
+            msiinfo export "gov-pass-${PKG_VERSION}-windows-amd64.msi" ServiceControl | grep "gov-pass" >/dev/null
+            msiinfo export "gov-pass-${PKG_VERSION}-windows-amd64.msi" Shortcut | grep "Reload gov-pass config" >/dev/null
+            msiinfo export "gov-pass-${PKG_VERSION}-windows-amd64.msi" Shortcut | grep "gov-pass TUI" >/dev/null
+            msiinfo export "gov-pass-${PKG_VERSION}-windows-amd64.msi" Shortcut | grep "gov-pass-tui-admin.cmd" >/dev/null
+            msiinfo export "gov-pass-${PKG_VERSION}-windows-amd64.msi" File | grep "splitter.windows.schema.json" >/dev/null
+            msiinfo export "gov-pass-${PKG_VERSION}-windows-amd64.msi" File | grep "splitter.windows.json" >/dev/null
+            msiinfo export "gov-pass-${PKG_VERSION}-windows-amd64.msi" File | grep "gov-pass-tui-admin.cmd" >/dev/null
           )
 
           RAW_TAG="${PKG_VERSION#v}"
