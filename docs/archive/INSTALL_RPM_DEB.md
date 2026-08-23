@@ -28,7 +28,7 @@ sudo INSTALL_TUI=1 GOV_PASS_VERSION="${TAG}" GOV_PASS_RELEASE_PUBKEY_PATH="${PUB
 ```
 
 Linux TUI mode note:
-- `gov-pass-tui` starts a terminal TUI controller (nmtui-like via `whiptail` when available, plain fallback otherwise).
+- `gov-pass-tui` starts the Bubble Tea ON/OFF controller.
 
 Package-manager detection order:
 - `apt-get` + `dpkg`

@@ -1,7 +1,5 @@
 # gov-pass
 
-![Current gov-pass TUI panel](docs/screenshots/gov-pass-tui-main-2026-03-09.png)
-
 `gov-pass` is a split-only TLS ClientHello splitter for outbound TCP/443 traffic.
 It is not a proxy, VPN, or general DPI bypass tool. The runtime only collects the
 first TLS record, splits that payload, then returns the flow to pass-through mode.
@@ -28,13 +26,21 @@ All defaults are tuned for immediate use. In normal cases no flags are required.
 sudo ./scripts/install_one_touch.sh
 ```
 
-Service installs keep `--auto-install-tools=false` in `/etc/default/gov-pass`.
-On multi-egress, VPN, or container hosts, set `--iface` explicitly there before enabling the service.
-
-Optional TUI controller install:
+This installs and starts the service and adds `gov-pass-tui` to `PATH`. Run the
+controller from any terminal:
 
 ```bash
-sudo INSTALL_TUI=1 ./scripts/install_one_touch.sh
+gov-pass-tui
+```
+
+Service installs keep `--auto-install-tools=false --auto-offload=false` in
+`/etc/default/gov-pass` so normal operation does not change NIC-wide offload.
+On multi-egress, VPN, or container hosts, set `--iface` explicitly there before enabling the service.
+
+Runtime-only install without the TUI controller:
+
+```bash
+sudo INSTALL_TUI=0 ./scripts/install_one_touch.sh
 ```
 
 Source installs resolve `go` only from trusted system paths. If Go is installed
@@ -68,7 +74,12 @@ signing public key from a maintainer-controlled channel before running it.
 
 ### Windows
 
-Run in Administrator PowerShell:
+For a published release, download the signed `gov-pass-*-windows-amd64.msi`
+from [GitHub Releases](https://github.com/homelabird/gov-pass/releases), open it,
+then launch **gov-pass TUI** from the Start menu. Windows requests Administrator
+permission when the controller opens so its service actions work.
+
+For a source build, run in Administrator PowerShell:
 
 ```powershell
 .\scripts\install_one_touch.ps1
@@ -77,9 +88,11 @@ Run in Administrator PowerShell:
 If Go is not installed under the standard Program Files location, set
 `$env:GOV_PASS_GO_BIN` to the absolute `go.exe` path before running the helper.
 
-This helper builds `dist\splitter.exe`, packages local WinDivert runtime files,
-and installs/starts the WinDivert driver. It does not install the `gov-pass`
-Windows service or create `C:\ProgramData\gov-pass\config.json`.
+The source helper builds both binaries, installs them under `C:\Program Files\gov-pass`,
+creates and starts the `gov-pass` Windows service, creates the default
+`C:\ProgramData\gov-pass\config.json`, and adds **gov-pass TUI** to the Start menu.
+Use `-SkipDriverInstall` only when you want build artifacts in `dist` without
+installing either service.
 
 By default, `splitter.exe` refuses to reconfigure an existing `WinDivert`
 service when it already points at another valid driver path. Use
@@ -150,14 +163,14 @@ go build -o dist\splitter.exe .\cmd\splitter
 
 ## Runtime Behavior
 
-- Linux installs NFQUEUE rules automatically, disables GRO/GSO/TSO on the
-  detected egress interface, and restores offload settings on exit when
-  possible. The Linux backend opens IPv4 and IPv6 NFQUEUE paths and auto-rules
-  install explicit IPv4 and IPv6 TCP/443 queue rules.
-- The packaged/systemd Linux service keeps `--auto-install-tools=false`; in
-  service mode pre-provision `nftables` or `iptables`/`ip6tables`, `ethtool`,
-  and `ip`, and set `--iface` explicitly on multi-egress, container, or VPN
-  hosts.
+- Linux installs IPv4 and IPv6 TCP/443 NFQUEUE rules automatically. NIC-wide
+  GRO/GSO/TSO changes are opt-in with `--auto-offload=true`; when restore is
+  enabled, startup refuses to change offload unless it first captures a restore
+  snapshot.
+- The packaged/systemd Linux service keeps
+  `--auto-install-tools=false --auto-offload=false`; pre-provision `nftables`
+  or `iptables`/`ip6tables`. Set `--iface` explicitly before opting into
+  offload changes on multi-egress, container, or VPN hosts.
 - Windows auto-installs or auto-downloads WinDivert when required.
 - FreeBSD remains experimental but now installs an `rc.d` service and `pf`
   helper scripts under `/usr/local/libexec/gov-pass/`; `pf divert-to` policy
@@ -167,19 +180,12 @@ go build -o dist\splitter.exe .\cmd\splitter
 ## TUI Controller
 
 `gov-pass-tui` is a terminal TUI for service control. It supports
-start/stop/restart and boot enable/disable on Linux, Windows, and FreeBSD.
+one-button ON/OFF control on Linux, Windows, and FreeBSD. Press Enter or Space,
+or click the `[ TURN ON ]` / `[ TURN OFF ]` button.
 
-![Current gov-pass TUI panel](docs/screenshots/gov-pass-tui-main-2026-03-09.png)
-
-Platform notes:
-
-- Linux, Windows, and FreeBSD now use the shared Bubble Tea operator panel.
-- Windows `reload` uses SCM `paramchange`
-- Windows `--service-name` accepts normal SCM service names, including names with spaces.
-- FreeBSD does not support in-place reload; use restart
-
-Status and boot checks now surface lookup failures as warnings in the panel
-instead of silently flattening them into `IDLE` / `BOOT OFF`.
+The panel only shows the current ON/OFF state, one toggle button, and an error
+when the service cannot be controlled. Advanced automation remains available
+through `--action` without adding more buttons to the screen.
 
 Build:
 
@@ -215,8 +221,9 @@ Most useful flags:
 - `--check-json`: preflight checks in JSON
 - `--split-mode`: `tls-hello` or `immediate`
 - `--split-chunk`: first segment size in bytes
-- `--stats-interval`: periodic engine stats log interval (`0` disables it)
-- `--auto-rules` / `--auto-offload` (Linux): disable automatic helpers
+- `--stats-interval`: periodic engine stats log interval (default `0`; opt-in)
+- `--auto-rules` (Linux): toggle automatic NFQUEUE rules
+- `--auto-offload=true` (Linux): opt in to NIC-wide GRO/GSO/TSO changes
 - `--iface` (Linux): pin the egress interface for offload changes
 - `--recv-buffer` (Linux): internal NFQUEUE recv buffer (`0` derives from `--queue-maxlen`)
 - `--service` (Windows): run under the Windows service wrapper
