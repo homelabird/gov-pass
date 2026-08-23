@@ -27,11 +27,13 @@ const (
 type pressureReason string
 
 const (
+	pressureReasonACKTouchOverflow     pressureReason = "ack_touch_overflow"
 	pressureReasonCollectTimeout       pressureReason = "collect_timeout"
 	pressureReasonFlowLimit            pressureReason = "flow_limit"
 	pressureReasonHeldBytesLimit       pressureReason = "held_bytes_limit"
 	pressureReasonHeldPacketsLimit     pressureReason = "held_packets_limit"
 	pressureReasonReassemblyBytesLimit pressureReason = "reassembly_bytes_limit"
+	pressureReasonWorkerQueueWait      pressureReason = "worker_queue_wait"
 )
 
 type StatsSnapshot struct {
@@ -43,9 +45,10 @@ type StatsSnapshot struct {
 }
 
 type stats struct {
-	splitsOK      atomic.Uint64
-	failOpenTotal atomic.Uint64
-	pressureTotal atomic.Uint64
+	splitsOK                 atomic.Uint64
+	failOpenTotal            atomic.Uint64
+	pressureTotal            atomic.Uint64
+	pressureACKTouchOverflow atomic.Uint64
 
 	failOpenCollectTimeout       atomic.Uint64
 	failOpenControlFlag          atomic.Uint64
@@ -65,6 +68,7 @@ type stats struct {
 	pressureHeldBytesLimit       atomic.Uint64
 	pressureHeldPacketsLimit     atomic.Uint64
 	pressureReassemblyBytesLimit atomic.Uint64
+	pressureWorkerQueueWait      atomic.Uint64
 }
 
 func newStats() *stats {
@@ -117,6 +121,8 @@ func (s *stats) incPressure(reason pressureReason) {
 	}
 	s.pressureTotal.Add(1)
 	switch reason {
+	case pressureReasonACKTouchOverflow:
+		s.pressureACKTouchOverflow.Add(1)
 	case pressureReasonCollectTimeout:
 		s.pressureCollectTimeout.Add(1)
 	case pressureReasonFlowLimit:
@@ -127,6 +133,8 @@ func (s *stats) incPressure(reason pressureReason) {
 		s.pressureHeldPacketsLimit.Add(1)
 	case pressureReasonReassemblyBytesLimit:
 		s.pressureReassemblyBytesLimit.Add(1)
+	case pressureReasonWorkerQueueWait:
+		s.pressureWorkerQueueWait.Add(1)
 	}
 }
 
@@ -156,11 +164,13 @@ func (s *stats) snapshot() StatsSnapshot {
 	loadCounter(snap.FailOpen, string(failOpenReasonStateInvalid), &s.failOpenStateInvalid)
 	loadCounter(snap.FailOpen, string(failOpenReasonTLSMismatch), &s.failOpenTLSMismatch)
 
+	loadCounter(snap.Pressure, string(pressureReasonACKTouchOverflow), &s.pressureACKTouchOverflow)
 	loadCounter(snap.Pressure, string(pressureReasonCollectTimeout), &s.pressureCollectTimeout)
 	loadCounter(snap.Pressure, string(pressureReasonFlowLimit), &s.pressureFlowLimit)
 	loadCounter(snap.Pressure, string(pressureReasonHeldBytesLimit), &s.pressureHeldBytesLimit)
 	loadCounter(snap.Pressure, string(pressureReasonHeldPacketsLimit), &s.pressureHeldPacketsLimit)
 	loadCounter(snap.Pressure, string(pressureReasonReassemblyBytesLimit), &s.pressureReassemblyBytesLimit)
+	loadCounter(snap.Pressure, string(pressureReasonWorkerQueueWait), &s.pressureWorkerQueueWait)
 
 	return snap
 }

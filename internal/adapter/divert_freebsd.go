@@ -49,14 +49,16 @@ func NewDivert(opts DivertOptions) (*DivertAdapter, error) {
 		port:    opts.Port,
 		recvBuf: make([]byte, divertMaxPacket),
 	}
-	ad.bufPool.New = func() any {
-		return make([]byte, divertMaxPacket)
-	}
+	ad.bufPool.New = newPooledPacketBuffer
 	if err := ad.bind(opts.Port); err != nil {
 		_ = ad.Close()
 		return nil, err
 	}
 	if err := ad.setReadTimeout(divertReadTimeout); err != nil {
+		_ = ad.Close()
+		return nil, err
+	}
+	if err := ad.setWriteTimeout(divertReadTimeout); err != nil {
 		_ = ad.Close()
 		return nil, err
 	}
@@ -211,6 +213,11 @@ func (d *DivertAdapter) bind(port uint16) error {
 func (d *DivertAdapter) setReadTimeout(timeout time.Duration) error {
 	tv := unix.NsecToTimeval(timeout.Nanoseconds())
 	return unix.SetsockoptTimeval(d.fd, unix.SOL_SOCKET, unix.SO_RCVTIMEO, &tv)
+}
+
+func (d *DivertAdapter) setWriteTimeout(timeout time.Duration) error {
+	tv := unix.NsecToTimeval(timeout.Nanoseconds())
+	return unix.SetsockoptTimeval(d.fd, unix.SOL_SOCKET, unix.SO_SNDTIMEO, &tv)
 }
 
 func encodeDivertAddr(sa unix.Sockaddr) (packet.Address, error) {

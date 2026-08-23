@@ -89,7 +89,7 @@ func TestRecvLoop_ACKOnlyFastPathSendsImmediately(t *testing.T) {
 	}
 }
 
-func TestRecvLoop_ACKOnlyFallsBackToWorkerQueueWhenTouchIsFull(t *testing.T) {
+func TestRecvLoop_ACKOnlyDoesNotBlockWhenTouchIsFull(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.WorkerCount = 1
 
@@ -109,16 +109,14 @@ func TestRecvLoop_ACKOnlyFallsBackToWorkerQueueWhenTouchIsFull(t *testing.T) {
 		errCh <- eng.recvLoop(ctx)
 	}()
 
-	waitForCondition(t, func() bool {
-		return len(eng.workers[0].in) == 1
-	})
+	waitForCondition(t, func() bool { return ad.sendCount() == 1 })
 	cancel()
 
 	if err := <-errCh; !errors.Is(err, context.Canceled) {
 		t.Fatalf("recvLoop error = %v, want context.Canceled", err)
 	}
-	if got := ad.sendCount(); got != 0 {
-		t.Fatalf("send count = %d, want 0", got)
+	if got := len(eng.workers[0].in); got != 0 {
+		t.Fatalf("worker queue len = %d, want 0", got)
 	}
 }
 

@@ -64,7 +64,7 @@ func TestFailOpen_RemovesReleasedPacketsFromFlowState(t *testing.T) {
 		Template:    p1,
 		HeldPackets: []*packet.Packet{p1, p2},
 	}
-	w.heldBytes = int64(len(p1.Data) + len(p2.Data))
+	w.heldBytes = packetMemoryBytes(p1) + packetMemoryBytes(p2)
 
 	err := w.failOpen(context.Background(), flow.Key{}, st)
 	if err == nil || err.Error() != "send failed" {
@@ -79,7 +79,7 @@ func TestFailOpen_RemovesReleasedPacketsFromFlowState(t *testing.T) {
 	if st.Template != p2 {
 		t.Fatalf("template = %p, want %p", st.Template, p2)
 	}
-	if got, want := w.heldBytes, int64(len(p2.Data)); got != want {
+	if got, want := w.heldBytes, packetMemoryBytes(p2); got != want {
 		t.Fatalf("heldBytes = %d, want %d", got, want)
 	}
 	if p1.Data == nil {

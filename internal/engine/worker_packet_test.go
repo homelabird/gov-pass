@@ -97,7 +97,7 @@ func TestInjectWindow_FailOpensOnIPv6ExtensionHeaders(t *testing.T) {
 	if err := st.Reassembler.Push(tpl.Meta.Seq, tpl.Payload()); err != nil {
 		t.Fatalf("Push failed: %v", err)
 	}
-	w.heldBytes = int64(len(tpl.Data))
+	w.heldBytes = packetMemoryBytes(tpl)
 	w.reassemblyBytes = int64(st.Reassembler.TotalBytes())
 
 	if err := w.injectWindow(context.Background(), flow.Key{}, st, 3); err != nil {
@@ -149,6 +149,28 @@ func TestHandlePacket_AllowsConfiguredHeldPacketLimit(t *testing.T) {
 	}
 }
 
+func TestHandlePacket_HeldBudgetUsesBackingCapacity(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.MaxHeldBytesPerWorker = 1024
+	ad := &recordingAdapter{}
+	w := newWorker(0, cfg, ad, newStats())
+
+	pkt := buildTestIPv4Packet(t, 12345, 0x01020304, packet.TCPFlagPSH|packet.TCPFlagACK, []byte{1, 2, 3})
+	backing := make([]byte, 2048)
+	copy(backing, pkt.Data)
+	pkt.Data = backing[:len(pkt.Data)]
+
+	if err := w.handlePacket(context.Background(), pkt); err != nil {
+		t.Fatalf("handlePacket failed: %v", err)
+	}
+	if got := w.flows.Len(); got != 0 {
+		t.Fatalf("tracked flows = %d, want 0", got)
+	}
+	if got := len(ad.sends); got != 1 || ad.sends[0] != pkt {
+		t.Fatalf("fail-open sends = %#v, want original packet", ad.sends)
+	}
+}
+
 func TestInjectWindow_DropFailureDoesNotLeaveHeldOriginalsForShutdown(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.SplitChunk = 3
@@ -172,7 +194,7 @@ func TestInjectWindow_DropFailureDoesNotLeaveHeldOriginalsForShutdown(t *testing
 	if err := st.Reassembler.Push(tpl.Meta.Seq, tpl.Payload()); err != nil {
 		t.Fatalf("Push failed: %v", err)
 	}
-	w.heldBytes = int64(len(tpl.Data))
+	w.heldBytes = packetMemoryBytes(tpl)
 	w.reassemblyBytes = int64(st.Reassembler.TotalBytes())
 
 	if err := w.injectWindow(context.Background(), flow.Key{}, st, len(payload)); err != nil {
@@ -219,7 +241,7 @@ func TestInjectWindow_FirstSendFailureFailOpensOriginals(t *testing.T) {
 	if err := st.Reassembler.Push(tpl.Meta.Seq, tpl.Payload()); err != nil {
 		t.Fatalf("Push failed: %v", err)
 	}
-	w.heldBytes = int64(len(tpl.Data))
+	w.heldBytes = packetMemoryBytes(tpl)
 	w.reassemblyBytes = int64(st.Reassembler.TotalBytes())
 
 	if err := w.injectWindow(context.Background(), flow.Key{}, st, len(payload)); err != nil {
@@ -259,7 +281,7 @@ func TestInjectWindow_PartialSendFailureDropsHeldOriginals(t *testing.T) {
 	if err := st.Reassembler.Push(tpl.Meta.Seq, tpl.Payload()); err != nil {
 		t.Fatalf("Push failed: %v", err)
 	}
-	w.heldBytes = int64(len(tpl.Data))
+	w.heldBytes = packetMemoryBytes(tpl)
 	w.reassemblyBytes = int64(st.Reassembler.TotalBytes())
 
 	if err := w.injectWindow(context.Background(), flow.Key{}, st, len(payload)); err != nil {

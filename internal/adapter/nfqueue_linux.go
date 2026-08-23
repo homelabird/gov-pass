@@ -5,6 +5,7 @@ package adapter
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"sync"
 	"sync/atomic"
@@ -18,9 +19,11 @@ import (
 )
 
 const (
-	nfqueueMaxPacket         = 0xFFFF
-	defaultNFQueueRecvBuffer = 1024
-	MaxNFQueueRecvBuffer     = 65536
+	MaxNFQueueCopyRange        = 0xFFFF
+	nfqueueMaxPacket           = MaxNFQueueCopyRange
+	defaultNFQueueRecvBuffer   = 1024
+	defaultNFQueueWriteTimeout = 100 * time.Millisecond
+	MaxNFQueueRecvBuffer       = 65536
 )
 
 // NFQueueAdapter handles NFQUEUE recv and raw socket injection.
@@ -48,6 +51,9 @@ func NewNFQueue(opts NFQueueOptions) (*NFQueueAdapter, error) {
 	if copyRange == 0 {
 		copyRange = nfqueueMaxPacket
 	}
+	if copyRange > MaxNFQueueCopyRange {
+		return nil, fmt.Errorf("NFQUEUE copy range must be <= %d", MaxNFQueueCopyRange)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	ad := &NFQueueAdapter{
@@ -59,9 +65,7 @@ func NewNFQueue(opts NFQueueOptions) (*NFQueueAdapter, error) {
 		rawFD6: -1,
 		mark:   opts.Mark,
 	}
-	ad.bufPool.New = func() any {
-		return make([]byte, copyRange)
-	}
+	ad.bufPool.New = newPooledPacketBuffer
 
 	var err error
 	ad.queue4, err = openNFQueueSocket(opts, copyRange, uint8(unix.AF_INET))
@@ -261,14 +265,22 @@ func (n *NFQueueAdapter) onPacket(version uint8) nfqueue.HookFunc {
 		n.inFlight.Add(1)
 		defer n.inFlight.Add(-1)
 
-		if a.Payload == nil || a.PacketID == nil {
+		if a.PacketID == nil {
 			return 0
 		}
 		id := *a.PacketID
+		if a.Payload == nil {
+			if err := n.setVerdictByVersion(version, id, nfqueue.NfAccept); err != nil {
+				return n.reportError(err)
+			}
+			return 0
+		}
 
 		// If we're flushing/shutting down, do not enqueue. Immediately fail-open.
 		if n.flushing.Load() || n.ctx.Err() != nil {
-			_ = n.setVerdictByVersion(version, id, nfqueue.NfAccept)
+			if err := n.setVerdictByVersion(version, id, nfqueue.NfAccept); err != nil {
+				return n.reportError(err)
+			}
 			return 0
 		}
 
@@ -286,7 +298,10 @@ func (n *NFQueueAdapter) onPacket(version uint8) nfqueue.HookFunc {
 		case n.recv <- pkt:
 			return 0
 		default:
-			_ = n.setVerdictByVersion(version, id, nfqueue.NfAccept)
+			if err := n.setVerdictByVersion(version, id, nfqueue.NfAccept); err != nil {
+				pkt.Release()
+				return n.reportError(err)
+			}
 			pkt.Release()
 			return 0
 		}
@@ -299,6 +314,10 @@ func (n *NFQueueAdapter) onError(err error) int {
 			return 0
 		}
 	}
+	return n.reportError(err)
+}
+
+func (n *NFQueueAdapter) reportError(err error) int {
 	select {
 	case n.errs <- err:
 	default:
@@ -348,23 +367,25 @@ func (n *NFQueueAdapter) inject(pkt *packet.Packet) error {
 }
 
 func openNFQueueSocket(opts NFQueueOptions, copyRange uint32, family uint8) (*nfqueue.Nfqueue, error) {
-	cfg := nfqueue.Config{
-		NfQueue:      opts.QueueNum,
-		MaxPacketLen: copyRange,
-		MaxQueueLen:  opts.QueueMaxLen,
-		Copymode:     nfqueue.NfQnlCopyPacket,
-		AfFamily:     family,
-	}
+	cfg := nfqueueSocketConfig(opts, copyRange, family)
 
 	queue, err := nfqueue.Open(&cfg)
 	if err != nil {
 		return nil, err
 	}
-	if err := queue.SetOption(netlink.NoENOBUFS, true); err != nil {
-		_ = queue.Close()
-		return nil, err
-	}
 	return queue, nil
+}
+
+func nfqueueSocketConfig(opts NFQueueOptions, copyRange uint32, family uint8) nfqueue.Config {
+	return nfqueue.Config{
+		NfQueue:      opts.QueueNum,
+		MaxPacketLen: copyRange,
+		MaxQueueLen:  opts.QueueMaxLen,
+		Copymode:     nfqueue.NfQnlCopyPacket,
+		AfFamily:     family,
+		Flags:        nfqueue.NfQaCfgFlagFailOpen,
+		WriteTimeout: defaultNFQueueWriteTimeout,
+	}
 }
 
 func openRawSocketIPv4(mark uint32) (int, error) {
@@ -380,6 +401,10 @@ func openRawSocketIPv4(mark uint32) (int, error) {
 		_ = unix.Close(fd)
 		return -1, err
 	}
+	if err := applySocketSendTimeout(fd, defaultNFQueueWriteTimeout); err != nil {
+		_ = unix.Close(fd)
+		return -1, err
+	}
 	return fd, nil
 }
 
@@ -392,7 +417,16 @@ func openRawSocketIPv6(mark uint32) (int, error) {
 		_ = unix.Close(fd)
 		return -1, err
 	}
+	if err := applySocketSendTimeout(fd, defaultNFQueueWriteTimeout); err != nil {
+		_ = unix.Close(fd)
+		return -1, err
+	}
 	return fd, nil
+}
+
+func applySocketSendTimeout(fd int, timeout time.Duration) error {
+	tv := unix.NsecToTimeval(timeout.Nanoseconds())
+	return unix.SetsockoptTimeval(fd, unix.SOL_SOCKET, unix.SO_SNDTIMEO, &tv)
 }
 
 func applySocketMark(fd int, mark uint32) error {

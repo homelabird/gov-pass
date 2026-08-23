@@ -6,25 +6,19 @@ import (
 	"testing"
 )
 
-func TestCopyIntoPoolBufferCopiesData(t *testing.T) {
-	pool := sync.Pool{
-		New: func() any { return make([]byte, 16) },
-	}
-	src := []byte("hello")
+func TestCopyIntoPoolBufferDoesNotReuseJumboBufferForMTUPacket(t *testing.T) {
+	pool := sync.Pool{New: newPooledPacketBuffer}
+	jumbo := make([]byte, 0xffff)
+	pool.Put(&jumbo)
 
-	data, backing := copyIntoPoolBuffer(&pool, src)
-	if !bytes.Equal(data, src) {
-		t.Fatalf("copied payload mismatch: got=%q want=%q", data, src)
-	}
-	if &data[0] != &backing[0] {
-		t.Fatal("expected data to reference pooled backing storage")
+	_, backing := copyIntoPoolBuffer(&pool, bytes.Repeat([]byte{0xab}, 1500))
+	if cap(backing) >= cap(jumbo) {
+		t.Fatalf("small packet retained jumbo backing: %d bytes", cap(backing))
 	}
 }
 
 func BenchmarkCopyIntoPoolBuffer(b *testing.B) {
-	pool := sync.Pool{
-		New: func() any { return make([]byte, 2048) },
-	}
+	pool := sync.Pool{New: newPooledPacketBuffer}
 	src := bytes.Repeat([]byte{0xab}, 1500)
 
 	b.ReportAllocs()

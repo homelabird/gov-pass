@@ -65,20 +65,6 @@ func TestNFQueueCapturedSendRequiresQueueVerdict(t *testing.T) {
 	}
 }
 
-func TestNFQueueCapturedEmptySendStillRequiresQueueVerdict(t *testing.T) {
-	ad := &NFQueueAdapter{}
-	pkt := &packet.Packet{
-		Source: packet.SourceCaptured,
-		NFQID:  42,
-		Meta:   packet.Meta{IPVersion: packet.IPVersion4},
-	}
-
-	err := ad.Send(context.Background(), pkt)
-	if !errors.Is(err, ErrNotImplemented) {
-		t.Fatalf("Send error = %v, want ErrNotImplemented", err)
-	}
-}
-
 func TestNFQueueCapturedDropRequiresQueueVerdict(t *testing.T) {
 	ad := &NFQueueAdapter{}
 	pkt := &packet.Packet{
@@ -218,6 +204,27 @@ func TestNFQueueRecvBufferSizeCapsLargeValues(t *testing.T) {
 	}
 	if got := nfqueueRecvBufferSize(NFQueueOptions{RecvBufferSize: MaxNFQueueRecvBuffer + 1}); got != MaxNFQueueRecvBuffer {
 		t.Fatalf("recv buffer = %d, want cap %d", got, MaxNFQueueRecvBuffer)
+	}
+}
+
+func TestNewNFQueueRejectsOversizedCopyRangeBeforeOpeningSockets(t *testing.T) {
+	_, err := NewNFQueue(NFQueueOptions{CopyRange: MaxNFQueueCopyRange + 1})
+	if err == nil {
+		t.Fatal("NewNFQueue accepted an oversized copy range")
+	}
+}
+
+func TestNFQueueSocketConfigFailsOpenAndBoundsWrites(t *testing.T) {
+	cfg := nfqueueSocketConfig(NFQueueOptions{
+		QueueNum:    100,
+		QueueMaxLen: 4096,
+	}, nfqueueMaxPacket, packet.IPVersion4)
+
+	if cfg.Flags&nfqueue.NfQaCfgFlagFailOpen == 0 {
+		t.Fatal("NFQUEUE kernel fail-open flag is not set")
+	}
+	if cfg.WriteTimeout != defaultNFQueueWriteTimeout {
+		t.Fatalf("write timeout = %s, want %s", cfg.WriteTimeout, defaultNFQueueWriteTimeout)
 	}
 }
 

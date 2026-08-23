@@ -29,6 +29,7 @@ type worker struct {
 
 	heldBytes       int64
 	reassemblyBytes int64
+	collectingFlows int
 }
 
 func newWorker(id int, cfg Config, ad adapter.Adapter, st *stats) *worker {
@@ -72,6 +73,12 @@ func (w *worker) enqueue(ctx context.Context, pkt *packet.Packet) error {
 	select {
 	case w.in <- pkt:
 		return nil
+	default:
+		w.notePressure(pressureReasonWorkerQueueWait)
+	}
+	select {
+	case w.in <- pkt:
+		return nil
 	case <-ctx.Done():
 		return ctx.Err()
 	}
@@ -103,6 +110,8 @@ func (w *worker) run(ctx context.Context) (err error) {
 	}
 	timer := time.NewTimer(interval)
 	defer timer.Stop()
+	collectTimer := time.NewTimer(workerCollectSweepInterval(w.cfg.Load()))
+	defer collectTimer.Stop()
 
 	for {
 		select {
@@ -132,6 +141,13 @@ func (w *worker) run(ctx context.Context) (err error) {
 				next = cfg.GCInterval
 			}
 			timer.Reset(next)
+		case <-collectTimer.C:
+			if w.collectingFlows > 0 {
+				if err := w.expireCollecting(ctx, time.Now()); err != nil {
+					return err
+				}
+			}
+			collectTimer.Reset(workerCollectSweepInterval(w.cfg.Load()))
 		case <-ctx.Done():
 			return ctx.Err()
 		}
@@ -190,6 +206,7 @@ func (w *worker) handlePacket(ctx context.Context, pkt *packet.Packet) error {
 			st.BaseSeq = pkt.Meta.Seq
 			st.Reassembler = reassembly.New(st.BaseSeq, maxBufferBytes)
 			st.State = flow.StateCollecting
+			w.collectingFlows++
 			st.CollectStart = now
 			st.FirstPayloadLen = len(payload)
 			st.Template = pkt
@@ -198,7 +215,7 @@ func (w *worker) handlePacket(ctx context.Context, pkt *packet.Packet) error {
 		}
 
 		if cfg.MaxHeldBytesPerWorker > 0 {
-			need := int64(len(pkt.Data))
+			need := packetMemoryBytes(pkt)
 			limit := int64(cfg.MaxHeldBytesPerWorker)
 			if w.heldBytes+need > limit {
 				if err := w.failOpenWithReason(ctx, key, st, failOpenReasonHeldBytesLimit); err != nil {
@@ -208,7 +225,7 @@ func (w *worker) handlePacket(ctx context.Context, pkt *packet.Packet) error {
 			}
 		}
 		st.HeldPackets = append(st.HeldPackets, pkt)
-		w.heldBytes += int64(len(pkt.Data))
+		w.heldBytes += packetMemoryBytes(pkt)
 		if len(st.HeldPackets) > cfg.MaxHeldPackets {
 			return w.failOpenWithReason(ctx, key, st, failOpenReasonHeldPacketsLimit)
 		}
@@ -289,7 +306,7 @@ func (w *worker) handlePacket(ctx context.Context, pkt *packet.Packet) error {
 
 	// Best-effort budget checks before creating per-flow state.
 	if cfg.MaxHeldBytesPerWorker > 0 {
-		need := int64(len(pkt.Data))
+		need := packetMemoryBytes(pkt)
 		limit := int64(cfg.MaxHeldBytesPerWorker)
 		if w.heldBytes+need > limit {
 			w.notePressure(pressureReasonHeldBytesLimit)
@@ -319,6 +336,7 @@ func (w *worker) handlePacket(ctx context.Context, pkt *packet.Packet) error {
 		st.BaseSeq = pkt.Meta.Seq
 		st.Reassembler = reassembly.New(st.BaseSeq, maxBufferBytes)
 		st.State = flow.StateCollecting
+		w.collectingFlows++
 		st.CollectStart = now
 		st.FirstPayloadLen = len(payload)
 		st.Template = pkt
@@ -327,7 +345,7 @@ func (w *worker) handlePacket(ctx context.Context, pkt *packet.Packet) error {
 	}
 
 	if cfg.MaxHeldBytesPerWorker > 0 {
-		need := int64(len(pkt.Data))
+		need := packetMemoryBytes(pkt)
 		limit := int64(cfg.MaxHeldBytesPerWorker)
 		if w.heldBytes+need > limit {
 			if err := w.failOpenWithReason(ctx, key, st, failOpenReasonHeldBytesLimit); err != nil {
@@ -337,7 +355,7 @@ func (w *worker) handlePacket(ctx context.Context, pkt *packet.Packet) error {
 		}
 	}
 	st.HeldPackets = append(st.HeldPackets, pkt)
-	w.heldBytes += int64(len(pkt.Data))
+	w.heldBytes += packetMemoryBytes(pkt)
 	if len(st.HeldPackets) > cfg.MaxHeldPackets {
 		return w.failOpenWithReason(ctx, key, st, failOpenReasonHeldPacketsLimit)
 	}
@@ -866,7 +884,7 @@ func (w *worker) takeHeldPackets(st *flow.FlowState) []*packet.Packet {
 		if pkt == nil {
 			continue
 		}
-		w.heldBytes -= int64(len(pkt.Data))
+		w.heldBytes -= packetMemoryBytes(pkt)
 	}
 	if w.heldBytes < 0 {
 		w.heldBytes = 0
@@ -937,7 +955,7 @@ func (w *worker) consumeHeldPacket(st *flow.FlowState, idx int) {
 	if pkt == nil {
 		return
 	}
-	w.heldBytes -= int64(len(pkt.Data))
+	w.heldBytes -= packetMemoryBytes(pkt)
 	if w.heldBytes < 0 {
 		w.heldBytes = 0
 	}
@@ -971,12 +989,15 @@ func (w *worker) clearCollectingState(st *flow.FlowState) {
 		if pkt == nil {
 			continue
 		}
-		w.heldBytes -= int64(len(pkt.Data))
+		w.heldBytes -= packetMemoryBytes(pkt)
 	}
 	if w.heldBytes < 0 {
 		w.heldBytes = 0
 	}
 	if st.Reassembler != nil {
+		if w.collectingFlows > 0 {
+			w.collectingFlows--
+		}
 		w.reassemblyBytes -= int64(st.Reassembler.TotalBytes())
 		if w.reassemblyBytes < 0 {
 			w.reassemblyBytes = 0
@@ -987,32 +1008,65 @@ func (w *worker) clearCollectingState(st *flow.FlowState) {
 	st.Reassembler = nil
 }
 
+func packetMemoryBytes(pkt *packet.Packet) int64 {
+	if pkt == nil {
+		return 0
+	}
+	return int64(cap(pkt.Data))
+}
+
+func workerCollectSweepInterval(cfg *Config) time.Duration {
+	collectTimeout := 250 * time.Millisecond
+	if cfg != nil && cfg.CollectTimeout > 0 {
+		collectTimeout = cfg.CollectTimeout
+	}
+	interval := collectTimeout / 2
+	if interval < 10*time.Millisecond {
+		return 10 * time.Millisecond
+	}
+	if interval > 100*time.Millisecond {
+		return 100 * time.Millisecond
+	}
+	return interval
+}
+
+func (w *worker) expireCollecting(ctx context.Context, now time.Time) error {
+	collectTimeout := 250 * time.Millisecond
+	if cfg := w.cfg.Load(); cfg != nil && cfg.CollectTimeout > 0 {
+		collectTimeout = cfg.CollectTimeout
+	}
+
+	var firstErr error
+	w.flows.Range(func(key flow.Key, st *flow.FlowState) {
+		if st == nil || st.State != flow.StateCollecting || len(st.HeldPackets) == 0 || st.CollectStart.IsZero() {
+			return
+		}
+		if now.Sub(st.CollectStart) <= collectTimeout {
+			return
+		}
+		if err := w.failOpenWithReason(ctx, key, st, failOpenReasonCollectTimeout); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			return
+		}
+		st.LastActive = now
+	})
+	return firstErr
+}
+
 func (w *worker) gc(ctx context.Context) error {
 	idle := 30 * time.Second
-	collectTimeout := 250 * time.Millisecond
 	if cfg := w.cfg.Load(); cfg != nil {
 		if cfg.FlowIdleTimeout > 0 {
 			idle = cfg.FlowIdleTimeout
 		}
-		if cfg.CollectTimeout > 0 {
-			collectTimeout = cfg.CollectTimeout
-		}
 	}
 
 	now := time.Now()
-	var firstErr error
+	firstErr := w.expireCollecting(ctx, now)
 	w.flows.Range(func(key flow.Key, st *flow.FlowState) {
 		if st == nil {
-			return
-		}
-		if st.State == flow.StateCollecting && len(st.HeldPackets) > 0 && !st.CollectStart.IsZero() && now.Sub(st.CollectStart) > collectTimeout {
-			if err := w.failOpenWithReason(ctx, key, st, failOpenReasonCollectTimeout); err != nil {
-				if firstErr == nil {
-					firstErr = err
-				}
-				return
-			}
-			st.LastActive = now
 			return
 		}
 		if now.Sub(st.LastActive) <= idle {

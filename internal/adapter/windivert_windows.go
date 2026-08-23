@@ -137,9 +137,7 @@ func NewWinDivert(filter string, opts WinDivertOptions) (*WinDivertAdapter, erro
 		ctx:    ctx,
 		stop:   cancel,
 	}
-	ad.bufPool.New = func() any {
-		return make([]byte, maxPacketSize)
-	}
+	ad.bufPool.New = newPooledPacketBuffer
 	if err := ad.applyOptionsToHandle(syscall.Handle(handle), opts); err != nil {
 		_ = ad.Close()
 		return nil, err
