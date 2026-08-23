@@ -153,17 +153,20 @@ validate_dist_dir
 export CGO_ENABLED=1
 # Version precedence: arg > GOV_PASS_VERSION > latest git tag > 0.0.0.
 "$GO_BIN" build -o "$DIST_DIR/splitter" ./cmd/splitter
+"$GO_BIN" build -o "$DIST_DIR/gov-pass-tui" ./cmd/gov-pass-tui
 
 "$RM_BIN" -rf -- "$STAGE_DIR"
 "$MKDIR_BIN" -p \
   "$STAGE_DIR/DEBIAN" \
   "$STAGE_DIR/usr/libexec/gov-pass" \
+  "$STAGE_DIR/usr/bin" \
   "$STAGE_DIR/usr/share/doc/gov-pass/examples" \
   "$STAGE_DIR/usr/share/doc/gov-pass/schema" \
   "$STAGE_DIR/lib/systemd/system" \
   "$STAGE_DIR/etc/default"
 
 "$INSTALL_BIN" -m 0755 dist/splitter "$STAGE_DIR/usr/libexec/gov-pass/splitter"
+"$INSTALL_BIN" -m 0755 dist/gov-pass-tui "$STAGE_DIR/usr/bin/gov-pass-tui"
 "$INSTALL_BIN" -m 0755 scripts/linux/install_nfqueue.sh "$STAGE_DIR/usr/libexec/gov-pass/install_nfqueue.sh"
 "$INSTALL_BIN" -m 0755 scripts/linux/uninstall_nfqueue.sh "$STAGE_DIR/usr/libexec/gov-pass/uninstall_nfqueue.sh"
 "$INSTALL_BIN" -m 0644 packaging/deb/gov-pass.service "$STAGE_DIR/lib/systemd/system/gov-pass.service"

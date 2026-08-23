@@ -28,7 +28,7 @@ REPO_OWNER="${REPO_OWNER:-homelabird}"
 REPO_NAME="${REPO_NAME:-gov-pass}"
 VERSION="${GOV_PASS_VERSION:-}"
 NO_START="${NO_START:-0}"
-INSTALL_TUI="${INSTALL_TUI:-0}"
+INSTALL_TUI="${INSTALL_TUI:-1}"
 RELEASE_PUBKEY_PATH="${GOV_PASS_RELEASE_PUBKEY_PATH:-}"
 RELEASE_PUBKEY_PEM="${GOV_PASS_RELEASE_PUBKEY_PEM:-}"
 RELEASE_PUBKEY_PEM_B64="${GOV_PASS_RELEASE_PUBKEY_PEM_B64:-}"
@@ -388,43 +388,21 @@ ensure_linux_release_extracted() {
 }
 
 install_tui_from_release() {
-  local tui_target="/opt/gov-pass/dist/gov-pass-tui"
+  local tui_target="/usr/local/bin/gov-pass-tui"
   local install_bin
   install_bin="$(lookup_trusted_command install)"
   ensure_linux_release_extracted
   require_release_file "${LINUX_RELEASE_EXTRACTED}/gov-pass-tui" "TUI controller binary"
-  run_privileged "$install_bin" -d /opt/gov-pass/dist
+  if [ -L "$tui_target" ]; then
+    echo "TUI controller target must not be a symlink: $tui_target" >&2
+    exit 1
+  fi
+  if [ -e "$tui_target" ] && [ ! -f "$tui_target" ]; then
+    echo "TUI controller target must be a regular file: $tui_target" >&2
+    exit 1
+  fi
+  run_privileged "$install_bin" -d /usr/local/bin
   run_privileged "$install_bin" -m 0755 "${LINUX_RELEASE_EXTRACTED}/gov-pass-tui" "$tui_target"
-}
-
-install_tui_host_packages() {
-  echo "Installing nmtui-like TUI runtime (whiptail/newt) (best-effort)..."
-  case "$INSTALL_METHOD" in
-    apt)
-      local apt_bin
-      apt_bin="$(lookup_trusted_command apt-get)"
-      run_privileged "$apt_bin" update -qq || true
-      run_privileged "$apt_bin" install -y --no-install-recommends whiptail || run_privileged "$apt_bin" install -y --no-install-recommends newt || true
-      ;;
-    dnf)
-      local dnf_bin
-      dnf_bin="$(lookup_trusted_command dnf)"
-      run_privileged "$dnf_bin" install -y newt || true
-      ;;
-    yum)
-      local yum_bin
-      yum_bin="$(lookup_trusted_command yum)"
-      run_privileged "$yum_bin" install -y newt || true
-      ;;
-    zypper)
-      local zypper_bin
-      zypper_bin="$(lookup_trusted_command zypper)"
-      run_privileged "$zypper_bin" --non-interactive install newt || true
-      ;;
-    rpm|tar)
-      echo "Skipping auto-install for method=${INSTALL_METHOD}; install package manually: whiptail (or newt)"
-      ;;
-  esac
 }
 
 maybe_install_tui() {
@@ -432,11 +410,9 @@ maybe_install_tui() {
     return
   fi
 
-  echo "INSTALL_TUI=1 detected: installing TUI controller components..."
-  if [ ! -x /opt/gov-pass/dist/gov-pass-tui ]; then
+  if [ "$INSTALL_METHOD" = "tar" ] || [ -e /usr/local/bin/gov-pass-tui ] || [ -L /usr/local/bin/gov-pass-tui ] || ! lookup_trusted_command gov-pass-tui >/dev/null; then
     install_tui_from_release
   fi
-  install_tui_host_packages
 }
 
 install_from_apt() {
@@ -522,14 +498,6 @@ install_from_tar() {
   require_release_file "${LINUX_RELEASE_EXTRACTED}/gov-pass.service" "gov-pass.service"
   require_release_file "${LINUX_RELEASE_EXTRACTED}/gov-pass.default" "gov-pass.default"
   run_privileged "$install_bin" -m 0755 "${LINUX_RELEASE_EXTRACTED}/splitter" /opt/gov-pass/dist/splitter
-  if [ -L "${LINUX_RELEASE_EXTRACTED}/gov-pass-tui" ]; then
-    echo "optional gov-pass-tui must not be a symlink: ${LINUX_RELEASE_EXTRACTED}/gov-pass-tui" >&2
-    exit 1
-  fi
-  if [ -f "${LINUX_RELEASE_EXTRACTED}/gov-pass-tui" ]; then
-    run_privileged "$install_bin" -m 0755 "${LINUX_RELEASE_EXTRACTED}/gov-pass-tui" /opt/gov-pass/dist/gov-pass-tui
-  fi
-
   run_privileged "$install_bin" -m 0644 "${LINUX_RELEASE_EXTRACTED}/gov-pass.service" /etc/systemd/system/gov-pass.service
   if [ ! -f /etc/default/gov-pass ]; then
     run_privileged "$install_bin" -D -m 0644 "${LINUX_RELEASE_EXTRACTED}/gov-pass.default" /etc/default/gov-pass
@@ -569,7 +537,5 @@ fi
 
 echo "Verify with: systemctl status gov-pass --no-pager"
 if [ "$INSTALL_TUI" = "1" ]; then
-  echo "TUI controller binary: /opt/gov-pass/dist/gov-pass-tui"
-  echo "Linux runs as terminal TUI controller (nmtui-like via whiptail when available)."
-  echo "Manual start: /opt/gov-pass/dist/gov-pass-tui --service-name gov-pass"
+  echo "TUI controller: gov-pass-tui"
 fi

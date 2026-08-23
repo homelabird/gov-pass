@@ -78,11 +78,15 @@ INSTALL_BIN="$(lookup_trusted_command install)" || {
 }
 
 OS="$("${UNAME_BIN}" -s)"
-INSTALL_TUI="${INSTALL_TUI:-0}"
 
 if [ "$OS" != "Linux" ] && [ "$OS" != "FreeBSD" ]; then
   echo "unsupported OS: $OS"
   exit 1
+fi
+
+if [ -z "${INSTALL_TUI+x}" ]; then
+  INSTALL_TUI=0
+  [ "$OS" = "Linux" ] && INSTALL_TUI=1
 fi
 
 if [ "$("${ID_BIN}" -u)" -ne 0 ]; then
@@ -91,31 +95,31 @@ if [ "$("${ID_BIN}" -u)" -ne 0 ]; then
 fi
 
 cd "$ROOT_DIR"
-"${GO_BIN}" build -o dist/splitter ./cmd/splitter
 
 if [ "$OS" = "Linux" ]; then
   MAKE_BIN="$(lookup_trusted_command make)" || {
     echo "make not found in trusted command directories"
     exit 1
   }
-  "${MAKE_BIN}" install
+  "${MAKE_BIN}" GO="${GO_BIN}" install
   if [ "$INSTALL_TUI" = "1" ]; then
-    "${MAKE_BIN}" install-tui
+    "${MAKE_BIN}" GO="${GO_BIN}" install-tui
   fi
   if SYSTEMCTL_BIN="$(lookup_trusted_command systemctl)"; then
     "${SYSTEMCTL_BIN}" daemon-reload
     "${SYSTEMCTL_BIN}" enable --now gov-pass
   fi
   echo "Installed on Linux: /opt/gov-pass/dist/splitter"
-  echo "Linux service defaults keep --auto-install-tools=false in /etc/default/gov-pass."
+  echo "Linux service defaults keep --auto-install-tools=false --auto-offload=false in /etc/default/gov-pass."
   echo "On multi-egress, VPN, or container hosts, set --iface explicitly in /etc/default/gov-pass."
   if [ "$INSTALL_TUI" = "1" ]; then
-    echo "Installed on Linux: /opt/gov-pass/dist/gov-pass-tui (TUI controller)"
-    echo "Linux runs as terminal TUI controller (nmtui-like via whiptail when available)."
+    echo "Installed on Linux: /usr/local/bin/gov-pass-tui (TUI controller)"
+    echo "Run: gov-pass-tui"
   fi
   exit 0
 fi
 
+"${GO_BIN}" build -o dist/splitter ./cmd/splitter
 "${INSTALL_BIN}" -d /usr/local/sbin
 "${INSTALL_BIN}" -d /usr/local/etc/gov-pass
 "${INSTALL_BIN}" -d /usr/local/etc/rc.d

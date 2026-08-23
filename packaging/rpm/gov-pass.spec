@@ -29,6 +29,7 @@ packet forwarding.
 
 This package installs:
 - splitter runtime binary
+- gov-pass-tui service controller
 - NFQUEUE install/uninstall helper scripts
 - systemd unit file
 - /etc/sysconfig override file
@@ -39,13 +40,15 @@ This package installs:
 %build
 export CGO_ENABLED=1
 go build -buildmode=pie -o dist/splitter ./cmd/splitter
+go build -buildmode=pie -o dist/gov-pass-tui ./cmd/gov-pass-tui
 
 %check
-go test ./internal/... ./cmd/splitter/...
+go test ./internal/... ./cmd/splitter/... ./cmd/gov-pass-tui/...
 
 %install
 install -d %{buildroot}%{_libexecdir}/%{name}
 install -m 0755 dist/splitter %{buildroot}%{_libexecdir}/%{name}/splitter
+install -D -m 0755 dist/gov-pass-tui %{buildroot}%{_bindir}/gov-pass-tui
 install -m 0755 scripts/linux/install_nfqueue.sh %{buildroot}%{_libexecdir}/%{name}/install_nfqueue.sh
 install -m 0755 scripts/linux/uninstall_nfqueue.sh %{buildroot}%{_libexecdir}/%{name}/uninstall_nfqueue.sh
 
@@ -92,6 +95,7 @@ fi
 %config(noreplace) %{_sysconfdir}/sysconfig/gov-pass
 %{_unitdir}/gov-pass.service
 %{_libexecdir}/%{name}/splitter
+%{_bindir}/gov-pass-tui
 %{_libexecdir}/%{name}/install_nfqueue.sh
 %{_libexecdir}/%{name}/uninstall_nfqueue.sh
 

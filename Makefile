@@ -1,6 +1,7 @@
 .PHONY: build build-tui ensure-tui-deps test vet clean install install-tui uninstall
 
 PREFIX   ?= /opt/gov-pass
+BINDIR   ?= /usr/local/bin
 DISTDIR  ?= dist
 
 GO       ?= go
@@ -32,13 +33,14 @@ install: build
 	install -d $(DESTDIR)$(PREFIX)/dist
 	install -m 0755 $(DISTDIR)/splitter $(DESTDIR)$(PREFIX)/dist/splitter
 	install -D -m 0644 scripts/linux/gov-pass.service $(DESTDIR)/etc/systemd/system/gov-pass.service
+	test -e $(DESTDIR)/etc/default/gov-pass || test -L $(DESTDIR)/etc/default/gov-pass || install -D -m 0644 scripts/linux/gov-pass.default $(DESTDIR)/etc/default/gov-pass
 	@echo "Installed to $(DESTDIR)$(PREFIX)"
 	@echo "Run: sudo systemctl daemon-reload && sudo systemctl enable --now gov-pass"
 
 install-tui: build-tui
-	install -d $(DESTDIR)$(PREFIX)/dist
-	install -m 0755 $(DISTDIR)/gov-pass-tui $(DESTDIR)$(PREFIX)/dist/gov-pass-tui
-	@echo "TUI controller installed to $(DESTDIR)$(PREFIX)/dist/gov-pass-tui"
+	install -d $(DESTDIR)$(BINDIR)
+	install -m 0755 $(DISTDIR)/gov-pass-tui $(DESTDIR)$(BINDIR)/gov-pass-tui
+	@echo "TUI controller installed to $(DESTDIR)$(BINDIR)/gov-pass-tui"
 
 uninstall:
 	prefix="$(DESTDIR)$(PREFIX)"; \
@@ -47,6 +49,7 @@ uninstall:
 	esac; \
 	systemctl disable --now gov-pass 2>/dev/null || true; \
 	rm -f "$(DESTDIR)/etc/systemd/system/gov-pass.service"; \
+	rm -f "$(DESTDIR)$(BINDIR)/gov-pass-tui"; \
 	rm -rf "$$prefix"; \
 	systemctl daemon-reload 2>/dev/null || true
 
