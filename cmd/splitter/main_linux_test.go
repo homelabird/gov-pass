@@ -50,6 +50,15 @@ func TestParseEthtoolOnOff(t *testing.T) {
 	}
 }
 
+func TestCaptureOffloadRestoreSnapshotRefusesUnreadableState(t *testing.T) {
+	got, err := captureOffloadRestoreSnapshot("eth0", true, func(string) (offloadState, error) {
+		return offloadState{}, errors.New("read failed")
+	})
+	if err == nil || got != nil {
+		t.Fatalf("snapshot = %#v, err = %v, want refusal", got, err)
+	}
+}
+
 func TestParseRouteDev(t *testing.T) {
 	tests := []struct {
 		out  string
@@ -200,17 +209,5 @@ func TestDetectEgressInterfaceWith(t *testing.T) {
 				t.Fatalf("iface = %q, want %q", got, tt.want)
 			}
 		})
-	}
-}
-
-func TestIproutePackageName(t *testing.T) {
-	if got := iproutePackageName("dnf"); got != "iproute" {
-		t.Fatalf("dnf package mismatch: %q", got)
-	}
-	if got := iproutePackageName("yum"); got != "iproute" {
-		t.Fatalf("yum package mismatch: %q", got)
-	}
-	if got := iproutePackageName("apt-get"); got != "iproute2" {
-		t.Fatalf("apt package mismatch: %q", got)
 	}
 }

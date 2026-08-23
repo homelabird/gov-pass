@@ -130,7 +130,7 @@
         },
         "stats_interval": {
           "$ref": "#/$defs/duration",
-          "default": "60s"
+          "default": "0s"
         },
         "policies": {
           "type": "array",

@@ -8,7 +8,9 @@ import (
 	"fk-gov/internal/engine"
 )
 
-const defaultStatsInterval = 60 * time.Second
+// Runtime statistics stay in memory by default. Operators can opt in to
+// periodic logs with --stats-interval when diagnosing a problem.
+const defaultStatsInterval time.Duration = 0
 
 func startEngineStatsLogger(ctx context.Context, eng *engine.Engine, interval time.Duration) func() {
 	if eng == nil || interval <= 0 {

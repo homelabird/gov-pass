@@ -15,7 +15,7 @@
     "shutdown_fail_open_timeout": "5s",
     "shutdown_fail_open_max_packets": 200000,
     "adapter_flush_timeout": "2s",
-    "stats_interval": "60s"
+    "stats_interval": "0s"
   },
   "freebsd": {
     "divert_port": 10000

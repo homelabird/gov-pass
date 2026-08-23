@@ -76,7 +76,7 @@ func run() error {
 	recvBuffer := flag.Int("recv-buffer", defaultRecvBuffer, "internal NFQUEUE recv buffer capacity (0=derive from queue-maxlen)")
 	mark := flag.Int("mark", defaultMark, "SO_MARK for reinjected packets")
 	autoRules := flag.Bool("auto-rules", true, "auto install/uninstall NFQUEUE rules (nft or iptables)")
-	autoOffload := flag.Bool("auto-offload", true, "auto disable GRO/GSO/TSO (ethtool)")
+	autoOffload := flag.Bool("auto-offload", false, "auto disable GRO/GSO/TSO (ethtool)")
 	autoOffloadRestore := flag.Bool("auto-offload-restore", true, "restore GRO/GSO/TSO settings on exit when auto-offload is enabled")
 	autoInstallTools := flag.Bool("auto-install-tools", true, "auto install missing system tools (nft/iptables/ip/ethtool) when auto helpers are enabled")
 	iface := flag.String("iface", "", "egress interface for offload disable (default: auto-detect)")
@@ -192,8 +192,8 @@ func run() error {
 	if *copyRange < 0 {
 		return errors.New("copy-range must be >= 0")
 	}
-	if int64(*copyRange) > maxUint32Value {
-		return errors.New("copy-range must be <= 4294967295")
+	if *copyRange > adapter.MaxNFQueueCopyRange {
+		return fmt.Errorf("copy-range must be <= %d", adapter.MaxNFQueueCopyRange)
 	}
 	if *recvBuffer < 0 {
 		return errors.New("recv-buffer must be >= 0")
@@ -296,14 +296,9 @@ func run() error {
 			ifaceName = detected
 		}
 
-		var restore *offloadState
-		if *autoOffloadRestore {
-			st, err := readOffloadState(ifaceName)
-			if err != nil {
-				logWarn("linux_offload_state_unavailable", "warning: could not read offload state; restore disabled", "iface", ifaceName, "err", err)
-			} else {
-				restore = &st
-			}
+		restore, err := captureOffloadRestoreSnapshot(ifaceName, *autoOffloadRestore, readOffloadState)
+		if err != nil {
+			return err
 		}
 
 		if restore != nil {
@@ -877,6 +872,17 @@ type offloadState struct {
 	gro bool
 	gso bool
 	tso bool
+}
+
+func captureOffloadRestoreSnapshot(iface string, enabled bool, read func(string) (offloadState, error)) (*offloadState, error) {
+	if !enabled {
+		return nil, nil
+	}
+	st, err := read(iface)
+	if err != nil {
+		return nil, fmt.Errorf("refusing to disable offload without a restore snapshot for %s: %w", iface, err)
+	}
+	return &st, nil
 }
 
 func readOffloadState(iface string) (offloadState, error) {

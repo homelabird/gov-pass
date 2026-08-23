@@ -8,4 +8,4 @@ GOV_PASS_MARK=1
 #
 # Extra splitter flags. Keep auto-install-tools disabled in service mode to
 # avoid package-manager mutation during runtime.
-GOV_PASS_ARGS=--auto-install-tools=false
+GOV_PASS_ARGS="--auto-install-tools=false --auto-offload=false"

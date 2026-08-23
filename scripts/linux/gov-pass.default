@@ -7,4 +7,4 @@ GOV_PASS_MARK=1
 # Keep auto-install-tools disabled in service mode so package managers are not
 # mutated at runtime. In multi-egress, VPN, or container-heavy hosts, prefer an
 # explicit --iface value instead of route auto-detect.
-GOV_PASS_ARGS=--auto-install-tools=false
+GOV_PASS_ARGS="--auto-install-tools=false --auto-offload=false"
