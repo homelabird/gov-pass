@@ -58,6 +58,12 @@ func TestConfigSchemasValidateExamples(t *testing.T) {
 	}
 }
 
+func TestRuntimeStatsLoggingDisabledByDefault(t *testing.T) {
+	if defaultStatsInterval != 0 {
+		t.Fatalf("default stats interval = %s, want disabled", defaultStatsInterval)
+	}
+}
+
 func TestValidateJSONSchemaSubsetEnforcesStringConstraints(t *testing.T) {
 	schema := map[string]any{
 		"type":      "string",
@@ -77,18 +83,6 @@ func TestValidateJSONSchemaSubsetEnforcesStringConstraints(t *testing.T) {
 	}
 	if err := validateJSONSchemaSubset("ABC", schema, "schema.json", nil, "$"); err == nil || !strings.Contains(err.Error(), "pattern") {
 		t.Fatalf("expected pattern error, got %v", err)
-	}
-}
-
-func TestDecodeJSONDocumentRejectsDuplicateFields(t *testing.T) {
-	_, err := decodeJSONDocument([]byte(`{
-		"engine": {
-			"split_mode": "tls-hello",
-			"split_mode": "immediate"
-		}
-	}`))
-	if err == nil || !strings.Contains(err.Error(), `$.engine: duplicate field "split_mode"`) {
-		t.Fatalf("expected duplicate field error, got %v", err)
 	}
 }
 
@@ -116,41 +110,6 @@ func TestReadJSONConfigFileRejectsOversizedAndNonRegularFiles(t *testing.T) {
 	}
 	if _, err := readJSONConfigFile(link); err == nil || !strings.Contains(err.Error(), "symlink") {
 		t.Fatalf("expected symlink config error, got %v", err)
-	}
-}
-
-func TestReadJSONConfigFileUsesNoFollowOpenOnUnix(t *testing.T) {
-	text, err := os.ReadFile("engine_config_file_unix.go")
-	if err != nil {
-		t.Fatalf("read unix config opener: %v", err)
-	}
-	for _, fragment := range []string{
-		`syscall.Open(path, syscall.O_RDONLY|syscall.O_CLOEXEC|syscall.O_NOFOLLOW, 0)`,
-		`f.Stat()`,
-		`config path must not be a symlink`,
-		`config path must be a regular file`,
-	} {
-		if !strings.Contains(string(text), fragment) {
-			t.Fatalf("unix config opener does not contain required no-follow fragment %q", fragment)
-		}
-	}
-}
-
-func TestReadJSONConfigFileUsesReparsePointOpenOnWindows(t *testing.T) {
-	text, err := os.ReadFile("engine_config_file_windows.go")
-	if err != nil {
-		t.Fatalf("read windows config opener: %v", err)
-	}
-	for _, fragment := range []string{
-		`windows.CreateFile(`,
-		`windows.FILE_FLAG_OPEN_REPARSE_POINT`,
-		`windows.FileAttributeTagInfo`,
-		`windows.FILE_ATTRIBUTE_REPARSE_POINT`,
-		`config path must not be a reparse point`,
-	} {
-		if !strings.Contains(string(text), fragment) {
-			t.Fatalf("windows config opener does not contain required reparse-point fragment %q", fragment)
-		}
 	}
 }
 

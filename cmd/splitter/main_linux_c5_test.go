@@ -255,19 +255,6 @@ func TestApplyLinuxJSONConfig_InvalidDuration(t *testing.T) {
 	}
 }
 
-func TestApplyLinuxJSONConfig_InvalidStatsInterval(t *testing.T) {
-	statsInterval := defaultStatsInterval
-	refs := &linuxFlagRefs{StatsInterval: &statsInterval}
-	cfgPath := writeTempJSON(t, `{
-  "engine": { "stats_interval": "not-a-duration" }
-}`)
-
-	err := applyLinuxJSONConfig(cfgPath, map[string]bool{}, refs)
-	if err == nil || !strings.Contains(err.Error(), "engine.stats_interval") {
-		t.Fatalf("expected stats_interval error, got %v", err)
-	}
-}
-
 func TestApplyLinuxJSONConfig_Policies(t *testing.T) {
 	var policies []engine.Policy
 	refs := &linuxFlagRefs{

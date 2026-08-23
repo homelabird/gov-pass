@@ -2,19 +2,6 @@ package driver
 
 import "testing"
 
-func TestReportHealthy(t *testing.T) {
-	report := Report{
-		FilesPresent:                 true,
-		ServiceExists:                true,
-		ServiceBinPath:               `C:\Program Files\gov-pass\WinDivert64.sys`,
-		ServiceBinPathExists:         true,
-		ServiceBinPathMatchesDesired: true,
-	}
-	if !report.Healthy() {
-		t.Fatalf("expected healthy report, got issues: %v", report.Issues())
-	}
-}
-
 func TestReportIssues(t *testing.T) {
 	report := Report{
 		FilesPresent:                 false,

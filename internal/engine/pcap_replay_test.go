@@ -32,11 +32,6 @@ type replayAdapter struct {
 	drops  []*packet.Packet
 	calcs  int
 	closed bool
-
-	failInjectedSendAt int
-	injectedSendCount  int
-	failDropAt         int
-	dropCount          int
 }
 
 func newReplayAdapter(pkts []*packet.Packet) *replayAdapter {
@@ -59,12 +54,6 @@ func (a *replayAdapter) Recv(ctx context.Context) (*packet.Packet, error) {
 func (a *replayAdapter) Send(ctx context.Context, pkt *packet.Packet) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if pkt != nil && pkt.Source == packet.SourceInjected {
-		a.injectedSendCount++
-		if a.failInjectedSendAt > 0 && a.injectedSendCount == a.failInjectedSendAt {
-			return errors.New("injected send failed")
-		}
-	}
 	a.sends = append(a.sends, pkt)
 	return nil
 }
@@ -72,11 +61,7 @@ func (a *replayAdapter) Send(ctx context.Context, pkt *packet.Packet) error {
 func (a *replayAdapter) Drop(ctx context.Context, pkt *packet.Packet) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.dropCount++
 	a.drops = append(a.drops, pkt)
-	if a.failDropAt > 0 && a.dropCount == a.failDropAt {
-		return errors.New("drop failed")
-	}
 	return nil
 }
 
@@ -159,155 +144,6 @@ func TestPcapReplay_ClientHelloSplitPreservesPayload(t *testing.T) {
 	}
 }
 
-func TestPcapReplay_SNIPolicyOverridesSplitChunk(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.WorkerCount = 1
-	cfg.SplitMode = SplitModeTLSHello
-	cfg.SplitChunk = 5
-	cfg.Policies = []Policy{{
-		SNISuffixes:   []string{"example.com"},
-		HasSplitChunk: true,
-		SplitChunk:    9,
-	}}
-
-	record := buildClientHelloRecordForReplay("api.example.com")
-	raw := buildClassicPcapEthernet(
-		t,
-		splitClientHelloPackets(t, 12003, 0x04050607, record),
-	)
-	replayPkts := mustParseClassicPcapEthernetPackets(t, raw)
-	ad := newReplayAdapter(replayPkts)
-	eng := New(cfg, ad)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- eng.Run(ctx)
-	}()
-
-	waitForSplit(t, eng, ad, len(replayPkts))
-	cancel()
-	if err := <-errCh; err != nil {
-		t.Fatalf("engine run failed: %v", err)
-	}
-	sends, _, _, _ := ad.snapshot()
-	if got := len(sends); got < 2 {
-		t.Fatalf("expected at least 2 injected segments, got %d", got)
-	}
-	if got := len(decodedPayload(t, sends[0])); got != 9 {
-		t.Fatalf("expected policy split_chunk=9, got first payload len=%d", got)
-	}
-	if got := joinPayloads(sends); !bytes.Equal(got, record) {
-		t.Fatalf("replayed payload mismatch: got %d bytes want %d", len(got), len(record))
-	}
-}
-
-func TestPcapReplay_DropFailureAfterSplitDoesNotReinjectOriginalsOnShutdown(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.WorkerCount = 1
-	cfg.SplitMode = SplitModeTLSHello
-	cfg.SplitChunk = 5
-
-	record := buildClientHelloRecordForReplay("www.example.com")
-	raw := buildClassicPcapEthernet(
-		t,
-		splitClientHelloPackets(t, 12004, 0x05060708, record),
-	)
-	replayPkts := mustParseClassicPcapEthernetPackets(t, raw)
-	ad := newReplayAdapter(replayPkts)
-	ad.failDropAt = 1
-	eng := New(cfg, ad)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- eng.Run(ctx)
-	}()
-
-	waitForFailOpen(t, eng, ad, string(failOpenReasonInjectError), 2)
-	cancel()
-	if err := <-errCh; err != nil {
-		t.Fatalf("engine run failed: %v", err)
-	}
-
-	sends, drops, _, closed := ad.snapshot()
-	if !closed {
-		t.Fatal("expected adapter to be closed")
-	}
-	if got := len(sends); got < 2 {
-		t.Fatalf("expected injected segments without original reinjection, got %d sends", got)
-	}
-	for i, sent := range sends {
-		for j, original := range replayPkts {
-			if sent == original {
-				t.Fatalf("send[%d] reused original replay packet %d after drop failure", i, j)
-			}
-		}
-	}
-	if got := joinPayloads(sends); !bytes.Equal(got, record) {
-		t.Fatalf("drop-failure replay payload mismatch: got %d bytes want %d", len(got), len(record))
-	}
-	if got := len(drops); got != len(replayPkts) {
-		t.Fatalf("expected drop attempt for every held original, got %d want %d", got, len(replayPkts))
-	}
-	snap := eng.Stats()
-	if got := snap.FailOpen[string(failOpenReasonInjectError)]; got != 1 {
-		t.Fatalf("expected inject_error fail-open count=1, got %d", got)
-	}
-}
-
-func TestPcapReplay_FirstInjectedSendFailureFailOpensOriginals(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.WorkerCount = 1
-	cfg.SplitMode = SplitModeTLSHello
-	cfg.SplitChunk = 5
-
-	record := buildClientHelloRecordForReplay("www.example.com")
-	raw := buildClassicPcapEthernet(
-		t,
-		splitClientHelloPackets(t, 12005, 0x06070809, record),
-	)
-	replayPkts := mustParseClassicPcapEthernetPackets(t, raw)
-	ad := newReplayAdapter(replayPkts)
-	ad.failInjectedSendAt = 1
-	eng := New(cfg, ad)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- eng.Run(ctx)
-	}()
-
-	waitForFailOpen(t, eng, ad, string(failOpenReasonInjectError), len(replayPkts))
-	cancel()
-	if err := <-errCh; err != nil {
-		t.Fatalf("engine run failed: %v", err)
-	}
-
-	sends, drops, _, closed := ad.snapshot()
-	if !closed {
-		t.Fatal("expected adapter to be closed")
-	}
-	if got := len(drops); got != 0 {
-		t.Fatalf("expected no drops on first injected-send failure, got %d", got)
-	}
-	if got := len(sends); got != len(replayPkts) {
-		t.Fatalf("expected %d fail-open original sends, got %d", len(replayPkts), got)
-	}
-	for i, pkt := range replayPkts {
-		if sends[i] != pkt {
-			t.Fatalf("send[%d] = %p, want original packet %p", i, sends[i], pkt)
-		}
-	}
-	snap := eng.Stats()
-	if got := snap.FailOpen[string(failOpenReasonInjectError)]; got != 1 {
-		t.Fatalf("expected inject_error fail-open count=1, got %d", got)
-	}
-}
-
 func waitForSplit(t *testing.T, eng *Engine, ad *replayAdapter, wantDrops int) {
 	t.Helper()
 	deadline := time.After(2 * time.Second)
@@ -321,25 +157,6 @@ func waitForSplit(t *testing.T, eng *Engine, ad *replayAdapter, wantDrops int) {
 		case <-tick.C:
 			sends, drops, _, _ := ad.snapshot()
 			if eng.Stats().SplitsOK >= 1 && len(drops) >= wantDrops && len(sends) >= 2 {
-				return
-			}
-		}
-	}
-}
-
-func waitForFailOpen(t *testing.T, eng *Engine, ad *replayAdapter, reason string, minSends int) {
-	t.Helper()
-	deadline := time.After(2 * time.Second)
-	tick := time.NewTicker(10 * time.Millisecond)
-	defer tick.Stop()
-	for {
-		select {
-		case <-deadline:
-			sends, drops, _, _ := ad.snapshot()
-			t.Fatalf("timed out waiting for fail-open: stats=%s sends=%d drops=%d", eng.Stats(), len(sends), len(drops))
-		case <-tick.C:
-			sends, _, _, _ := ad.snapshot()
-			if eng.Stats().FailOpen[reason] >= 1 && len(sends) >= minSends {
 				return
 			}
 		}

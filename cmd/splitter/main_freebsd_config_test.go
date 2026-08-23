@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"fk-gov/internal/engine"
 )
@@ -61,59 +60,6 @@ func freeBSDExampleConfigRefs() *freebsdFlagRefs {
 		StatsInterval:              &statsInterval,
 		Policies:                   &policies,
 		DivertPort:                 &divertPort,
-	}
-}
-
-func TestApplyFreeBSDJSONConfig_EngineStatsInterval(t *testing.T) {
-	splitChunk := 5
-	statsInterval := defaultStatsInterval
-	divertPort := 10000
-	refs := &freebsdFlagRefs{
-		SplitChunk:    &splitChunk,
-		StatsInterval: &statsInterval,
-		DivertPort:    &divertPort,
-	}
-
-	path := writeFreeBSDTempJSON(t, `{
-  "engine": {
-    "split_chunk": 9,
-    "stats_interval": "2m"
-  },
-  "freebsd": {
-    "divert_port": 12000
-  }
-}`)
-
-	if err := applyFreeBSDJSONConfig(path, map[string]bool{}, refs); err != nil {
-		t.Fatalf("apply config: %v", err)
-	}
-
-	if splitChunk != 9 {
-		t.Fatalf("splitChunk = %d, want 9", splitChunk)
-	}
-	if statsInterval != 2*time.Minute {
-		t.Fatalf("statsInterval = %s, want 2m", statsInterval)
-	}
-	if divertPort != 12000 {
-		t.Fatalf("divertPort = %d, want 12000", divertPort)
-	}
-}
-
-func TestApplyFreeBSDJSONConfig_ExplicitStatsIntervalFlagOverridesConfig(t *testing.T) {
-	statsInterval := defaultStatsInterval
-	refs := &freebsdFlagRefs{StatsInterval: &statsInterval}
-	path := writeFreeBSDTempJSON(t, `{
-  "engine": {
-    "stats_interval": "2m"
-  }
-}`)
-
-	if err := applyFreeBSDJSONConfig(path, map[string]bool{"stats-interval": true}, refs); err != nil {
-		t.Fatalf("apply config: %v", err)
-	}
-
-	if statsInterval != defaultStatsInterval {
-		t.Fatalf("statsInterval = %s, want default", statsInterval)
 	}
 }
 

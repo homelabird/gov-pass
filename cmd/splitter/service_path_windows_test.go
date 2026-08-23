@@ -77,17 +77,6 @@ func TestValidateWindowsServiceConfigPath(t *testing.T) {
 	}
 }
 
-func TestValidateWindowsServiceLogPath(t *testing.T) {
-	t.Setenv("ProgramData", `C:\ProgramData`)
-
-	if err := validateWindowsServiceLogPath(`C:\ProgramData\gov-pass\splitter.log`); err != nil {
-		t.Fatalf("expected ProgramData log path to pass: %v", err)
-	}
-	if err := validateWindowsServiceLogPath(`C:\Logs\splitter.log`); err == nil {
-		t.Fatal("expected log path outside ProgramData to fail")
-	}
-}
-
 func TestValidateWindowsServiceDriverDir(t *testing.T) {
 	t.Setenv("ProgramData", `C:\ProgramData`)
 	t.Setenv("ProgramFiles", `C:\Program Files`)

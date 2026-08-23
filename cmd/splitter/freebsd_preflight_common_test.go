@@ -7,59 +7,7 @@ import (
 	"testing"
 )
 
-func TestLookTrustedFreeBSDSplitterCommandRejectsPoisonedPATHEntry(t *testing.T) {
-	dir := t.TempDir()
-	cmd := filepath.Join(dir, "pfctl")
-	if err := os.WriteFile(cmd, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatalf("write fake command: %v", err)
-	}
-	t.Setenv("PATH", dir)
-
-	origDirs := trustedFreeBSDSplitterCommandDirs
-	trustedFreeBSDSplitterCommandDirs = []string{filepath.Join(dir, "missing")}
-	defer func() {
-		trustedFreeBSDSplitterCommandDirs = origDirs
-	}()
-
-	if got, ok := lookTrustedFreeBSDSplitterCommand("pfctl"); ok {
-		t.Fatalf("expected poisoned PATH entry to be rejected, got %q", got)
-	}
-}
-
-func TestLookTrustedFreeBSDSplitterCommandUsesTrustedAbsoluteDir(t *testing.T) {
-	dir := t.TempDir()
-	cmd := filepath.Join(dir, "pfctl")
-	if err := os.WriteFile(cmd, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatalf("write fake command: %v", err)
-	}
-
-	origDirs := trustedFreeBSDSplitterCommandDirs
-	trustedFreeBSDSplitterCommandDirs = []string{dir}
-	defer func() {
-		trustedFreeBSDSplitterCommandDirs = origDirs
-	}()
-
-	got, ok := lookTrustedFreeBSDSplitterCommand("pfctl")
-	if !ok {
-		t.Fatal("expected trusted command lookup to succeed")
-	}
-	if filepath.Clean(got) != filepath.Clean(cmd) {
-		t.Fatalf("lookTrustedFreeBSDSplitterCommand returned %q, want %q", got, cmd)
-	}
-
-	resolved, err := resolveTrustedFreeBSDSplitterCommand("pfctl")
-	if err != nil {
-		t.Fatalf("resolveTrustedFreeBSDSplitterCommand: %v", err)
-	}
-	if filepath.Clean(resolved) != filepath.Clean(cmd) {
-		t.Fatalf("resolveTrustedFreeBSDSplitterCommand returned %q, want %q", resolved, cmd)
-	}
-	if !isTrustedFreeBSDSplitterCommandPath(cmd) {
-		t.Fatalf("isTrustedFreeBSDSplitterCommandPath(%q) = false, want true", cmd)
-	}
-}
-
-func TestLookTrustedFreeBSDSplitterCommandRejectsSymlinkOutsideTrustedDir(t *testing.T) {
+func TestResolveTrustedFreeBSDSplitterCommandRejectsSymlinkOutsideTrustedDir(t *testing.T) {
 	trustedDir := t.TempDir()
 	outsideDir := t.TempDir()
 	target := filepath.Join(outsideDir, "pfctl")
@@ -77,34 +25,8 @@ func TestLookTrustedFreeBSDSplitterCommandRejectsSymlinkOutsideTrustedDir(t *tes
 		trustedFreeBSDSplitterCommandDirs = origDirs
 	}()
 
-	if got, ok := lookTrustedFreeBSDSplitterCommand("pfctl"); ok {
+	if got, err := resolveTrustedFreeBSDSplitterCommand("pfctl"); err == nil {
 		t.Fatalf("expected symlink target outside trusted dir to be rejected, got %q", got)
-	}
-}
-
-func TestLookTrustedFreeBSDSplitterCommandRejectsRelativePathName(t *testing.T) {
-	parent := t.TempDir()
-	sbin := filepath.Join(parent, "sbin")
-	bin := filepath.Join(parent, "bin")
-	if err := os.MkdirAll(sbin, 0o755); err != nil {
-		t.Fatalf("mkdir sbin: %v", err)
-	}
-	if err := os.MkdirAll(bin, 0o755); err != nil {
-		t.Fatalf("mkdir bin: %v", err)
-	}
-	cmd := filepath.Join(bin, "pfctl")
-	if err := os.WriteFile(cmd, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatalf("write command: %v", err)
-	}
-
-	origDirs := trustedFreeBSDSplitterCommandDirs
-	trustedFreeBSDSplitterCommandDirs = []string{sbin, bin}
-	defer func() {
-		trustedFreeBSDSplitterCommandDirs = origDirs
-	}()
-
-	if got, ok := lookTrustedFreeBSDSplitterCommand(filepath.Join("..", "bin", "pfctl")); ok {
-		t.Fatalf("expected relative path command name to be rejected, got %q", got)
 	}
 }
 

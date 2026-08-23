@@ -1,86 +1,11 @@
 package engine
 
 import (
-	"bytes"
-	"context"
 	"encoding/binary"
 	"testing"
 
 	"fk-gov/internal/packet"
 )
-
-func TestHandshakeReplay_ClientHelloSplitPreservesPayload(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.SplitMode = SplitModeTLSHello
-	cfg.SplitChunk = 5
-
-	ad := &recordingAdapter{}
-	st := newStats()
-	w := newWorker(0, cfg, ad, st)
-
-	record := buildClientHelloRecordForReplay("www.example.com")
-	replayWorkerPackets(t, w, splitClientHelloPackets(t, 12000, 0x01020304, record)...)
-
-	if got := len(ad.sends); got < 2 {
-		t.Fatalf("expected at least 2 injected segments, got %d", got)
-	}
-	if got := len(decodedPayload(t, ad.sends[0])); got != cfg.SplitChunk {
-		t.Fatalf("expected first injected payload len=%d, got %d", cfg.SplitChunk, got)
-	}
-	if got := joinPayloads(ad.sends); !bytes.Equal(got, record) {
-		t.Fatalf("replayed payload mismatch: got %d bytes want %d", len(got), len(record))
-	}
-
-	snap := st.snapshot()
-	if got := snap.SplitsOK; got != 1 {
-		t.Fatalf("expected splits_ok=1, got %d", got)
-	}
-	if len(snap.FailOpen) != 0 {
-		t.Fatalf("expected no fail-open counters, got %+v", snap.FailOpen)
-	}
-}
-
-func TestHandshakeReplay_SNIPolicyOverridesSplitChunk(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.SplitMode = SplitModeTLSHello
-	cfg.SplitChunk = 5
-	cfg.Policies = []Policy{{
-		SNISuffixes:   []string{"example.com"},
-		HasSplitChunk: true,
-		SplitChunk:    9,
-	}}
-
-	ad := &recordingAdapter{}
-	st := newStats()
-	w := newWorker(0, cfg, ad, st)
-
-	record := buildClientHelloRecordForReplay("api.example.com")
-	replayWorkerPackets(t, w, splitClientHelloPackets(t, 12001, 0x02030405, record)...)
-
-	if got := len(ad.sends); got < 2 {
-		t.Fatalf("expected at least 2 injected segments, got %d", got)
-	}
-	if got := len(decodedPayload(t, ad.sends[0])); got != 9 {
-		t.Fatalf("expected policy split_chunk=9, got first payload len=%d", got)
-	}
-	if got := joinPayloads(ad.sends); !bytes.Equal(got, record) {
-		t.Fatalf("replayed payload mismatch: got %d bytes want %d", len(got), len(record))
-	}
-
-	snap := st.snapshot()
-	if got := snap.SplitsOK; got != 1 {
-		t.Fatalf("expected splits_ok=1, got %d", got)
-	}
-}
-
-func replayWorkerPackets(t *testing.T, w *worker, pkts ...*packet.Packet) {
-	t.Helper()
-	for _, pkt := range pkts {
-		if err := w.handlePacket(context.Background(), pkt); err != nil {
-			t.Fatalf("handlePacket failed: %v", err)
-		}
-	}
-}
 
 func splitClientHelloPackets(t *testing.T, srcPort uint16, baseSeq uint32, record []byte) []*packet.Packet {
 	t.Helper()

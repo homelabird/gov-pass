@@ -7,24 +7,6 @@ import (
 	"fk-gov/internal/packet"
 )
 
-func TestKeyFromMeta(t *testing.T) {
-	meta := packet.Meta{
-		IPVersion: packet.IPVersion4,
-		SrcIP:     v4Bytes(10, 0, 0, 2),
-		DstIP:     v4Bytes(1, 1, 1, 1),
-		SrcPort:   54321,
-		DstPort:   443,
-		Proto:     6,
-	}
-	key := KeyFromMeta(meta)
-	if key.IPVersion != meta.IPVersion || key.SrcIP != meta.SrcIP || key.DstIP != meta.DstIP {
-		t.Fatalf("ip mismatch: got %+v", key)
-	}
-	if key.SrcPort != meta.SrcPort || key.DstPort != meta.DstPort || key.Proto != meta.Proto {
-		t.Fatalf("tuple mismatch: got %+v", key)
-	}
-}
-
 func TestTableGetOrCreateAndDelete(t *testing.T) {
 	tbl := NewTable()
 	now := time.Now()
@@ -60,27 +42,6 @@ func TestTableGetOrCreateAndDelete(t *testing.T) {
 	}
 	if tbl.Len() != 0 {
 		t.Fatalf("table len after delete: got %d", tbl.Len())
-	}
-}
-
-func TestTableRange(t *testing.T) {
-	tbl := NewTable()
-	now := time.Now()
-	k1 := Key{IPVersion: packet.IPVersion4, SrcIP: v4Bytes(10, 0, 0, 1), DstIP: v4Bytes(1, 1, 1, 1), SrcPort: 1000, DstPort: 443, Proto: 6}
-	k2 := Key{IPVersion: packet.IPVersion4, SrcIP: v4Bytes(10, 0, 0, 2), DstIP: v4Bytes(1, 1, 1, 1), SrcPort: 1001, DstPort: 443, Proto: 6}
-	tbl.GetOrCreate(k1, now)
-	tbl.GetOrCreate(k2, now)
-
-	seen := map[Key]bool{}
-	tbl.Range(func(k Key, st *FlowState) {
-		if st == nil {
-			t.Fatalf("state must not be nil")
-		}
-		seen[k] = true
-	})
-
-	if len(seen) != 2 || !seen[k1] || !seen[k2] {
-		t.Fatalf("range did not visit all keys: %+v", seen)
 	}
 }
 

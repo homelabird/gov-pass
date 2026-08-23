@@ -55,11 +55,6 @@ func resolveTrustedFreeBSDSplitterCommand(name string) (string, error) {
 	return "", fmt.Errorf("%s not found in trusted command directories", strings.TrimSpace(name))
 }
 
-func isTrustedFreeBSDSplitterCommandPath(path string) bool {
-	_, ok := canonicalTrustedFreeBSDSplitterCommandPath(path)
-	return ok
-}
-
 func canonicalTrustedFreeBSDSplitterCommandPath(path string) (string, bool) {
 	clean := filepath.Clean(strings.TrimSpace(path))
 	if !filepath.IsAbs(clean) {
