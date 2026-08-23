@@ -39,16 +39,6 @@ func normalizeTerminalSize(size terminalSize) terminalSize {
 	return size
 }
 
-func clampInt(value, minValue, maxValue int) int {
-	if value < minValue {
-		return minValue
-	}
-	if value > maxValue {
-		return maxValue
-	}
-	return value
-}
-
 func minInt(a, b int) int {
 	if a < b {
 		return a

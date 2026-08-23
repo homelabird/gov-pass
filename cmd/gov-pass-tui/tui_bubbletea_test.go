@@ -1,68 +1,25 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-func TestBubbleTUIModelSelectionWraps(t *testing.T) {
-	status := newTUIStatus(tuiStatusInput{
-		Platform:     "Linux",
-		ServiceName:  "gov-pass",
-		RawState:     "active",
-		Active:       true,
-		ActiveKnown:  true,
-		Enabled:      true,
-		EnabledKnown: true,
-		Capabilities: tuiCapabilities{Reload: true},
-	})
-
-	model := bubbleTUIModel{
-		serviceName:   "gov-pass",
-		collectStatus: func(string) tuiStatus { return status },
-		executeAction: func(string, tuiStatus, string) (tuiFeedback, error) { return tuiFeedback{}, nil },
-		status:        status,
-		feedback:      readyTUIFeedback(),
-		width:         100,
-		height:        30,
-	}
-
-	next, _ := model.Update(tea.KeyMsg{Type: tea.KeyUp})
-	updated := next.(bubbleTUIModel)
-	selected := selectedAction(tuiActionsForStatus(updated.status), updated.selected)
-	if selected.ID != tuiActionQuit {
-		t.Fatalf("wrapped selection = %q, want quit", selected.ID)
-	}
-
-	next, _ = updated.Update(tea.KeyMsg{Type: tea.KeyDown})
-	updated = next.(bubbleTUIModel)
-	selected = selectedAction(tuiActionsForStatus(updated.status), updated.selected)
-	if selected.ID != tuiActionToggleService {
-		t.Fatalf("selection after wrap = %q, want toggle-service", selected.ID)
-	}
-}
-
-func TestBubbleTUIModelExecutesSelectedAction(t *testing.T) {
+func TestBubbleTUIModelExecutesToggle(t *testing.T) {
 	initial := newTUIStatus(tuiStatusInput{
-		Platform:     "Linux",
-		ServiceName:  "gov-pass",
-		RawState:     "active",
-		Active:       true,
-		ActiveKnown:  true,
-		Enabled:      true,
-		EnabledKnown: true,
-		Capabilities: tuiCapabilities{Reload: true},
+		Platform:    "Linux",
+		ServiceName: "gov-pass",
+		RawState:    "active",
+		Active:      true,
+		ActiveKnown: true,
 	})
 	updatedStatus := newTUIStatus(tuiStatusInput{
-		Platform:     "Linux",
-		ServiceName:  "gov-pass",
-		RawState:     "reloading",
-		Active:       false,
-		ActiveKnown:  true,
-		Enabled:      true,
-		EnabledKnown: true,
-		Capabilities: tuiCapabilities{Reload: true},
+		Platform:    "Linux",
+		ServiceName: "gov-pass",
+		RawState:    "stopped",
+		ActiveKnown: true,
 	})
 
 	var gotChoice string
@@ -71,24 +28,14 @@ func TestBubbleTUIModelExecutesSelectedAction(t *testing.T) {
 		collectStatus: func(string) tuiStatus { return updatedStatus },
 		executeAction: func(service string, status tuiStatus, choice string) (tuiFeedback, error) {
 			gotChoice = choice
-			return successTUIFeedback("Service restart requested.", "Target service: "+service, false), nil
+			return successTUIFeedback("Service stop requested.", "Target service: "+service), nil
 		},
 		status:   initial,
 		feedback: readyTUIFeedback(),
-		width:    100,
-		height:   30,
-		selected: 1,
 	}
 
 	next, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	busy := next.(bubbleTUIModel)
-	if !busy.busy {
-		t.Fatal("model should be busy after starting an action")
-	}
-	if gotChoice != "" {
-		t.Fatalf("action executed too early: %q", gotChoice)
-	}
-
 	message := cmd()
 	batch, ok := message.(tea.BatchMsg)
 	if !ok {
@@ -109,30 +56,20 @@ func TestBubbleTUIModelExecutesSelectedAction(t *testing.T) {
 
 	next, _ = busy.Update(actionMsg)
 	done := next.(bubbleTUIModel)
-	if done.busy {
-		t.Fatal("model should stop being busy after action result")
+	if gotChoice != "toggle" {
+		t.Fatalf("executed choice = %q, want toggle", gotChoice)
 	}
-	if gotChoice != "2" {
-		t.Fatalf("executed choice = %q, want 2", gotChoice)
-	}
-	if done.status.RawState != "reloading" {
-		t.Fatalf("updated status = %q, want reloading", done.status.RawState)
-	}
-	if done.feedback.Summary != "Service restart requested." {
-		t.Fatalf("feedback summary = %q", done.feedback.Summary)
+	if done.status.RawState != "stopped" {
+		t.Fatalf("updated status = %q, want stopped", done.status.RawState)
 	}
 }
 
-func TestBubbleTUIModelUnsupportedReloadShowsError(t *testing.T) {
+func TestBubbleTUIModelMouseClickRunsToggle(t *testing.T) {
 	status := newTUIStatus(tuiStatusInput{
-		Platform:     "FreeBSD",
-		ServiceName:  "gov-pass",
-		RawState:     "active",
-		Active:       true,
-		ActiveKnown:  true,
-		Enabled:      true,
-		EnabledKnown: true,
-		Capabilities: tuiCapabilities{Reload: false},
+		Platform:    "Windows",
+		ServiceName: "gov-pass",
+		RawState:    "stopped",
+		ActiveKnown: true,
 	})
 
 	model := bubbleTUIModel{
@@ -145,12 +82,70 @@ func TestBubbleTUIModelUnsupportedReloadShowsError(t *testing.T) {
 		height:        30,
 	}
 
-	next, cmd := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	bounds := toggleButtonBoundsForSize(status, model.width, false)
+	next, cmd := model.Update(tea.MouseMsg(tea.MouseEvent{
+		X:      bounds.left,
+		Y:      bounds.row,
+		Button: tea.MouseButtonLeft,
+		Action: tea.MouseActionPress,
+	}))
 	updated := next.(bubbleTUIModel)
-	if cmd != nil {
-		t.Fatal("unsupported reload should not dispatch a command")
+	if cmd == nil || !updated.busy {
+		t.Fatal("left click on the button must dispatch toggle")
 	}
-	if updated.feedback.Level != tuiFeedbackError {
-		t.Fatalf("feedback level = %q, want ERROR", updated.feedback.Level)
+
+	next, cmd = model.Update(tea.MouseMsg(tea.MouseEvent{
+		X:      bounds.left,
+		Y:      bounds.row - 1,
+		Button: tea.MouseButtonLeft,
+		Action: tea.MouseActionPress,
+	}))
+	updated = next.(bubbleTUIModel)
+	if cmd != nil || updated.busy {
+		t.Fatal("click outside the button must be ignored")
+	}
+}
+
+func TestBubbleTUIModelBusyStateDisablesToggle(t *testing.T) {
+	status := newTUIStatus(tuiStatusInput{
+		Platform:    "Windows",
+		ServiceName: "gov-pass",
+		RawState:    "start-pending",
+		ActiveKnown: true,
+	})
+	model := bubbleTUIModel{status: status, feedback: readyTUIFeedback(), width: 64, height: 20}
+
+	next, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated := next.(bubbleTUIModel)
+	if cmd != nil || updated.busy {
+		t.Fatal("busy service must not dispatch another toggle")
+	}
+}
+
+func TestBubbleTUIViewIsOneButton(t *testing.T) {
+	linuxStatus := newTUIStatus(tuiStatusInput{
+		Platform:    "Linux",
+		ServiceName: "gov-pass",
+		RawState:    "active",
+		Active:      true,
+		ActiveKnown: true,
+	})
+	model := bubbleTUIModel{
+		status:   linuxStatus,
+		feedback: readyTUIFeedback(),
+		width:    64,
+		height:   20,
+	}
+
+	view := model.View()
+	for _, want := range []string{"STATUS: ON", "[ TURN OFF ]"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("single-button view missing %q:\n%s", want, view)
+		}
+	}
+	for _, unwanted := range []string{"Restart service", "Toggle boot", "Reload service", "ACTIONS"} {
+		if strings.Contains(view, unwanted) {
+			t.Fatalf("single-button view unexpectedly contains %q:\n%s", unwanted, view)
+		}
 	}
 }

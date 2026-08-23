@@ -9,8 +9,6 @@ import (
 	"os/exec"
 	"strings"
 	"time"
-
-	"golang.org/x/sys/windows/svc"
 )
 
 const defaultServiceName = "gov-pass"
@@ -53,19 +51,14 @@ func runTUI(serviceName string) error {
 
 func collectTUIStatus(serviceName string) tuiStatus {
 	state, stateErr := queryServiceState(serviceName)
-	enabled, enabledErr := isServiceEnabled(serviceName)
 	return newTUIStatus(tuiStatusInput{
-		Platform:     "Windows",
-		ServiceName:  serviceName,
-		RawState:     state,
-		Active:       strings.EqualFold(state, "running"),
-		ActiveKnown:  stateErr == nil && !strings.EqualFold(strings.TrimSpace(state), "unknown"),
-		Enabled:      enabled,
-		EnabledKnown: enabledErr == nil,
-		Capabilities: tuiCapabilities{Reload: true},
+		Platform:    "Windows",
+		ServiceName: serviceName,
+		RawState:    state,
+		Active:      strings.EqualFold(state, "running"),
+		ActiveKnown: stateErr == nil && !strings.EqualFold(strings.TrimSpace(state), "unknown"),
 	},
 		statusIssue{Label: "service", Err: stateErr},
-		statusIssue{Label: "boot", Err: enabledErr},
 	)
 }
 
@@ -164,22 +157,6 @@ func isServiceActive(serviceName string) (bool, error) {
 	return strings.EqualFold(state, "running"), nil
 }
 
-func isServiceEnabled(serviceName string) (bool, error) {
-	out, err := windowsRunSC("qc", serviceName)
-	if err != nil {
-		return false, err
-	}
-	upper := strings.ToUpper(out)
-	switch {
-	case strings.Contains(upper, "AUTO_START"), strings.Contains(upper, "BOOT_START"), strings.Contains(upper, "SYSTEM_START"):
-		return true, nil
-	case strings.Contains(upper, "DEMAND_START"), strings.Contains(upper, "DISABLED"):
-		return false, nil
-	default:
-		return false, fmt.Errorf("sc qc %s returned unrecognized start mode", serviceName)
-	}
-}
-
 func queryServiceState(serviceName string) (string, error) {
 	out, err := windowsRunSC("query", serviceName)
 	if err != nil {
@@ -247,57 +224,9 @@ func isAlreadyRunningError(msg string) bool {
 	return strings.Contains(text, "1056") || strings.Contains(text, "already running")
 }
 
-func clearTerminalScreen() {
-	if err := clearWindowsConsole(); err != nil {
-		fmt.Print("\033[H\033[2J")
-	}
-}
-
 func nonEmpty(primary, fallback string) string {
 	if strings.TrimSpace(primary) != "" {
 		return strings.TrimSpace(primary)
 	}
 	return strings.TrimSpace(fallback)
-}
-
-func quoteArgs(args []string) string {
-	var b strings.Builder
-	for i := range args {
-		if i > 0 {
-			b.WriteByte(' ')
-		}
-		b.WriteString(quoteArg(args[i]))
-	}
-	return b.String()
-}
-
-func quoteArg(s string) string {
-	if s == "" {
-		return `""`
-	}
-	if !strings.ContainsAny(s, " \t\"") {
-		return s
-	}
-	return `"` + strings.ReplaceAll(s, `"`, `\"`) + `"`
-}
-
-func stateString(st svc.State) string {
-	switch st {
-	case svc.Stopped:
-		return "stopped"
-	case svc.StartPending:
-		return "start-pending"
-	case svc.StopPending:
-		return "stop-pending"
-	case svc.Running:
-		return "running"
-	case svc.ContinuePending:
-		return "continue-pending"
-	case svc.PausePending:
-		return "pause-pending"
-	case svc.Paused:
-		return "paused"
-	default:
-		return fmt.Sprintf("unknown(%d)", st)
-	}
 }

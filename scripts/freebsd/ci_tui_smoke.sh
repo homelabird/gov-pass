@@ -25,21 +25,6 @@ case "$(printf '%s' "$status_output" | tr '[:upper:]' '[:lower:]' | tr -d '\r')"
     ;;
 esac
 
-panel_output="$(printf 'r\nq\n' | "$TUI_BIN" --service-name "$SERVICE_NAME" 2>&1)" || {
-  printf '%s\n' "plain TUI smoke failed:" >&2
-  printf '%s\n' "$panel_output" >&2
-  exit 1
-}
-
-printf '%s' "$panel_output" | grep -F "GOV-PASS CONTROL" >/dev/null || {
-  printf '%s\n' "plain TUI output missing control panel header" >&2
-  exit 1
-}
-printf '%s' "$panel_output" | grep -F "Select>" >/dev/null || {
-  printf '%s\n' "plain TUI output missing prompt" >&2
-  exit 1
-}
-
 if reload_output="$("$TUI_BIN" --service-name "$SERVICE_NAME" --action reload 2>&1)"; then
   printf '%s\n' "reload smoke unexpectedly succeeded on FreeBSD" >&2
   exit 1

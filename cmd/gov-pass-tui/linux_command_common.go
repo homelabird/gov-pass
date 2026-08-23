@@ -3,7 +3,6 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -71,18 +70,6 @@ func lookTrustedLinuxTUICommand(name string) (string, bool) {
 		}
 	}
 	return "", false
-}
-
-func resolveTrustedLinuxTUICommand(name string) (string, error) {
-	if path, ok := linuxTUICommandLookPath(name); ok {
-		return path, nil
-	}
-	return "", fmt.Errorf("%s not found in trusted command directories", strings.TrimSpace(name))
-}
-
-func isTrustedLinuxTUICommandPath(path string) bool {
-	_, ok := canonicalTrustedCommandPath(path, trustedLinuxTUICommandDirs, isExecutableLinuxTUICommandFile)
-	return ok
 }
 
 func isExecutableLinuxTUICommandFile(path string) bool {

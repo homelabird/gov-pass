@@ -7,7 +7,6 @@ type tuiFeedbackLevel string
 const (
 	tuiFeedbackOK    tuiFeedbackLevel = "OK"
 	tuiFeedbackInfo  tuiFeedbackLevel = "INFO"
-	tuiFeedbackWarn  tuiFeedbackLevel = "WARN"
 	tuiFeedbackError tuiFeedbackLevel = "ERROR"
 )
 
@@ -15,14 +14,13 @@ type tuiFeedback struct {
 	Level   tuiFeedbackLevel
 	Summary string
 	Detail  string
-	Popup   bool
 }
 
 func readyTUIFeedback() tuiFeedback {
 	return tuiFeedback{
 		Level:   tuiFeedbackOK,
 		Summary: "Ready.",
-		Detail:  "Select an action to manage the service.",
+		Detail:  "Press Enter, Space, or click the ON/OFF button.",
 	}
 }
 
@@ -34,12 +32,11 @@ func infoTUIFeedback(summary, detail string) tuiFeedback {
 	}
 }
 
-func successTUIFeedback(summary, detail string, popup bool) tuiFeedback {
+func successTUIFeedback(summary, detail string) tuiFeedback {
 	return tuiFeedback{
 		Level:   tuiFeedbackOK,
 		Summary: strings.TrimSpace(summary),
 		Detail:  strings.TrimSpace(detail),
-		Popup:   popup,
 	}
 }
 
@@ -52,30 +49,7 @@ func errorTUIFeedback(err error) tuiFeedback {
 		Level:   tuiFeedbackError,
 		Summary: "Action failed.",
 		Detail:  detail,
-		Popup:   true,
 	}
-}
-
-func (feedback tuiFeedback) dialogTitle() string {
-	switch feedback.Level {
-	case tuiFeedbackError:
-		return "gov-pass error"
-	case tuiFeedbackWarn:
-		return "gov-pass warning"
-	default:
-		return "gov-pass"
-	}
-}
-
-func (feedback tuiFeedback) text() string {
-	lines := make([]string, 0, 2)
-	if summary := strings.TrimSpace(feedback.Summary); summary != "" {
-		lines = append(lines, summary)
-	}
-	if detail := strings.TrimSpace(feedback.Detail); detail != "" {
-		lines = append(lines, detail)
-	}
-	return strings.Join(lines, "\n")
 }
 
 func (feedback tuiFeedback) isZero() bool {

@@ -22,10 +22,6 @@ shift || true
 	    printf '%s\n' "${FAKE_SYSTEMCTL_IS_ACTIVE_OUTPUT:-inactive}"
 	    exit "${FAKE_SYSTEMCTL_IS_ACTIVE_EXIT:-3}"
 	    ;;
-	  is-enabled)
-	    printf '%s\n' "${FAKE_SYSTEMCTL_IS_ENABLED_OUTPUT:-disabled}"
-	    exit "${FAKE_SYSTEMCTL_IS_ENABLED_EXIT:-1}"
-	    ;;
 	  show)
 	    printf '%s\n' "${FAKE_SYSTEMCTL_CAN_RELOAD_OUTPUT:-no}"
 	    exit "${FAKE_SYSTEMCTL_CAN_RELOAD_EXIT:-0}"
@@ -87,30 +83,6 @@ func TestServiceStatusText_UnknownStateWarns(t *testing.T) {
 	}
 	if state != "unknown" {
 		t.Fatalf("serviceStatusText = %q, want unknown", state)
-	}
-}
-
-func TestIsServiceEnabled_DisabledDoesNotWarn(t *testing.T) {
-	stubLinuxSystemctlStatus(t)
-	t.Setenv("FAKE_SYSTEMCTL_IS_ENABLED_OUTPUT", "disabled")
-	t.Setenv("FAKE_SYSTEMCTL_IS_ENABLED_EXIT", "1")
-
-	enabled, err := isServiceEnabled("gov-pass")
-	if err != nil {
-		t.Fatalf("isServiceEnabled unexpected error: %v", err)
-	}
-	if enabled {
-		t.Fatal("isServiceEnabled = true, want false")
-	}
-}
-
-func TestIsServiceEnabled_NotFoundWarns(t *testing.T) {
-	stubLinuxSystemctlStatus(t)
-	t.Setenv("FAKE_SYSTEMCTL_IS_ENABLED_OUTPUT", "not-found")
-	t.Setenv("FAKE_SYSTEMCTL_IS_ENABLED_EXIT", "1")
-
-	if _, err := isServiceEnabled("gov-pass"); err == nil {
-		t.Fatal("isServiceEnabled expected error for not-found state")
 	}
 }
 

@@ -66,7 +66,7 @@ func normalizeWindowsServiceName(name string) (string, error) {
 		c := normalized[i]
 		switch {
 		case isASCIIAlphaNum(c):
-		case c == '-' || c == '_':
+		case c == '-' || c == '_' || c == ' ':
 		default:
 			return "", fmt.Errorf("service name contains unsupported character %q", c)
 		}

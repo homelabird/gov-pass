@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -44,7 +43,6 @@ type bubbleTUIModel struct {
 	width  int
 	height int
 
-	selected    int
 	busy        bool
 	busyAction  string
 	spinnerTick int
@@ -52,7 +50,7 @@ type bubbleTUIModel struct {
 
 func runBubbleTUI(serviceName string, collectStatus bubbleStatusCollector) error {
 	model := newBubbleTUIModel(serviceName, collectStatus, executeMenuChoice)
-	program := tea.NewProgram(model, tea.WithAltScreen())
+	program := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	_, err := program.Run()
 	return err
 }
@@ -73,7 +71,7 @@ func newBubbleTUIModel(serviceName string, collectStatus bubbleStatusCollector, 
 
 func (model bubbleTUIModel) Init() tea.Cmd {
 	return tea.Batch(
-		tea.SetWindowTitle("gov-pass operator panel"),
+		tea.SetWindowTitle("gov-pass ON/OFF"),
 		bubbleAutoRefreshCmd(),
 	)
 }
@@ -86,11 +84,12 @@ func (model bubbleTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return model, nil
 	case tea.KeyMsg:
 		return model.updateKey(msg)
+	case tea.MouseMsg:
+		return model.updateMouse(msg)
 	case bubbleActionResultMsg:
 		model.busy = false
 		model.busyAction = ""
 		model.status = msg.status
-		model.selected = clampSelectedAction(model.selected, tuiActionsForStatus(model.status))
 		if msg.err != nil {
 			model.feedback = errorTUIFeedback(msg.err)
 		} else if !msg.feedback.isZero() {
@@ -107,7 +106,6 @@ func (model bubbleTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		)
 	case bubbleRefreshMsg:
 		model.status = msg.status
-		model.selected = clampSelectedAction(model.selected, tuiActionsForStatus(model.status))
 		return model, nil
 	case bubbleSpinnerMsg:
 		if !model.busy {
@@ -130,48 +128,38 @@ func (model bubbleTUIModel) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return model, nil
 	}
 
-	actions := tuiActionsForStatus(model.status)
-
 	switch msg.String() {
-	case "up", "k", "shift+tab":
-		model.selected = moveSelectedAction(model.selected, -1, actions)
-		return model, nil
-	case "down", "j", "tab":
-		model.selected = moveSelectedAction(model.selected, 1, actions)
-		return model, nil
 	case "enter", " ":
-		if len(actions) == 0 {
-			return model, nil
-		}
-		return model.beginAction(actions[model.selected].Key)
-	default:
-		if !isDirectActionShortcut(model.status, msg.String()) {
-			return model, nil
-		}
-		return model.beginAction(msg.String())
+		return model.beginToggle()
 	}
+	return model, nil
 }
 
-func (model bubbleTUIModel) beginAction(choice string) (tea.Model, tea.Cmd) {
-	action, err := resolveTUIAction(model.status, choice)
-	if err != nil {
-		if choice == "" {
-			return model, nil
-		}
-		model.feedback = errorTUIFeedback(err)
+func (model bubbleTUIModel) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if model.busy {
 		return model, nil
 	}
-
-	if action.ID == tuiActionQuit {
-		return model, tea.Quit
+	event := tea.MouseEvent(msg)
+	if event.Button != tea.MouseButtonLeft || event.Action != tea.MouseActionPress {
+		return model, nil
 	}
+	bounds := toggleButtonBoundsForSize(model.status, model.width, model.busy)
+	if !bounds.contains(event.X, event.Y) {
+		return model, nil
+	}
+	return model.beginToggle()
+}
 
+func (model bubbleTUIModel) beginToggle() (tea.Model, tea.Cmd) {
+	if model.busy || serviceStateBusy(model.status.RawState) {
+		return model, nil
+	}
 	model.busy = true
-	model.busyAction = action.Label
+	model.busyAction = "Toggling service"
 	model.spinnerTick = 0
 
 	return model, tea.Batch(
-		bubbleExecuteActionCmd(model.serviceName, model.status, choice, model.executeAction, model.collectStatus),
+		bubbleExecuteActionCmd(model.serviceName, model.status, "toggle", model.executeAction, model.collectStatus),
 		bubbleSpinnerCmd(),
 	)
 }
@@ -182,26 +170,12 @@ func (model bubbleTUIModel) View() string {
 		width = currentTerminalSize().Cols
 	}
 
-	actions := tuiActionsForStatus(model.status)
-	selected := selectedAction(actions, model.selected)
-	footer := bubbleFooterLines(selected, actions, width, model.busy, model.busyAction)
-	bodyHeight := model.height - len(footer) - 1
-	if bodyHeight < 8 {
-		bodyHeight = 8
-	}
-
 	feedback := model.feedback
 	if model.busy {
 		summary := fmt.Sprintf("%s %s", bubbleSpinnerFrames[model.spinnerTick], nonEmptyString(model.busyAction, "Working"))
-		feedback = infoTUIFeedback(summary, "Waiting for the host to finish the requested action.")
+		feedback = infoTUIFeedback(summary, "")
 	}
-
-	body := renderPlainTUIViewForSize(model.status, feedback, width, bodyHeight)
-	parts := []string{body}
-	if len(footer) > 0 {
-		parts = append(parts, "", strings.Join(footer, "\n"))
-	}
-	return strings.Join(parts, "\n")
+	return renderToggleTUIViewForSize(model.status, feedback, width, model.height, model.busy)
 }
 
 func bubbleExecuteActionCmd(serviceName string, status tuiStatus, choice string, executeAction bubbleActionExecutor, collectStatus bubbleStatusCollector) tea.Cmd {
@@ -232,79 +206,4 @@ func bubbleSpinnerCmd() tea.Cmd {
 	return tea.Tick(bubbleSpinnerInterval, func(time.Time) tea.Msg {
 		return bubbleSpinnerMsg{}
 	})
-}
-
-func bubbleFooterLines(selected tuiAction, actions []tuiAction, width int, busy bool, busyAction string) []string {
-	lines := make([]string, 0, 4)
-	if selected.Key != "" {
-		lines = appendWrappedFooter(lines, fmt.Sprintf("Selection : [%s] %s", selected.Key, selected.Label), width)
-	}
-	lines = appendWrappedFooter(lines, fmt.Sprintf("Controls  : up/down or j/k move, enter runs, direct keys: %s", bubbleShortcutSummary(actions)), width)
-	if busy {
-		lines = appendWrappedFooter(lines, fmt.Sprintf("Busy      : %s", nonEmptyString(busyAction, "Waiting for action result")), width)
-	}
-	return lines
-}
-
-func appendWrappedFooter(lines []string, text string, width int) []string {
-	return append(lines, wrapPanelLine(text, maxInt(width, 20))...)
-}
-
-func bubbleShortcutSummary(actions []tuiAction) string {
-	keys := make([]string, 0, len(actions))
-	for _, action := range actions {
-		keys = append(keys, action.Key)
-	}
-	return strings.Join(keys, " ")
-}
-
-func isDirectActionShortcut(status tuiStatus, key string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(key))
-	if normalized == "" {
-		return false
-	}
-	for _, action := range tuiActionsForStatus(status) {
-		for _, alias := range action.Aliases {
-			if normalized == alias {
-				return true
-			}
-		}
-	}
-	return !status.Capabilities.Reload && (normalized == "4" || normalized == "reload")
-}
-
-func selectedAction(actions []tuiAction, selected int) tuiAction {
-	if len(actions) == 0 {
-		return tuiAction{}
-	}
-	selected = clampSelectedAction(selected, actions)
-	return actions[selected]
-}
-
-func moveSelectedAction(selected, delta int, actions []tuiAction) int {
-	if len(actions) == 0 {
-		return 0
-	}
-	selected = clampSelectedAction(selected, actions)
-	selected += delta
-	if selected < 0 {
-		selected = len(actions) - 1
-	}
-	if selected >= len(actions) {
-		selected = 0
-	}
-	return selected
-}
-
-func clampSelectedAction(selected int, actions []tuiAction) int {
-	if len(actions) == 0 {
-		return 0
-	}
-	if selected < 0 {
-		return 0
-	}
-	if selected >= len(actions) {
-		return len(actions) - 1
-	}
-	return selected
 }

@@ -81,11 +81,6 @@ func resolveTrustedFreeBSDCommand(name string) (string, error) {
 	return "", fmt.Errorf("%s not found in trusted command directories", strings.TrimSpace(name))
 }
 
-func isTrustedFreeBSDCommandPath(path string) bool {
-	_, ok := canonicalTrustedCommandPath(path, trustedFreeBSDCommandDirs, isExecutableFreeBSDCommandFile)
-	return ok
-}
-
 func isExecutableFreeBSDCommandFile(path string) bool {
 	info, err := os.Stat(path)
 	if err != nil || info.IsDir() {

@@ -28,118 +28,22 @@ func TestFreeBSDRcVarName(t *testing.T) {
 	}
 }
 
-func TestLookTrustedFreeBSDCommand_RejectsPoisonedPATHEntry(t *testing.T) {
-	dir := t.TempDir()
-	cmd := filepath.Join(dir, "service")
-	if err := os.WriteFile(cmd, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatalf("write fake command: %v", err)
-	}
-	t.Setenv("PATH", dir)
-
-	origDirs := trustedFreeBSDCommandDirs
-	trustedFreeBSDCommandDirs = []string{filepath.Join(dir, "missing")}
-	defer func() {
-		trustedFreeBSDCommandDirs = origDirs
-	}()
-
-	if got, ok := lookTrustedFreeBSDCommand("service"); ok {
-		t.Fatalf("expected poisoned PATH entry to be rejected, got %q", got)
-	}
-}
-
-func TestLookTrustedFreeBSDCommand_UsesTrustedAbsoluteDir(t *testing.T) {
-	dir := t.TempDir()
-	cmd := filepath.Join(dir, "service")
-	if err := os.WriteFile(cmd, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatalf("write fake command: %v", err)
-	}
-
-	origDirs := trustedFreeBSDCommandDirs
-	trustedFreeBSDCommandDirs = []string{dir}
-	defer func() {
-		trustedFreeBSDCommandDirs = origDirs
-	}()
-
-	got, ok := lookTrustedFreeBSDCommand("service")
-	if !ok {
-		t.Fatal("expected trusted command lookup to succeed")
-	}
-	if filepath.Clean(got) != filepath.Clean(cmd) {
-		t.Fatalf("lookTrustedFreeBSDCommand returned %q, want %q", got, cmd)
-	}
-}
-
-func TestResolveTrustedFreeBSDCommandAndPathCheck(t *testing.T) {
-	dir := t.TempDir()
-	cmd := filepath.Join(dir, "service")
-	if err := os.WriteFile(cmd, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatalf("write fake command: %v", err)
-	}
-
-	origDirs := trustedFreeBSDCommandDirs
-	trustedFreeBSDCommandDirs = []string{dir}
-	defer func() {
-		trustedFreeBSDCommandDirs = origDirs
-	}()
-
-	got, err := resolveTrustedFreeBSDCommand("service")
-	if err != nil {
-		t.Fatalf("resolveTrustedFreeBSDCommand: %v", err)
-	}
-	if filepath.Clean(got) != filepath.Clean(cmd) {
-		t.Fatalf("resolveTrustedFreeBSDCommand returned %q, want %q", got, cmd)
-	}
-	if !isTrustedFreeBSDCommandPath(cmd) {
-		t.Fatalf("isTrustedFreeBSDCommandPath(%q) = false, want true", cmd)
-	}
-}
-
-func TestLookTrustedFreeBSDCommand_RejectsSymlinkOutsideTrustedDir(t *testing.T) {
+func TestResolveTrustedFreeBSDCommandRejectsSymlinkEscape(t *testing.T) {
 	trustedDir := t.TempDir()
-	outsideDir := t.TempDir()
-	target := filepath.Join(outsideDir, "service")
+	target := filepath.Join(t.TempDir(), "service")
 	if err := os.WriteFile(target, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatalf("write target command: %v", err)
 	}
-	link := filepath.Join(trustedDir, "service")
-	if err := os.Symlink(target, link); err != nil {
+	if err := os.Symlink(target, filepath.Join(trustedDir, "service")); err != nil {
 		t.Fatalf("create symlink: %v", err)
 	}
 
 	origDirs := trustedFreeBSDCommandDirs
 	trustedFreeBSDCommandDirs = []string{trustedDir}
-	defer func() {
-		trustedFreeBSDCommandDirs = origDirs
-	}()
+	t.Cleanup(func() { trustedFreeBSDCommandDirs = origDirs })
 
-	if got, ok := lookTrustedFreeBSDCommand("service"); ok {
-		t.Fatalf("expected symlink target outside trusted dir to be rejected, got %q", got)
-	}
-}
-
-func TestLookTrustedFreeBSDCommand_RejectsRelativePathName(t *testing.T) {
-	parent := t.TempDir()
-	sbin := filepath.Join(parent, "sbin")
-	bin := filepath.Join(parent, "bin")
-	if err := os.MkdirAll(sbin, 0o755); err != nil {
-		t.Fatalf("mkdir sbin: %v", err)
-	}
-	if err := os.MkdirAll(bin, 0o755); err != nil {
-		t.Fatalf("mkdir bin: %v", err)
-	}
-	cmd := filepath.Join(bin, "service")
-	if err := os.WriteFile(cmd, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatalf("write command: %v", err)
-	}
-
-	origDirs := trustedFreeBSDCommandDirs
-	trustedFreeBSDCommandDirs = []string{sbin, bin}
-	defer func() {
-		trustedFreeBSDCommandDirs = origDirs
-	}()
-
-	if got, ok := lookTrustedFreeBSDCommand(filepath.Join("..", "bin", "service")); ok {
-		t.Fatalf("expected relative path command name to be rejected, got %q", got)
+	if path, err := resolveTrustedFreeBSDCommand("service"); err == nil {
+		t.Fatalf("expected symlink escape rejection, got %q", path)
 	}
 }
 

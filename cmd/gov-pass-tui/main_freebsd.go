@@ -49,19 +49,14 @@ func runTUI(serviceName string) error {
 
 func collectTUIStatus(serviceName string) tuiStatus {
 	state, activeErr := serviceStatusText(serviceName)
-	enabled, enabledErr := isServiceEnabled(serviceName)
 	return newTUIStatus(tuiStatusInput{
-		Platform:     "FreeBSD",
-		ServiceName:  serviceName,
-		RawState:     state,
-		Active:       strings.EqualFold(state, "active"),
-		ActiveKnown:  activeErr == nil && !strings.EqualFold(strings.TrimSpace(state), "unknown"),
-		Enabled:      enabled,
-		EnabledKnown: enabledErr == nil,
-		Capabilities: tuiCapabilities{Reload: false},
+		Platform:    "FreeBSD",
+		ServiceName: serviceName,
+		RawState:    state,
+		Active:      strings.EqualFold(state, "active"),
+		ActiveKnown: activeErr == nil && !strings.EqualFold(strings.TrimSpace(state), "unknown"),
 	},
 		statusIssue{Label: "service", Err: activeErr},
-		statusIssue{Label: "boot", Err: enabledErr},
 	)
 }
 
@@ -135,24 +130,6 @@ func serviceStatusText(serviceName string) (string, error) {
 	return "unknown", fmt.Errorf("service %s onestatus returned unrecognized status", serviceName)
 }
 
-func isServiceEnabled(serviceName string) (bool, error) {
-	key := freeBSDRcVarName(serviceName)
-	sysrcPath, err := resolveTrustedFreeBSDCommand("sysrc")
-	if err != nil {
-		return false, err
-	}
-	cmd := newFreeBSDCommand(sysrcPath, "-n", key)
-	out, err := cmd.CombinedOutput()
-	text := strings.TrimSpace(string(out))
-	if err == nil {
-		if enabled, ok := classifyFreeBSDBootSetting(text); ok {
-			return enabled, nil
-		}
-		return false, fmt.Errorf("sysrc -n %s returned unrecognized value: %s", key, text)
-	}
-	return false, fmt.Errorf("sysrc -n %s failed: %s", key, nonEmpty(text, err.Error()))
-}
-
 func runPrivileged(name string, args ...string) error {
 	targetPath, err := resolveTrustedFreeBSDCommand(name)
 	if err != nil {
@@ -222,10 +199,6 @@ func requiresPrivilegedRetry(output string) bool {
 		}
 	}
 	return false
-}
-
-func clearTerminalScreen() {
-	fmt.Print("\033[H\033[2J")
 }
 
 func nonEmpty(primary, fallback string) string {

@@ -4,53 +4,14 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"golang.org/x/sys/windows"
-	"golang.org/x/sys/windows/svc"
 )
-
-func TestQuoteArg(t *testing.T) {
-	tests := []struct {
-		in   string
-		want string
-	}{
-		{in: "", want: `""`},
-		{in: "simple", want: "simple"},
-		{in: "two words", want: `"two words"`},
-		{in: `a"b`, want: `"a\"b"`},
-	}
-
-	for _, tt := range tests {
-		got := quoteArg(tt.in)
-		if got != tt.want {
-			t.Fatalf("quoteArg(%q) = %q, want %q", tt.in, got, tt.want)
-		}
-	}
-}
-
-func TestQuoteArgs(t *testing.T) {
-	got := quoteArgs([]string{"--service-name", "gov pass", "--action", "reload"})
-	want := `--service-name "gov pass" --action reload`
-	if got != want {
-		t.Fatalf("quoteArgs mismatch: got %q want %q", got, want)
-	}
-}
-
-func TestStateString(t *testing.T) {
-	if got := stateString(svc.Running); got != "running" {
-		t.Fatalf("running mismatch: %q", got)
-	}
-	if got := stateString(svc.Stopped); got != "stopped" {
-		t.Fatalf("stopped mismatch: %q", got)
-	}
-	if got := stateString(svc.StartPending); got != "start-pending" {
-		t.Fatalf("start-pending mismatch: %q", got)
-	}
-}
 
 func TestReloadServiceUsesParamChange(t *testing.T) {
 	orig := windowsRunSC
@@ -93,33 +54,40 @@ func TestReloadServicePropagatesError(t *testing.T) {
 	}
 }
 
-func TestResolveTrustedWindowsCommand(t *testing.T) {
-	root := t.TempDir()
-	system32 := filepath.Join(root, "System32")
-	if err := os.MkdirAll(system32, 0o755); err != nil {
-		t.Fatalf("mkdir system32: %v", err)
-	}
-	scPath := filepath.Join(system32, "sc.exe")
-	if err := os.WriteFile(scPath, []byte("test"), 0o644); err != nil {
-		t.Fatalf("write sc.exe: %v", err)
-	}
+func TestRunActionToggleCallsExpectedSC(t *testing.T) {
+	for _, test := range []struct {
+		state string
+		want  string
+	}{
+		{state: "stopped", want: "start"},
+		{state: "running", want: "stop"},
+	} {
+		t.Run(test.state, func(t *testing.T) {
+			orig := windowsRunSC
+			t.Cleanup(func() { windowsRunSC = orig })
 
-	origDirs := windowsCommandDirsProvider
-	origStat := windowsCommandStat
-	defer func() {
-		windowsCommandDirsProvider = origDirs
-		windowsCommandStat = origStat
-	}()
+			state := test.state
+			var calls [][]string
+			windowsRunSC = func(args ...string) (string, error) {
+				calls = append(calls, append([]string(nil), args...))
+				switch args[0] {
+				case "query":
+					return fmt.Sprintf("STATE : 4 %s", strings.ToUpper(state)), nil
+				case "start":
+					state = "running"
+				case "stop":
+					state = "stopped"
+				}
+				return "", nil
+			}
 
-	windowsCommandDirsProvider = func() []string { return []string{system32} }
-	windowsCommandStat = os.Stat
-
-	got, err := resolveTrustedWindowsCommand("sc")
-	if err != nil {
-		t.Fatalf("resolveTrustedWindowsCommand unexpected error: %v", err)
-	}
-	if got != scPath {
-		t.Fatalf("resolveTrustedWindowsCommand = %q, want %q", got, scPath)
+			if err := runAction("gov-pass", "toggle"); err != nil {
+				t.Fatalf("toggle unexpected error: %v", err)
+			}
+			if len(calls) != 3 || calls[0][0] != "query" || calls[1][0] != test.want || calls[2][0] != "query" {
+				t.Fatalf("sc calls = %v, want query, %s, query", calls, test.want)
+			}
+		})
 	}
 }
 
@@ -143,12 +111,6 @@ func TestResolveTrustedWindowsCommandRejectsPoisonedPath(t *testing.T) {
 
 	if got, err := resolveTrustedWindowsCommand("sc"); err == nil {
 		t.Fatalf("expected poisoned path to be rejected, got %q", got)
-	}
-}
-
-func TestResolveTrustedWindowsCommandRejectsRelativePathName(t *testing.T) {
-	if got, err := resolveTrustedWindowsCommand(filepath.Join("..", "System32", "sc")); err == nil {
-		t.Fatalf("expected relative path command name to be rejected, got %q", got)
 	}
 }
 

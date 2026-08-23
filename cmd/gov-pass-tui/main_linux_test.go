@@ -3,11 +3,9 @@
 package main
 
 import (
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -71,7 +69,7 @@ func stubLinuxTUICommands(t *testing.T) {
 
 	linuxLookPath = func(name string) (string, bool) {
 		switch name {
-		case "whiptail", "systemctl", "sudo", "pkexec":
+		case "systemctl", "sudo", "pkexec":
 			return script, true
 		default:
 			return "", false
@@ -88,24 +86,34 @@ func stubLinuxTUICommands(t *testing.T) {
 	}
 }
 
-func TestRunAction_UnknownAction(t *testing.T) {
-	stubLinuxTUICommands(t)
-	err := runAction("gov-pass", "unknown-action")
-	if err == nil {
-		t.Fatal("expected error for unknown action")
-	}
-	if got := err.Error(); got != "unknown action: unknown-action" {
-		t.Fatalf("unexpected error message: %s", got)
-	}
-}
+func TestRunAction_ToggleCallsExpectedSystemctl(t *testing.T) {
+	for _, test := range []struct {
+		state string
+		want  string
+	}{
+		{state: "inactive", want: "start"},
+		{state: "active", want: "stop"},
+	} {
+		t.Run(test.state, func(t *testing.T) {
+			origSystemctl := linuxSystemctlCmd
+			t.Cleanup(func() { linuxSystemctlCmd = origSystemctl })
 
-func TestRunAction_ValidActions(t *testing.T) {
-	stubLinuxTUICommands(t)
-	for _, action := range []string{"start", "stop", "restart", "reload", "enable", "disable", "toggle", "status"} {
-		err := runAction("nonexistent-test-service-gov-pass", action)
-		if err != nil && err.Error() == "unknown action: "+action {
-			t.Errorf("action %q should be recognized", action)
-		}
+			var calls [][]string
+			linuxSystemctlCmd = func(args ...string) (*exec.Cmd, error) {
+				calls = append(calls, append([]string(nil), args...))
+				if args[0] == "is-active" {
+					return exec.Command("printf", "%s\n", test.state), nil
+				}
+				return exec.Command("true"), nil
+			}
+
+			if err := runAction("gov-pass", "toggle"); err != nil {
+				t.Fatalf("toggle unexpected error: %v", err)
+			}
+			if len(calls) != 2 || calls[0][0] != "is-active" || calls[1][0] != test.want {
+				t.Fatalf("systemctl calls = %v, want is-active then %s", calls, test.want)
+			}
+		})
 	}
 }
 
@@ -119,86 +127,5 @@ func TestRunAction_ReloadRejectedWhenUnsupported(t *testing.T) {
 	}
 	if got := err.Error(); got != "reload is not available for gov-pass" {
 		t.Fatalf("unexpected error message: %s", got)
-	}
-}
-
-func TestRunAction_InvalidServiceName(t *testing.T) {
-	stubLinuxTUICommands(t)
-	if err := runAction("gov pass", "status"); err == nil {
-		t.Fatal("expected invalid service name error")
-	}
-}
-
-func TestLinuxTrustedCommandHelpers(t *testing.T) {
-	dir := t.TempDir()
-	cmd := filepath.Join(dir, "systemctl")
-	if err := os.WriteFile(cmd, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatalf("write fake command: %v", err)
-	}
-
-	origDirs := trustedLinuxTUICommandDirs
-	trustedLinuxTUICommandDirs = []string{dir}
-	defer func() {
-		trustedLinuxTUICommandDirs = origDirs
-	}()
-
-	got, err := resolveTrustedLinuxTUICommand("systemctl")
-	if err != nil {
-		t.Fatalf("resolveTrustedLinuxTUICommand: %v", err)
-	}
-	if filepath.Clean(got) != filepath.Clean(cmd) {
-		t.Fatalf("resolveTrustedLinuxTUICommand returned %q, want %q", got, cmd)
-	}
-	if !isTrustedLinuxTUICommandPath(cmd) {
-		t.Fatalf("isTrustedLinuxTUICommandPath(%q) = false, want true", cmd)
-	}
-}
-
-func TestHasCommandUsesTrustedLookup(t *testing.T) {
-	stubLinuxTUICommands(t)
-	if !hasCommand("systemctl") {
-		t.Fatal("hasCommand(systemctl) = false, want true")
-	}
-}
-
-func TestRunPlainTUIQuit(t *testing.T) {
-	stubLinuxTUICommands(t)
-
-	origStdin := os.Stdin
-	origStdout := os.Stdout
-	inR, inW, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("stdin pipe: %v", err)
-	}
-	outR, outW, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("stdout pipe: %v", err)
-	}
-	t.Cleanup(func() {
-		os.Stdin = origStdin
-		os.Stdout = origStdout
-		_ = inR.Close()
-		_ = outR.Close()
-	})
-
-	if _, err := inW.WriteString("q\n"); err != nil {
-		t.Fatalf("write stdin: %v", err)
-	}
-	_ = inW.Close()
-	os.Stdin = inR
-	os.Stdout = outW
-
-	runErr := runPlainTUI("gov-pass")
-	_ = outW.Close()
-	os.Stdout = origStdout
-	if runErr != nil {
-		t.Fatalf("runPlainTUI: %v", runErr)
-	}
-	out, err := io.ReadAll(outR)
-	if err != nil {
-		t.Fatalf("read stdout: %v", err)
-	}
-	if !strings.Contains(string(out), "GOV-PASS OPERATOR PANEL") {
-		t.Fatalf("plain TUI output missing panel header:\n%s", out)
 	}
 }

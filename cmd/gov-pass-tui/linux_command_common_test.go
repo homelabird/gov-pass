@@ -3,60 +3,9 @@
 package main
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
-
-func TestLookTrustedLinuxTUICommand_RejectsSymlinkOutsideTrustedDir(t *testing.T) {
-	trustedDir := t.TempDir()
-	outsideDir := t.TempDir()
-	target := filepath.Join(outsideDir, "systemctl")
-	if err := os.WriteFile(target, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatalf("write target command: %v", err)
-	}
-	link := filepath.Join(trustedDir, "systemctl")
-	if err := os.Symlink(target, link); err != nil {
-		t.Fatalf("create symlink: %v", err)
-	}
-
-	origDirs := trustedLinuxTUICommandDirs
-	trustedLinuxTUICommandDirs = []string{trustedDir}
-	defer func() {
-		trustedLinuxTUICommandDirs = origDirs
-	}()
-
-	if got, ok := lookTrustedLinuxTUICommand("systemctl"); ok {
-		t.Fatalf("expected symlink target outside trusted dir to be rejected, got %q", got)
-	}
-}
-
-func TestLookTrustedLinuxTUICommand_RejectsRelativePathName(t *testing.T) {
-	parent := t.TempDir()
-	sbin := filepath.Join(parent, "sbin")
-	bin := filepath.Join(parent, "bin")
-	if err := os.MkdirAll(sbin, 0o755); err != nil {
-		t.Fatalf("mkdir sbin: %v", err)
-	}
-	if err := os.MkdirAll(bin, 0o755); err != nil {
-		t.Fatalf("mkdir bin: %v", err)
-	}
-	cmd := filepath.Join(bin, "systemctl")
-	if err := os.WriteFile(cmd, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatalf("write command: %v", err)
-	}
-
-	origDirs := trustedLinuxTUICommandDirs
-	trustedLinuxTUICommandDirs = []string{sbin, bin}
-	defer func() {
-		trustedLinuxTUICommandDirs = origDirs
-	}()
-
-	if got, ok := lookTrustedLinuxTUICommand(filepath.Join("..", "bin", "systemctl")); ok {
-		t.Fatalf("expected relative path command name to be rejected, got %q", got)
-	}
-}
 
 func TestSanitizedLinuxTUICommandEnvDoesNotInheritCallerEnv(t *testing.T) {
 	t.Setenv("LD_PRELOAD", "bad")

@@ -23,27 +23,6 @@ func TestClassifySystemctlActiveStatus(t *testing.T) {
 	}
 }
 
-func TestClassifySystemctlEnabledStatus(t *testing.T) {
-	tests := []struct {
-		text    string
-		enabled bool
-		ok      bool
-	}{
-		{text: "enabled", enabled: true, ok: true},
-		{text: "linked-runtime", enabled: true, ok: true},
-		{text: "disabled", enabled: false, ok: true},
-		{text: "masked", enabled: false, ok: true},
-		{text: "not-found", enabled: false, ok: false},
-	}
-
-	for _, tt := range tests {
-		enabled, ok := classifySystemctlEnabledStatus(tt.text)
-		if enabled != tt.enabled || ok != tt.ok {
-			t.Fatalf("classifySystemctlEnabledStatus(%q) = (%t, %t), want (%t, %t)", tt.text, enabled, ok, tt.enabled, tt.ok)
-		}
-	}
-}
-
 func TestClassifyFreeBSDServiceStatusOutput(t *testing.T) {
 	tests := []struct {
 		text    string
@@ -62,26 +41,6 @@ func TestClassifyFreeBSDServiceStatusOutput(t *testing.T) {
 		state, active, ok := classifyFreeBSDServiceStatusOutput(tt.text, tt.success)
 		if state != tt.state || active != tt.active || ok != tt.ok {
 			t.Fatalf("classifyFreeBSDServiceStatusOutput(%q, %t) = (%q, %t, %t), want (%q, %t, %t)", tt.text, tt.success, state, active, ok, tt.state, tt.active, tt.ok)
-		}
-	}
-}
-
-func TestClassifyFreeBSDBootSetting(t *testing.T) {
-	tests := []struct {
-		text    string
-		enabled bool
-		ok      bool
-	}{
-		{text: "YES", enabled: true, ok: true},
-		{text: "NO", enabled: false, ok: true},
-		{text: "", enabled: false, ok: true},
-		{text: "maybe", enabled: false, ok: false},
-	}
-
-	for _, tt := range tests {
-		enabled, ok := classifyFreeBSDBootSetting(tt.text)
-		if enabled != tt.enabled || ok != tt.ok {
-			t.Fatalf("classifyFreeBSDBootSetting(%q) = (%t, %t), want (%t, %t)", tt.text, enabled, ok, tt.enabled, tt.ok)
 		}
 	}
 }
