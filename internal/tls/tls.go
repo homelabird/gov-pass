@@ -130,7 +130,8 @@ func ParseClientHello(buf []byte) (ClientHelloInfo, Result) {
 			return ClientHelloInfo{}, ResultMismatch
 		}
 		info.ServerName = serverName
-		break
+		// Keep scanning: extensions commonly follow SNI (e.g. ALPN), and the
+		// trailing-length check below must see a fully consumed extension block.
 	}
 	if len(extensions) != 0 {
 		return ClientHelloInfo{}, ResultMismatch

@@ -68,6 +68,21 @@ func TestParseClientHello_ServerName(t *testing.T) {
 	}
 }
 
+func TestParseClientHello_ServerNameBeforeTrailingExtensions(t *testing.T) {
+	sni := buildServerNameExtension(buildServerNameList("example.com"))
+	// ALPN (type 0x0010) commonly follows SNI in real ClientHello messages.
+	alpn := []byte{0x00, 0x10, 0x00, 0x05, 0x00, 0x03, 0x02, 'h', '2'}
+	extensions := append(append([]byte{}, sni...), alpn...)
+
+	info, result := ParseClientHello(buildClientHelloRecordWithExtensions(extensions))
+	if result != ResultMatch {
+		t.Fatalf("expected Match, got %v", result)
+	}
+	if info.ServerName != "example.com" {
+		t.Fatalf("unexpected server name: %q", info.ServerName)
+	}
+}
+
 func TestParseClientHello_RejectsInvalidServerName(t *testing.T) {
 	longLabel := strings.Repeat("a", 64) + ".example"
 	longName := strings.Repeat("a.", 127) + "a"
