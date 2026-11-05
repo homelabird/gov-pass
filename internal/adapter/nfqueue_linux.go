@@ -28,12 +28,13 @@ const (
 
 // NFQueueAdapter handles NFQUEUE recv and raw socket injection.
 type NFQueueAdapter struct {
-	queue4 *nfqueue.Nfqueue
-	queue6 *nfqueue.Nfqueue
-	recv   chan *packet.Packet
-	errs   chan error
-	ctx    context.Context
-	stop   context.CancelFunc
+	// NFQUEUE instances are per network namespace, not per address family,
+	// so a single queue receives both IPv4 and IPv6 packets.
+	queue *nfqueue.Nfqueue
+	recv  chan *packet.Packet
+	errs  chan error
+	ctx   context.Context
+	stop  context.CancelFunc
 
 	rawFD4 int
 	rawFD6 int
@@ -68,14 +69,8 @@ func NewNFQueue(opts NFQueueOptions) (*NFQueueAdapter, error) {
 	ad.bufPool.New = newPooledPacketBuffer
 
 	var err error
-	ad.queue4, err = openNFQueueSocket(opts, copyRange, uint8(unix.AF_INET))
+	ad.queue, err = openNFQueueSocket(opts, copyRange, uint8(unix.AF_INET))
 	if err != nil {
-		cancel()
-		return nil, err
-	}
-	ad.queue6, err = openNFQueueSocket(opts, copyRange, uint8(unix.AF_INET6))
-	if err != nil {
-		_ = ad.queue4.Close()
 		cancel()
 		return nil, err
 	}
@@ -84,11 +79,7 @@ func NewNFQueue(opts NFQueueOptions) (*NFQueueAdapter, error) {
 		_ = ad.Close()
 		return nil, err
 	}
-	if err := ad.queue4.RegisterWithErrorFunc(ctx, ad.onPacket(packet.IPVersion4), ad.onError); err != nil {
-		_ = ad.Close()
-		return nil, err
-	}
-	if err := ad.queue6.RegisterWithErrorFunc(ctx, ad.onPacket(packet.IPVersion6), ad.onError); err != nil {
+	if err := ad.queue.RegisterWithErrorFunc(ctx, ad.onPacket, ad.onError); err != nil {
 		_ = ad.Close()
 		return nil, err
 	}
@@ -178,7 +169,7 @@ func (n *NFQueueAdapter) CalcChecksums(pkt *packet.Packet) error {
 // accepting them (fail-open). It also stops new callbacks best-effort so no
 // additional packets are enqueued while draining.
 func (n *NFQueueAdapter) Flush(ctx context.Context) error {
-	if n.queue4 == nil && n.queue6 == nil {
+	if n.queue == nil {
 		return nil
 	}
 	if ctx == nil {
@@ -231,13 +222,8 @@ func (n *NFQueueAdapter) Close() error {
 			n.stop()
 		}
 		var errs []error
-		if n.queue4 != nil {
-			if e := n.queue4.Close(); e != nil {
-				errs = append(errs, e)
-			}
-		}
-		if n.queue6 != nil {
-			if e := n.queue6.Close(); e != nil {
+		if n.queue != nil {
+			if e := n.queue.Close(); e != nil {
 				errs = append(errs, e)
 			}
 		}
@@ -260,51 +246,49 @@ func (n *NFQueueAdapter) Close() error {
 	return err
 }
 
-func (n *NFQueueAdapter) onPacket(version uint8) nfqueue.HookFunc {
-	return func(a nfqueue.Attribute) int {
-		n.inFlight.Add(1)
-		defer n.inFlight.Add(-1)
+func (n *NFQueueAdapter) onPacket(a nfqueue.Attribute) int {
+	n.inFlight.Add(1)
+	defer n.inFlight.Add(-1)
 
-		if a.PacketID == nil {
-			return 0
+	if a.PacketID == nil {
+		return 0
+	}
+	id := *a.PacketID
+	if a.Payload == nil {
+		if err := n.setVerdictByID(id, nfqueue.NfAccept); err != nil {
+			return n.reportError(err)
 		}
-		id := *a.PacketID
-		if a.Payload == nil {
-			if err := n.setVerdictByVersion(version, id, nfqueue.NfAccept); err != nil {
-				return n.reportError(err)
-			}
-			return 0
-		}
+		return 0
+	}
 
-		// If we're flushing/shutting down, do not enqueue. Immediately fail-open.
-		if n.flushing.Load() || n.ctx.Err() != nil {
-			if err := n.setVerdictByVersion(version, id, nfqueue.NfAccept); err != nil {
-				return n.reportError(err)
-			}
-			return 0
+	// If we're flushing/shutting down, do not enqueue. Immediately fail-open.
+	if n.flushing.Load() || n.ctx.Err() != nil {
+		if err := n.setVerdictByID(id, nfqueue.NfAccept); err != nil {
+			return n.reportError(err)
 		}
+		return 0
+	}
 
-		payload, backing := copyIntoPoolBuffer(&n.bufPool, *a.Payload)
-		pkt := &packet.Packet{
-			Data:    payload,
-			Source:  packet.SourceCaptured,
-			NFQID:   id,
-			IfIndex: nfqueueIfIndex(a),
-		}
-		pkt.Meta.IPVersion = version
-		pkt.SetDataPool(&n.bufPool, backing)
+	payload, backing := copyIntoPoolBuffer(&n.bufPool, *a.Payload)
+	pkt := &packet.Packet{
+		Data:    payload,
+		Source:  packet.SourceCaptured,
+		NFQID:   id,
+		IfIndex: nfqueueIfIndex(a),
+	}
+	pkt.Meta.IPVersion = packet.Version(payload)
+	pkt.SetDataPool(&n.bufPool, backing)
 
-		select {
-		case n.recv <- pkt:
-			return 0
-		default:
-			if err := n.setVerdictByVersion(version, id, nfqueue.NfAccept); err != nil {
-				pkt.Release()
-				return n.reportError(err)
-			}
+	select {
+	case n.recv <- pkt:
+		return 0
+	default:
+		if err := n.setVerdictByID(id, nfqueue.NfAccept); err != nil {
 			pkt.Release()
-			return 0
+			return n.reportError(err)
 		}
+		pkt.Release()
+		return 0
 	}
 }
 
@@ -329,15 +313,14 @@ func (n *NFQueueAdapter) setVerdict(pkt *packet.Packet, verdict int) error {
 	if pkt == nil {
 		return nil
 	}
-	return n.setVerdictByVersion(n.packetVersion(pkt), pkt.NFQID, verdict)
+	return n.setVerdictByID(pkt.NFQID, verdict)
 }
 
-func (n *NFQueueAdapter) setVerdictByVersion(version uint8, id uint32, verdict int) error {
-	queue := n.queueForVersion(version)
-	if queue == nil {
+func (n *NFQueueAdapter) setVerdictByID(id uint32, verdict int) error {
+	if n.queue == nil {
 		return ErrNotImplemented
 	}
-	return queue.SetVerdict(id, verdict)
+	return n.queue.SetVerdict(id, verdict)
 }
 
 func (n *NFQueueAdapter) openRawSockets() error {
@@ -495,17 +478,6 @@ func (n *NFQueueAdapter) packetVersion(pkt *packet.Packet) uint8 {
 		return pkt.Meta.IPVersion
 	}
 	return packet.Version(pkt.Data)
-}
-
-func (n *NFQueueAdapter) queueForVersion(version uint8) *nfqueue.Nfqueue {
-	switch version {
-	case packet.IPVersion6:
-		return n.queue6
-	case packet.IPVersion4:
-		return n.queue4
-	default:
-		return nil
-	}
 }
 
 func nfqueueIfIndex(a nfqueue.Attribute) uint32 {
