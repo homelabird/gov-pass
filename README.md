@@ -18,9 +18,21 @@ service defaults before enabling the service.
 
 ## Quick Start
 
-All defaults are tuned for immediate use. In normal cases no flags are required.
-
 ### Linux
+
+Requirements: root (`sudo`) and Go. The installer resolves `go` from trusted
+system paths, including distro alternatives symlinks such as Fedora's
+`/usr/bin/go`. Install Go first if needed:
+
+```bash
+# Fedora / RHEL
+sudo dnf install golang
+
+# Debian / Ubuntu
+sudo apt install golang-go
+```
+
+Then run the one-shot installer:
 
 ```bash
 sudo ./scripts/install_one_touch.sh
@@ -43,11 +55,11 @@ Runtime-only install without the TUI controller:
 sudo INSTALL_TUI=0 ./scripts/install_one_touch.sh
 ```
 
-Source installs resolve `go` only from trusted system paths. If Go is installed
-elsewhere, set `GOV_PASS_GO_BIN` to an absolute, non-symlinked `go` binary path:
+If Go is installed outside the trusted system paths, point `GOV_PASS_GO_BIN` at
+the real binary rather than a symlink:
 
 ```bash
-sudo GOV_PASS_GO_BIN="$(command -v go)" ./scripts/install_one_touch.sh
+sudo GOV_PASS_GO_BIN="$(readlink -f "$(command -v go)")" ./scripts/install_one_touch.sh
 ```
 
 Release installer:
